@@ -1,0 +1,11 @@
+{
+    "virustotal": {
+        "api_key": "your_virustotal_api_key_here",
+        "enabled": true,
+        "timeout": 30
+    },
+    "download": {
+        "extract_zip": true,
+        "verify_hash": true
+    }
+} 
