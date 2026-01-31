@@ -1,11 +1,12 @@
 {
-    "virustotal": {
-        "api_key": "your_virustotal_api_key_here",
-        "enabled": true,
-        "timeout": 30
-    },
-    "download": {
-        "extract_zip": true,
-        "verify_hash": true
-    }
-} 
+    "virustotal_api_key": "your_virustotal_api_key_here",
+    "download_directory": "./downloads",
+    "download_base_url": "https://es.dll-files.com",
+    "http_timeout": 60,
+    "verify_ssl": true,
+    "scan_before_save": true,
+    "malicious_threshold": 5,
+    "suspicious_threshold": 1,
+    "log_level": "INFO",
+    "user_agent": null
+}

@@ -1,6 +1,10 @@
 # Configuration files (contain sensitive data)
 .config.json
 
+# Claude/Codex assistant files
+.claude/
+**/CLAUDE.md
+
 # Debug files
 debug_*.html
 

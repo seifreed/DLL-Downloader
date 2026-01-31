@@ -1,2 +1,0 @@
-msvcp140.dll
-api-ms-win-core-privateprofile-l1-1-0.dll
