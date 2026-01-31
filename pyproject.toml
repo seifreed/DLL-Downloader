@@ -4,7 +4,7 @@ version = "1.0.0"
 description = "A Python script to automatically search and download DLL files"
 readme = "README.md"
 requires-python = ">=3.10"
-license = { file = "LICENSE" }
+license = "LicenseRef-MIT-Attribution"
 authors = [
     { name = "Marc Rivero Lopez", email = "mriverolopez@gmail.com" }
 ]
@@ -15,7 +15,6 @@ keywords = ["dll", "windows", "download", "security", "virustotal"]
 classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
-    "License :: Other/Proprietary License",
     "Operating System :: OS Independent",
 ]
 
@@ -26,6 +25,13 @@ dll-downloader = "dll_downloader.interfaces.cli:main"
 Homepage = "https://github.com/seifreed/DLL-Downloader"
 Repository = "https://github.com/seifreed/DLL-Downloader"
 Issues = "https://github.com/seifreed/DLL-Downloader/issues"
+
+[tool.setuptools]
+license-files = ["LICENSE"]
+
+[tool.setuptools.packages.find]
+include = ["dll_downloader*"]
+exclude = ["downloads*", "tests*", "docs*", ".github*"]
 
 [project.optional-dependencies]
 dev = [
