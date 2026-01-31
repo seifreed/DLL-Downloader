@@ -477,6 +477,7 @@ def test_settings_load_vt_toml_key(monkeypatch) -> None:
     """
     with tempfile.TemporaryDirectory() as temp_dir:
         monkeypatch.setenv("HOME", temp_dir)
+        monkeypatch.setenv("USERPROFILE", temp_dir)
         monkeypatch.delenv("DLL_VIRUSTOTAL_API_KEY", raising=False)
 
         vt_path = Path(temp_dir) / ".vt.toml"
@@ -494,6 +495,7 @@ def test_settings_load_env_over_vt_toml(monkeypatch) -> None:
     """
     with tempfile.TemporaryDirectory() as temp_dir:
         monkeypatch.setenv("HOME", temp_dir)
+        monkeypatch.setenv("USERPROFILE", temp_dir)
         monkeypatch.setenv("DLL_VIRUSTOTAL_API_KEY", "env_key")
 
         vt_path = Path(temp_dir) / ".vt.toml"
@@ -508,6 +510,7 @@ def test_settings_load_env_over_vt_toml(monkeypatch) -> None:
 def test_settings_load_without_vt_toml(monkeypatch) -> None:
     with tempfile.TemporaryDirectory() as temp_dir:
         monkeypatch.setenv("HOME", temp_dir)
+        monkeypatch.setenv("USERPROFILE", temp_dir)
         monkeypatch.delenv("DLL_VIRUSTOTAL_API_KEY", raising=False)
 
         settings = Settings.load(config_path="/nonexistent/config.json")
@@ -519,6 +522,7 @@ def test_settings_load_without_vt_toml(monkeypatch) -> None:
 def test_load_vt_toml_key_missing_file(monkeypatch) -> None:
     with tempfile.TemporaryDirectory() as temp_dir:
         monkeypatch.setenv("HOME", temp_dir)
+        monkeypatch.setenv("USERPROFILE", temp_dir)
         assert Settings._load_vt_toml_key() is None
 
 
@@ -526,6 +530,7 @@ def test_load_vt_toml_key_missing_file(monkeypatch) -> None:
 def test_load_vt_toml_key_invalid_contents(monkeypatch) -> None:
     with tempfile.TemporaryDirectory() as temp_dir:
         monkeypatch.setenv("HOME", temp_dir)
+        monkeypatch.setenv("USERPROFILE", temp_dir)
         vt_path = Path(temp_dir) / ".vt.toml"
         vt_path.write_text("not_a_key=true")
         assert Settings._load_vt_toml_key() is None
@@ -535,6 +540,7 @@ def test_load_vt_toml_key_invalid_contents(monkeypatch) -> None:
 def test_load_vt_toml_key_read_error(monkeypatch) -> None:
     with tempfile.TemporaryDirectory() as temp_dir:
         monkeypatch.setenv("HOME", temp_dir)
+        monkeypatch.setenv("USERPROFILE", temp_dir)
         vt_path = Path(temp_dir) / ".vt.toml"
         vt_path.write_text('apikey="vt_file_key"')
 
@@ -554,6 +560,7 @@ def test_load_vt_toml_key_read_error(monkeypatch) -> None:
 def test_settings_load_config_over_vt_toml(monkeypatch) -> None:
     with tempfile.TemporaryDirectory() as temp_dir:
         monkeypatch.setenv("HOME", temp_dir)
+        monkeypatch.setenv("USERPROFILE", temp_dir)
         monkeypatch.delenv("DLL_VIRUSTOTAL_API_KEY", raising=False)
 
         vt_path = Path(temp_dir) / ".vt.toml"
@@ -590,13 +597,14 @@ def test_settings_load_searches_default_locations(monkeypatch) -> None:
         with open(config_path, "w") as f:
             json.dump(config_data, f)
 
-        # Change to temp directory
-        monkeypatch.chdir(temp_dir)
-
-        settings = Settings.load(config_path=None)
-
-        # Should find .config.json in current directory
-        assert settings.http_timeout == 999
+        original_cwd = Path.cwd()
+        try:
+            monkeypatch.chdir(temp_dir)
+            settings = Settings.load(config_path=None)
+            # Should find .config.json in current directory
+            assert settings.http_timeout == 999
+        finally:
+            monkeypatch.chdir(original_cwd)
 
 
 @pytest.mark.unit
@@ -733,7 +741,7 @@ def test_settings_downloads_path_property() -> None:
 
     assert isinstance(path, Path)
     # Use endswith to handle macOS /private/tmp symlink
-    assert str(path).endswith("tmp/downloads")
+    assert path.as_posix().endswith("tmp/downloads")
 
 
 @pytest.mark.unit

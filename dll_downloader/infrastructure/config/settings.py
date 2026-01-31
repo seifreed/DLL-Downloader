@@ -204,7 +204,11 @@ class Settings:
 
     @staticmethod
     def _load_vt_toml_key() -> str | None:
-        vt_path = Path("~/.vt.toml").expanduser()
+        home_override = os.environ.get("HOME")
+        if home_override:
+            vt_path = Path(home_override) / ".vt.toml"
+        else:
+            vt_path = Path("~/.vt.toml").expanduser()
         if not vt_path.exists():
             return None
 
