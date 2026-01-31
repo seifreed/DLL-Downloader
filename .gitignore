@@ -5,6 +5,13 @@
 .claude/
 **/CLAUDE.md
 
+# Local tooling
+.qlty/
+.pre-commit-config.yaml
+.bandit
+.bandit*
+.ruff_cache/
+
 # Debug files
 debug_*.html
 
