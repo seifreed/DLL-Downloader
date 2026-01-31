@@ -1,0 +1,164 @@
+[project]
+name = "dll-downloader"
+version = "1.0.0"
+description = "A Python script to automatically search and download DLL files"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [
+    { name = "Marc Rivero Lopez", email = "mriverolopez@gmail.com" }
+]
+dependencies = [
+    "requests",
+]
+keywords = ["dll", "windows", "download", "security", "virustotal"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "License :: Other/Proprietary License",
+    "Operating System :: OS Independent",
+]
+
+[project.scripts]
+dll-downloader = "dll_downloader.interfaces.cli:main"
+
+[project.optional-dependencies]
+dev = [
+    "black",
+    "ruff",
+    "mypy",
+    "pytest",
+    "pytest-cov",
+    "types-requests",
+    "types-beautifulsoup4",
+    "pre-commit",
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+# Black configuration
+[tool.black]
+line-length = 88
+target-version = ["py310", "py311", "py312", "py313"]
+include = '\.pyi?$'
+exclude = '''
+/(
+    \.git
+    | \.mypy_cache
+    | \.ruff_cache
+    | \.venv
+    | venv
+    | __pycache__
+    | downloads
+)/
+'''
+
+# Ruff configuration
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+exclude = [
+    ".git",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".venv",
+    "venv",
+    "__pycache__",
+    "downloads",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # Pyflakes
+    "I",    # isort
+    "N",    # pep8-naming
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear
+    "C4",   # flake8-comprehensions
+    "SIM",  # flake8-simplify
+]
+ignore = [
+    "E501",  # line too long (handled by black)
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["dll_downloader"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101"]  # Allow assert in tests
+
+# Mypy configuration
+[tool.mypy]
+python_version = "3.10"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+show_error_codes = true
+show_column_numbers = true
+pretty = true
+exclude = [
+    "venv",
+    ".venv",
+    "__pycache__",
+    "downloads",
+]
+
+[[tool.mypy.overrides]]
+module = [
+    "bs4.*",
+]
+ignore_missing_imports = true
+
+# Pytest configuration
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "-v",
+    "--tb=short",
+    "--strict-markers",
+    "--cov=dll_downloader",
+    "--cov=downloader",
+    "--cov-report=term-missing",
+    "--cov-report=html",
+]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
+]
+
+# Coverage configuration
+[tool.coverage.run]
+source = ["dll_downloader", "downloader"]
+branch = true
+omit = [
+    "tests/*",
+    "*/__init__.py",
+    "venv/*",
+    ".venv/*",
+    "*/__pycache__/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "def __repr__",
+    "raise AssertionError",
+    "if __name__ == .__main__.:",
+]
+show_missing = true
+fail_under = 80
+
+[tool.coverage.html]
+directory = "htmlcov"
+title = "DLL-Downloader Coverage Report"

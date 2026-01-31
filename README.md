@@ -1,162 +1,199 @@
-# DLL Downloader
+<p align="center">
+  <img src="https://img.shields.io/badge/DLL--Downloader-Windows%20DLLs-blue?style=for-the-badge" alt="DLL-Downloader">
+</p>
 
-A  Python script to automatically search and download DLL files from [DLL-files.com](https://es.dll-files.com/) by specifying one or multiple DLL names. The script simulates a real browser session to bypass anti-bot protections and always fetches the latest available version of the requested DLLs.
+<h1 align="center">DLL-Downloader</h1>
 
-## Features
-- Download a single DLL or a list from a file
-- Handles anti-bot and compression mechanisms
-- Always fetches the latest version available
-- Saves DLLs in a dedicated `downloads/` folder
-- Professional error handling and session management
-- **NEW**: Architecture selection (x86/x64)
-- **NEW**: VirusTotal malware scanning integration
-- **NEW**: Automatic ZIP extraction and hash verification
-- **NEW**: Clean output with optional debug mode
+<p align="center">
+  <strong>Search, download, and optionally scan DLL files with VirusTotal</strong>
+</p>
 
-## Requirements
-- Python 3.13
-- requests
-- beautifulsoup4
+<p align="center">
+  <a href="https://pypi.org/project/dll-downloader/"><img src="https://img.shields.io/pypi/v/dll-downloader?style=flat-square&logo=pypi&logoColor=white" alt="PyPI Version"></a>
+  <a href="https://pypi.org/project/dll-downloader/"><img src="https://img.shields.io/pypi/pyversions/dll-downloader?style=flat-square&logo=python&logoColor=white" alt="Python Versions"></a>
+  <a href="https://github.com/seifreed/DLL-Downloader/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Custom-green?style=flat-square" alt="License"></a>
+  <a href="https://github.com/seifreed/DLL-Downloader/actions"><img src="https://img.shields.io/github/actions/workflow/status/seifreed/DLL-Downloader/ci.yml?style=flat-square&logo=github&label=CI" alt="CI Status"></a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/seifreed/DLL-Downloader/stargazers"><img src="https://img.shields.io/github/stars/seifreed/DLL-Downloader?style=flat-square" alt="GitHub Stars"></a>
+  <a href="https://github.com/seifreed/DLL-Downloader/issues"><img src="https://img.shields.io/github/issues/seifreed/DLL-Downloader?style=flat-square" alt="GitHub Issues"></a>
+  <a href="https://buymeacoffee.com/seifreed"><img src="https://img.shields.io/badge/Buy%20Me%20a%20Coffee-support-yellow?style=flat-square&logo=buy-me-a-coffee&logoColor=white" alt="Buy Me a Coffee"></a>
+</p>
+
+---
+
+## Overview
+
+**DLL-Downloader** is a Python tool that searches and downloads DLL files from trusted sources and can optionally scan them using VirusTotal. It works as both a CLI tool and a Python library.
+
+### Key Features
+
+| Feature | Description |
+|---------|-------------|
+| **Search & Download** | Resolve DLL names and download the correct file |
+| **Architecture Support** | x86 and x64 downloads |
+| **VirusTotal Scan** | Optional security scan before saving |
+| **Batch Mode** | Download many DLLs from a file |
+| **Library Mode** | Use the downloader directly from Python |
+| **Clean Architecture** | Domain/use-case/infrastructure separation |
+
+---
 
 ## Installation
+
+### From PyPI (Recommended)
+
 ```bash
-pip install -r requirements.txt
+pip install dll-downloader
 ```
+
+### From Source
+
+```bash
+git clone https://github.com/seifreed/DLL-Downloader.git
+cd DLL-Downloader
+python3 -m venv venv
+source venv/bin/activate  # Windows: venv\Scripts\activate
+pip install -e .
+```
+
+---
 
 ## Configuration
 
-1. Copy the example configuration file:
+You can configure settings using `.config.json`, environment variables, or `~/.vt.toml`.
+
+### JSON config (`.config.json`)
+
+```json
+{
+  "virustotal_api_key": "your_virustotal_api_key_here",
+  "download_directory": "./downloads",
+  "download_base_url": "https://es.dll-files.com",
+  "http_timeout": 60,
+  "verify_ssl": true,
+  "scan_before_save": true,
+  "malicious_threshold": 5,
+  "suspicious_threshold": 1,
+  "log_level": "INFO",
+  "user_agent": null
+}
+```
+
+### VirusTotal key via `~/.vt.toml`
+
+```toml
+apikey="your_virustotal_api_key_here"
+```
+
+### Environment variables
+
 ```bash
-cp .config.example.json .config.json
+export DLL_VIRUSTOTAL_API_KEY="your_virustotal_api_key_here"
+export DLL_DOWNLOAD_DIRECTORY="./downloads"
 ```
 
-2. Edit `.config.json` with your settings:
+---
 
-```json
-{
-    "virustotal": {
-        "api_key": "your_virustotal_api_key_here",
-        "enabled": true,
-        "timeout": 30
-    },
-    "download": {
-        "extract_zip": true,
-        "verify_hash": true
-    }
-}
+## Quick Start
+
+```bash
+# Download a single DLL
+python3 dll-downloader.py msvcp140.dll
+
+# Download x86
+python3 dll-downloader.py msvcp140.dll --arch x86
+
+# Download from a list
+python3 dll-downloader.py --file dll_list.txt
 ```
 
-### VirusTotal API Key
-To enable malware scanning, you need a VirusTotal API key:
-1. Sign up at [VirusTotal](https://www.virustotal.com/)
-2. Get your API key from your profile
-3. Replace `"your_virustotal_api_key_here"` with your actual API key
-
-**Note**: The `.config.json` file is ignored by git to protect your API key. Use `.config.example.json` as a template.
-
-## How to Get a VirusTotal API Key
-
-To use the VirusTotal integration, you need a free API key. Follow these steps:
-
-1. Go to [https://www.virustotal.com/](https://www.virustotal.com/)
-2. Click on **Sign up** (top right) and create a free account, or log in if you already have one.
-3. Once logged in, click on your user icon (top right) and select **API key** from the dropdown menu.
-4. Copy the API key shown on the page.
-5. Paste this key into your `.config.json` file under the `api_key` field:
-
-```json
-{
-    "virustotal": {
-        "api_key": "your_virustotal_api_key_here",
-        "enabled": true
-    }
-}
-```
-
-**Note:** The free API key has request limits. For higher usage, consider a paid plan at VirusTotal.
+---
 
 ## Usage
 
-### Download a single DLL
+### Command Line Interface
+
 ```bash
-python dll-downloader.py msvcp140.dll
+python3 dll-downloader.py <dll_name> [options]
 ```
 
-### Download with specific architecture
-```bash
-python dll-downloader.py msvcp140.dll --arch x86
-python dll-downloader.py msvcp140.dll --arch x64
+### Available Options
+
+| Option | Description |
+|--------|-------------|
+| `--file` | File with one DLL name per line |
+| `--arch` | Target architecture (`x86` or `x64`) |
+| `--debug` | Enable debug output |
+| `--no-scan` | Skip VirusTotal scan |
+| `--force` | Force download even if cached |
+| `--output-dir` | Custom output directory |
+
+---
+
+## Python Library
+
+### Basic Usage
+
+```python
+from dll_downloader.application.use_cases.download_dll import DownloadDLLUseCase, DownloadDLLRequest
+from dll_downloader.infrastructure.config.settings import Settings
+from dll_downloader.interfaces.cli import create_dependencies
+from dll_downloader.domain.entities.dll_file import Architecture
+
+settings = Settings.load()
+use_case, http_client, scanner = create_dependencies(settings)
+
+try:
+    response = use_case.execute(DownloadDLLRequest(
+        dll_name="msvcp140.dll",
+        architecture=Architecture.X64,
+        scan_before_save=True,
+        force_download=False,
+    ))
+    print(response)
+finally:
+    http_client.close()
+    if scanner:
+        scanner.close()
 ```
 
-### Download multiple DLLs from a file
-```bash
-python dll-downloader.py --file list.txt
-```
+---
 
-### Enable debug mode for verbose output
-```bash
-python dll-downloader.py msvcp140.dll --debug
-```
+## Requirements
 
-Downloaded DLL files will be saved in the `downloads/` folder.
+- Python 3.10+
+- See `pyproject.toml` for dependencies
 
-## Output Examples
+---
 
-### Normal Mode (Default)
-```
-Filtering for x64 architecture...
-Found x64 version: 14.26.28804.1 - 64
-Found 29 x64 versions
-Downloaded: msvcp140.dll.zip
-Extracting DLL from ZIP...
-Extracted: msvcp140.dll
-Calculating file hash...
-SHA-256 Hash: 3c6a772319fff3ee56d4cedbe332bb5c0c2f394714cf473c6cdf933754114784
-Checking with VirusTotal...
-VirusTotal scan: 0/72 engines detected malware
-✅ No malware detected by VirusTotal
-```
+## Contributing
 
-### Debug Mode (`--debug`)
-```
-Establishing session...
-Searching in: https://es.dll-files.com/search/?q=msvcp140.dll
-Status code: 200
-Response length: 14983 characters
-Content-Encoding: none
-Page title: Resultado de búsqueda para msvcp140.dll | DLL‑files.com
-Saved page content to debug_page.html for inspection
-DLL page: https://es.dll-files.com/msvcp140.dll.html
-Saved DLL page content to debug_dll_page.html for inspection
-Filtering for x64 architecture...
-Found x64 version: 14.26.28804.1 - 64
-...
-Found 29 x64 versions
-Download URL: https://es.dll-files.com/download/...
-Direct URL: https://download.zip.dll-files.com/...
-Downloaded: msvcp140.dll.zip
-Extracting DLL from ZIP...
-Extracted: msvcp140.dll
-Calculating file hash...
-SHA-256 Hash: 3c6a772319fff3ee56d4cedbe332bb5c0c2f394714cf473c6cdf933754114784
-Checking with VirusTotal...
-VirusTotal scan: 0/72 engines detected malware
-✅ No malware detected by VirusTotal
-```
+Contributions are welcome. Please open a PR with clear changes and tests if needed.
 
-## Security Features
+---
 
-The tool includes several security features:
+## Support the Project
 
-1. **Hash Calculation**: Automatically calculates SHA-256 hash of extracted DLLs
-2. **VirusTotal Integration**: Scans downloaded files against 70+ antivirus engines
-3. **Malware Detection**: Warns if any antivirus engine detects malware
-4. **Safe Extraction**: Extracts DLLs from ZIP files safely
+If you find DLL-Downloader useful, consider supporting its development:
+
+<a href="https://buymeacoffee.com/seifreed" target="_blank">
+  <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" height="50">
+</a>
+
+---
 
 ## License
-This project is licensed under a permissive Attribution License. If you use this project or substantial portions of it, you **must** give appropriate credit, provide a link to the repository, and indicate if changes were made. See [LICENSE](LICENSE) for details.
 
-## Attribution
-Author: Marc Rivero | [@seifreed](https://github.com/seifreed)
+See the [LICENSE](LICENSE) file for details.
 
-Project repository: https://github.com/seifreed/DLL-Downloader 
+**Attribution Required:**
+- Author: **Marc Rivero Lopez**
+- Repository: [github.com/seifreed/DLL-Downloader](https://github.com/seifreed/DLL-Downloader)
+
+---
+
+<p align="center">
+  <sub>Built for secure, reliable DLL acquisition</sub>
+</p>

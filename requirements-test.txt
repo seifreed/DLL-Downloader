@@ -1,0 +1,15 @@
+# Copyright (c) 2026 Marc Rivero López
+# Licensed under GPLv3. See LICENSE file for details.
+# Testing dependencies for DLL-Downloader
+
+# Core testing framework
+pytest>=9.0.0
+pytest-cov>=7.0.0
+
+# Test utilities
+pytest-xdist>=3.5.0      # Parallel test execution
+pytest-timeout>=2.2.0    # Test timeout management
+pytest-mock>=3.12.0      # Mock utilities (use sparingly!)
+
+# Code quality
+coverage>=7.10.0         # Coverage measurement
