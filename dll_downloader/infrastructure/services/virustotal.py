@@ -6,25 +6,57 @@ for malware analysis and threat detection.
 """
 
 import logging
+from collections.abc import Mapping
 from dataclasses import replace
 from datetime import datetime
-from typing import cast
+
+import requests
 
 from ...domain.entities.dll_file import DLLFile, SecurityStatus
+from ...domain.errors import SecurityServiceError
 from ...domain.services import calculate_sha256
 from ...domain.services.security_scanner import ISecurityScanner, ScanResult
-from ..base import SessionMixin
+from ..http_session import (
+    HTTPResponseProtocol,
+    HTTPSessionProtocol,
+    HTTPSessionResource,
+)
 
 logger = logging.getLogger(__name__)
 _API_KEY_MISSING = "VirusTotal API key not configured"
 
 
-class VirusTotalError(Exception):
+class VirusTotalError(SecurityServiceError):
     """Exception raised for VirusTotal API errors."""
     pass
 
 
-class VirusTotalScanner(SessionMixin, ISecurityScanner):
+def _safe_json(response: HTTPResponseProtocol) -> dict[str, object]:
+    """Normalize loosely typed HTTP JSON payloads into mappings."""
+    payload = response.json()
+    if not isinstance(payload, Mapping):
+        raise TypeError("VirusTotal response body must be a JSON object")
+    normalized: dict[str, object] = {}
+    for key, value in payload.items():
+        if not isinstance(key, str):
+            raise TypeError("VirusTotal response keys must be strings")
+        normalized[key] = value
+    return normalized
+
+
+def _data_section(payload: Mapping[str, object]) -> dict[str, object]:
+    data = payload.get("data", {})
+    if not isinstance(data, Mapping):
+        return {}
+
+    normalized: dict[str, object] = {}
+    for key, value in data.items():
+        if isinstance(key, str):
+            normalized[key] = value
+    return normalized
+
+
+class VirusTotalScanner(ISecurityScanner):
     """
     Security scanner implementation using VirusTotal API.
 
@@ -36,10 +68,9 @@ class VirusTotalScanner(SessionMixin, ISecurityScanner):
     The scanner supports both API v2 and v3, with v3 being preferred.
 
     Architecture Notes:
-        Inherits from SessionMixin to reuse HTTP session management logic
-        for API communication. This is an intentional infrastructure-layer
-        coupling for shared technical concerns (HTTP connections, cleanup).
-        See base.py for design rationale.
+        Uses a composed HTTPSessionResource for API communication and cleanup.
+        That keeps the technical session lifecycle reusable without coupling
+        scanner behavior to a shared infrastructure base class.
 
     Example:
         >>> scanner = VirusTotalScanner(api_key="your-api-key")
@@ -60,7 +91,8 @@ class VirusTotalScanner(SessionMixin, ISecurityScanner):
         self,
         api_key: str | None = None,
         malicious_threshold: int = 5,
-        suspicious_threshold: int = 1
+        suspicious_threshold: int = 1,
+        session_resource: HTTPSessionResource | None = None,
     ) -> None:
         """
         Initialize the VirusTotal scanner.
@@ -70,15 +102,41 @@ class VirusTotalScanner(SessionMixin, ISecurityScanner):
             malicious_threshold: Number of positive detections to mark as malicious
             suspicious_threshold: Number of positive detections to mark as suspicious
         """
-        super().__init__()
         self._api_key = api_key
         self._malicious_threshold = malicious_threshold
         self._suspicious_threshold = suspicious_threshold
+        session_headers: dict[str, str] = {}
         if self._api_key:
-            self._session_headers = {
+            session_headers = {
                 'x-apikey': self._api_key,
                 'Accept': 'application/json'
             }
+        self._session_resource = session_resource or HTTPSessionResource(
+            headers=session_headers
+        )
+
+    @property
+    def session(self) -> HTTPSessionProtocol:
+        return self._session_resource.session
+
+    @property
+    def has_active_session(self) -> bool:
+        """Report whether this scanner currently owns a live session instance."""
+        return self._session_resource.has_session
+
+    def close(self) -> None:
+        self._session_resource.close()
+
+    def __enter__(self) -> "VirusTotalScanner":
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: object | None,
+    ) -> None:
+        self.close()
 
     @property
     def is_available(self) -> bool:
@@ -128,7 +186,7 @@ class VirusTotalScanner(SessionMixin, ISecurityScanner):
 
             logger.info(
                 "File submitted for analysis: %s",
-                response.json().get('data', {}).get('id')
+                _data_section(_safe_json(response)).get("id"),
             )
             return ScanResult(
                 file_hash=file_hash,
@@ -136,7 +194,7 @@ class VirusTotalScanner(SessionMixin, ISecurityScanner):
                 error_message="File submitted for analysis. Results pending."
             )
 
-        except Exception as e:
+        except (OSError, requests.RequestException, ValueError, TypeError) as e:
             logger.error(f"Failed to upload file to VirusTotal: {e}")
             raise VirusTotalError(f"File upload failed: {e}") from e
 
@@ -169,10 +227,10 @@ class VirusTotalScanner(SessionMixin, ISecurityScanner):
                 raise VirusTotalError(
                     f"API request failed with status {response.status_code}"
                 )
-            return self._parse_response(file_hash, response.json())
+            return self._parse_response(file_hash, _safe_json(response))
         except FileNotFoundError:
             raise
-        except Exception as e:
+        except (requests.RequestException, RuntimeError, TypeError, ValueError) as e:
             logger.error(f"Failed to query VirusTotal: {e}")
             raise VirusTotalError(f"Hash lookup failed: {e}") from e
 
@@ -234,9 +292,9 @@ class VirusTotalScanner(SessionMixin, ISecurityScanner):
                     f"Failed to get report: {response.status_code}"
                 )
 
-            return cast(dict[str, object], response.json())
+            return dict(_safe_json(response))
 
-        except Exception as e:
+        except (requests.RequestException, RuntimeError, TypeError, ValueError) as e:
             logger.error(f"Failed to get detailed report: {e}")
             raise VirusTotalError(f"Report retrieval failed: {e}") from e
 
@@ -259,7 +317,10 @@ class VirusTotalScanner(SessionMixin, ISecurityScanner):
             return SecurityStatus.SUSPICIOUS
         return SecurityStatus.CLEAN if total > 0 else SecurityStatus.UNKNOWN
 
-    def _extract_engine_detections(self, data: dict[str, object]) -> dict[str, str]:
+    def _extract_engine_detections(
+        self,
+        data: Mapping[str, object],
+    ) -> dict[str, str]:
         """
         Extract individual engine detection results from API response.
 
@@ -282,7 +343,11 @@ class VirusTotalScanner(SessionMixin, ISecurityScanner):
                 detections[engine] = verdict
         return detections
 
-    def _parse_response(self, file_hash: str, data: dict[str, object]) -> ScanResult:
+    def _parse_response(
+        self,
+        file_hash: str,
+        data: Mapping[str, object],
+    ) -> ScanResult:
         """
         Parse VirusTotal API response into ScanResult.
 
@@ -329,7 +394,7 @@ class VirusTotalScanner(SessionMixin, ISecurityScanner):
         )
 
     @staticmethod
-    def _extract_attributes(data: dict[str, object]) -> dict[str, object]:
+    def _extract_attributes(data: Mapping[str, object]) -> Mapping[str, object]:
         data_section = data.get("data")
         if isinstance(data_section, dict):
             attributes = data_section.get("attributes")

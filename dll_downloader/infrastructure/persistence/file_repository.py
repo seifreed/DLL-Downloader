@@ -9,7 +9,7 @@ import logging
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
-from typing import cast
+from typing import TypedDict
 
 from ...domain.entities.dll_file import (
     Architecture,
@@ -17,14 +17,32 @@ from ...domain.entities.dll_file import (
     SecurityStatus,
     normalize_dll_name,
 )
+from ...domain.errors import RepositoryOperationError
 from ...domain.repositories.dll_repository import IDLLRepository
 from ...domain.services import calculate_sha256
 
 logger = logging.getLogger(__name__)
-IndexData = dict[str, dict[str, dict[str, object]]]
 
 
-class RepositoryError(Exception):
+class IndexEntry(TypedDict):
+    name: str
+    version: str | None
+    architecture: str
+    file_hash: str | None
+    file_path: str | None
+    download_url: str | None
+    file_size: int | None
+    security_status: str
+    vt_detection_ratio: str | None
+    vt_scan_date: str | None
+    created_at: str | None
+
+
+class IndexData(TypedDict):
+    files: dict[str, IndexEntry]
+
+
+class RepositoryError(RepositoryOperationError):
     """Exception raised for repository operation errors."""
     pass
 
@@ -77,9 +95,23 @@ class FileSystemDLLRepository(IDLLRepository):
 
         try:
             with open(self._index_path) as f:
-                return cast(IndexData, json.load(f))
+                raw_data = json.load(f)
+                if not isinstance(raw_data, dict):
+                    raise ValueError("Index file must contain a JSON object")
+                raw_files = raw_data.get("files", {})
+                if not isinstance(raw_files, dict):
+                    raise ValueError("Index 'files' entry must be an object")
+                return {
+                    "files": {
+                        str(key): self._normalize_index_entry(value)
+                        for key, value in raw_files.items()
+                    }
+                }
         except (OSError, json.JSONDecodeError) as e:
             logger.warning(f"Failed to load index: {e}")
+            return {"files": {}}
+        except ValueError as e:
+            logger.warning(f"Invalid index structure: {e}")
             return {"files": {}}
 
     def _save_index(self, index: IndexData) -> None:
@@ -242,7 +274,7 @@ class FileSystemDLLRepository(IDLLRepository):
             logger.info(f"Deleted DLL: {dll_file.name}")
             return True
 
-        except Exception as e:
+        except (OSError, RepositoryError) as e:
             logger.error(f"Failed to delete DLL {dll_file.name}: {e}")
             return False
 
@@ -259,7 +291,7 @@ class FileSystemDLLRepository(IDLLRepository):
         """
         return self.find_by_name(name, architecture) is not None
 
-    def _serialize_dll(self, dll_file: DLLFile) -> dict[str, object]:
+    def _serialize_dll(self, dll_file: DLLFile) -> IndexEntry:
         """Convert a DLLFile entity to a dictionary for JSON storage."""
         return {
             "name": dll_file.name,
@@ -275,27 +307,25 @@ class FileSystemDLLRepository(IDLLRepository):
             "created_at": dll_file.created_at.isoformat() if dll_file.created_at else None,
         }
 
-    def _deserialize_dll(self, data: dict[str, object]) -> DLLFile:
+    def _deserialize_dll(self, data: IndexEntry) -> DLLFile:
         """Convert a dictionary to a DLLFile entity."""
-        name = cast(str, data["name"])
-        version = cast(str | None, data.get("version"))
-        architecture = Architecture(cast(str, data.get("architecture", "unknown")))
-        file_hash = cast(str | None, data.get("file_hash"))
-        file_path = cast(str | None, data.get("file_path"))
-        download_url = cast(str | None, data.get("download_url"))
-        file_size = cast(int | None, data.get("file_size"))
-        security_status = SecurityStatus(
-            cast(str, data.get("security_status", "not_scanned"))
-        )
-        vt_detection_ratio = cast(str | None, data.get("vt_detection_ratio"))
+        name = data["name"]
+        version = data["version"]
+        architecture = Architecture(data["architecture"])
+        file_hash = data["file_hash"]
+        file_path = data["file_path"]
+        download_url = data["download_url"]
+        file_size = data["file_size"]
+        security_status = SecurityStatus(data["security_status"])
+        vt_detection_ratio = data["vt_detection_ratio"]
 
-        vt_scan_date_raw = data.get("vt_scan_date")
+        vt_scan_date_raw = data["vt_scan_date"]
         vt_scan_date = (
             datetime.fromisoformat(vt_scan_date_raw)
             if isinstance(vt_scan_date_raw, str)
             else None
         )
-        created_at_raw = data.get("created_at")
+        created_at_raw = data["created_at"]
         created_at = (
             datetime.fromisoformat(created_at_raw)
             if isinstance(created_at_raw, str)
@@ -335,3 +365,51 @@ class FileSystemDLLRepository(IDLLRepository):
             file_path=str(file_path),
             file_size=len(content),
         )
+
+    @staticmethod
+    def _normalize_index_entry(raw_entry: object) -> IndexEntry:
+        """Normalize loosely typed JSON metadata into a typed index entry."""
+        if not isinstance(raw_entry, dict):
+            raise ValueError("Index entry must be an object")
+
+        name = raw_entry.get("name")
+        architecture = raw_entry.get("architecture", "unknown")
+        security_status = raw_entry.get("security_status", "not_scanned")
+        file_size = raw_entry.get("file_size")
+
+        if not isinstance(name, str):
+            raise ValueError("Index entry 'name' must be a string")
+        if not isinstance(architecture, str):
+            raise ValueError("Index entry 'architecture' must be a string")
+        if not isinstance(security_status, str):
+            raise ValueError("Index entry 'security_status' must be a string")
+        if file_size is not None and not isinstance(file_size, int):
+            raise ValueError("Index entry 'file_size' must be an integer or null")
+
+        return {
+            "name": name,
+            "version": raw_entry.get("version")
+            if isinstance(raw_entry.get("version"), str)
+            else None,
+            "architecture": architecture,
+            "file_hash": raw_entry.get("file_hash")
+            if isinstance(raw_entry.get("file_hash"), str)
+            else None,
+            "file_path": raw_entry.get("file_path")
+            if isinstance(raw_entry.get("file_path"), str)
+            else None,
+            "download_url": raw_entry.get("download_url")
+            if isinstance(raw_entry.get("download_url"), str)
+            else None,
+            "file_size": file_size,
+            "security_status": security_status,
+            "vt_detection_ratio": raw_entry.get("vt_detection_ratio")
+            if isinstance(raw_entry.get("vt_detection_ratio"), str)
+            else None,
+            "vt_scan_date": raw_entry.get("vt_scan_date")
+            if isinstance(raw_entry.get("vt_scan_date"), str)
+            else None,
+            "created_at": raw_entry.get("created_at")
+            if isinstance(raw_entry.get("created_at"), str)
+            else None,
+        }

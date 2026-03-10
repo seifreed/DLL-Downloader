@@ -14,7 +14,7 @@ import os
 import tempfile
 from collections.abc import Generator
 from pathlib import Path
-from typing import Any
+from typing import TypedDict
 
 import pytest
 
@@ -91,8 +91,24 @@ def sample_zip_with_dll(tmp_download_dir: Path) -> Path:
     return zip_path
 
 
+class VirusTotalConfig(TypedDict):
+    api_key: str
+    enabled: bool
+    timeout: int
+
+
+class DownloadConfig(TypedDict):
+    extract_zip: bool
+    verify_hash: bool
+
+
+class TestConfig(TypedDict):
+    virustotal: VirusTotalConfig
+    download: DownloadConfig
+
+
 @pytest.fixture
-def mock_config() -> dict[str, Any]:
+def mock_config() -> TestConfig:
     """
     Provide a test configuration dictionary.
 
@@ -118,7 +134,7 @@ def mock_config() -> dict[str, Any]:
 
 
 @pytest.fixture
-def config_file(tmp_download_dir: Path, mock_config: dict[str, Any]) -> Path:
+def config_file(tmp_download_dir: Path, mock_config: TestConfig) -> Path:
     """
     Create a temporary configuration file.
 
@@ -246,7 +262,7 @@ def test_http_server() -> Generator[int, None, None]:
                 self.send_response(404)
                 self.end_headers()
 
-        def log_message(self, format: str, *args: Any) -> None:
+        def log_message(self, format: str, *args: object) -> None:
             """Suppress logging."""
             pass
 
@@ -306,7 +322,7 @@ def vt_mock_server() -> Generator[int, None, None]:
             self.end_headers()
             self.wfile.write(body)
 
-        def log_message(self, format: str, *args: Any) -> None:
+        def log_message(self, format: str, *args: object) -> None:
             """Suppress logging."""
             pass
 

@@ -32,6 +32,7 @@
 | Feature | Description |
 |---------|-------------|
 | **Search & Download** | Resolve DLL names and download the correct file |
+| **ZIP Extraction** | Optionally extract the DLL when the source returns a ZIP |
 | **Architecture Support** | x86 and x64 downloads |
 | **VirusTotal Scan** | Optional security scan before saving |
 | **Batch Mode** | Download many DLLs from a file |
@@ -105,6 +106,9 @@ python3 dll-downloader.py msvcp140.dll
 # Download x86
 python3 dll-downloader.py msvcp140.dll --arch x86
 
+# Download and extract when the source returns a ZIP
+python3 dll-downloader.py msvcp140.dll --extract
+
 # Download from a list
 python3 dll-downloader.py --file dll_list.txt
 ```
@@ -129,6 +133,14 @@ python3 dll-downloader.py <dll_name> [options]
 | `--no-scan` | Skip VirusTotal scan |
 | `--force` | Force download even if cached |
 | `--output-dir` | Custom output directory |
+| `--extract` | Extract the DLL when the download is a ZIP archive |
+
+Some providers return the DLL inside a ZIP archive. By default, `dll-downloader`
+expects the payload to be a real ZIP and validates that it contains a valid PE
+DLL. Without `--extract`, the validated ZIP is saved as-is. With `--extract`,
+the tool saves the unpacked `.dll`, which is useful in CI/CD workflows. If the
+payload is not a valid ZIP or the embedded DLL is not a valid PE file, the
+download fails with an explicit error.
 
 ---
 
@@ -137,12 +149,16 @@ python3 dll-downloader.py <dll_name> [options]
 ### Basic Usage
 
 ```python
-from dll_downloader.application.use_cases.download_dll import DownloadDLLUseCase, DownloadDLLRequest
-from dll_downloader.infrastructure.config.settings import Settings
-from dll_downloader.interfaces.cli import create_dependencies
-from dll_downloader.domain.entities.dll_file import Architecture
+from dll_downloader.api import (
+    Architecture,
+    DownloadDLLRequest,
+)
+from dll_downloader.runtime import (
+    load_settings,
+    create_dependencies,
+)
 
-settings = Settings.load()
+settings = load_settings()
 use_case, http_client, scanner = create_dependencies(settings)
 
 try:
@@ -151,6 +167,7 @@ try:
         architecture=Architecture.X64,
         scan_before_save=True,
         force_download=False,
+        extract_archive=True,
     ))
     print(response)
 finally:

@@ -11,6 +11,9 @@ No mocks or stubs are used.
 """
 
 import hashlib
+import io
+import zipfile
+from collections.abc import Mapping
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
@@ -26,12 +29,29 @@ from dll_downloader.domain.entities.dll_file import (
     DLLFile,
     SecurityStatus,
 )
+from dll_downloader.domain.errors import HTTPServiceError
+from dll_downloader.domain.services.http_client import HTTPFileInfo, IHTTPClient
+from dll_downloader.domain.services.security_scanner import ISecurityScanner, ScanResult
 from dll_downloader.infrastructure.persistence.file_repository import (
     FileSystemDLLRepository,
 )
 
 
-class InMemoryHTTPClient:
+def _require_dll_file(response_dll_file: DLLFile | None) -> DLLFile:
+    """Narrow optional DLLFile values in integration tests."""
+    assert response_dll_file is not None
+    return response_dll_file
+
+
+def _build_zip_payload(dll_name: str, dll_bytes: bytes) -> bytes:
+    """Create a valid ZIP payload containing the requested DLL."""
+    archive_buffer = io.BytesIO()
+    with zipfile.ZipFile(archive_buffer, "w") as archive:
+        archive.writestr(dll_name, dll_bytes)
+    return archive_buffer.getvalue()
+
+
+class InMemoryHTTPClient(IHTTPClient):
     """
     Lightweight HTTP client that serves DLL content from memory.
 
@@ -42,9 +62,14 @@ class InMemoryHTTPClient:
     def __init__(self) -> None:
         """Initialize the in-memory HTTP client with a content registry."""
         self._content_registry: dict[str, bytes] = {}
-        self._file_info_registry: dict[str, dict] = {}
+        self._file_info_registry: dict[str, HTTPFileInfo] = {}
 
-    def register_url(self, url: str, content: bytes, metadata: dict | None = None) -> None:
+    def register_url(
+        self,
+        url: str,
+        content: bytes,
+        metadata: HTTPFileInfo | None = None,
+    ) -> None:
         """
         Register URL with content to be returned.
 
@@ -55,11 +80,18 @@ class InMemoryHTTPClient:
         """
         self._content_registry[url] = content
         self._file_info_registry[url] = metadata or {
-            "size": len(content),
             "content_type": "application/octet-stream",
+            "content_length": len(content),
+            "last_modified": None,
+            "etag": None,
+            "accept_ranges": False,
         }
 
-    def download(self, url: str) -> bytes:
+    def download(
+        self,
+        url: str,
+        headers: Mapping[str, str] | None = None,
+    ) -> bytes:
         """
         Download content from registered URL.
 
@@ -73,10 +105,18 @@ class InMemoryHTTPClient:
             ValueError: If URL is not registered
         """
         if url not in self._content_registry:
-            raise ValueError(f"URL not found: {url}")
+            raise HTTPServiceError(f"URL not found: {url}")
         return self._content_registry[url]
 
-    def get_file_info(self, url: str) -> dict:
+    def get_text(
+        self,
+        url: str,
+        headers: Mapping[str, str] | None = None,
+    ) -> str:
+        """Get textual content from registered URL."""
+        return self.download(url, headers=headers).decode("utf-8", errors="replace")
+
+    def get_file_info(self, url: str) -> HTTPFileInfo:
         """
         Get file metadata without downloading.
 
@@ -90,11 +130,11 @@ class InMemoryHTTPClient:
             ValueError: If URL is not registered
         """
         if url not in self._file_info_registry:
-            raise ValueError(f"URL not found: {url}")
+            raise HTTPServiceError(f"URL not found: {url}")
         return self._file_info_registry[url]
 
 
-class StaticSecurityScanner:
+class StaticSecurityScanner(ISecurityScanner):
     """
     Lightweight security scanner with predefined scan results.
 
@@ -163,6 +203,34 @@ class StaticSecurityScanner:
                 vt_scan_date=datetime(2026, 1, 31, 12, 0, 0)
             )
 
+    def scan_file(self, file_path: str) -> ScanResult:
+        """Return a deterministic scan result for compatibility with the port."""
+        return ScanResult(
+            file_hash=file_path,
+            status=SecurityStatus.UNKNOWN,
+            detection_ratio="0/0",
+        )
+
+    def scan_hash(self, file_hash: str) -> ScanResult:
+        """Return a deterministic scan result from the configured registry."""
+        if file_hash in self._scan_results:
+            status, ratio = self._scan_results[file_hash]
+            return ScanResult(file_hash=file_hash, status=status, detection_ratio=ratio)
+        return ScanResult(
+            file_hash=file_hash,
+            status=SecurityStatus.CLEAN,
+            detection_ratio="0/72",
+        )
+
+    def get_detailed_report(self, file_hash: str) -> dict[str, object]:
+        """Provide a minimal structured report."""
+        result = self.scan_hash(file_hash)
+        return {
+            "hash": result.file_hash,
+            "status": result.status.value,
+            "ratio": result.detection_ratio,
+        }
+
 
 @pytest.fixture
 def http_client() -> InMemoryHTTPClient:
@@ -228,10 +296,10 @@ def use_case(
 @pytest.fixture
 def sample_dll_content() -> bytes:
     """
-    Generate realistic DLL binary content.
+    Generate realistic ZIP payload containing a valid DLL.
 
     Returns:
-        Bytes representing a minimal valid DLL structure
+        ZIP bytes containing a minimal valid DLL structure
     """
     dos_header = b'MZ\x90\x00'  # DOS signature
     dos_stub = b'\x03\x00\x00\x00\x04\x00\x00\x00\xff\xff\x00\x00'
@@ -240,7 +308,8 @@ def sample_dll_content() -> bytes:
     pe_signature = b'PE\x00\x00'  # PE signature
     content = b'Test DLL content for integration testing.' * 50
 
-    return dos_header + dos_stub + dos_padding + dos_filler + pe_signature + content
+    dll_bytes = dos_header + dos_stub + dos_padding + dos_filler + pe_signature + content
+    return _build_zip_payload("sample.dll", dll_bytes)
 
 
 class TestDownloadFlowBasicOperations:
@@ -276,9 +345,9 @@ class TestDownloadFlowBasicOperations:
 
         # Verify response
         assert response.success is True
-        assert response.dll_file is not None
-        assert response.dll_file.name == "kernel32.dll"
-        assert response.dll_file.architecture == Architecture.X64
+        dll_file = _require_dll_file(response.dll_file)
+        assert dll_file.name == "kernel32.dll"
+        assert dll_file.architecture == Architecture.X64
         assert response.was_cached is False
         assert response.error_message is None
 
@@ -313,7 +382,7 @@ class TestDownloadFlowBasicOperations:
         response = use_case.execute(request)
 
         expected_hash = hashlib.sha256(sample_dll_content).hexdigest()
-        assert response.dll_file.file_hash == expected_hash
+        assert _require_dll_file(response.dll_file).file_hash == expected_hash
 
     def test_download_x86_architecture(
         self,
@@ -342,7 +411,7 @@ class TestDownloadFlowBasicOperations:
         response = use_case.execute(request)
 
         assert response.success is True
-        assert response.dll_file.architecture == Architecture.X86
+        assert _require_dll_file(response.dll_file).architecture == Architecture.X86
 
         # Verify file is in x86 directory
         expected_path = tmp_path / "x86" / "user32.dll"
@@ -381,8 +450,7 @@ class TestDownloadFlowCaching:
 
         assert response.success is True
         assert response.was_cached is True
-        assert response.dll_file is not None
-        assert response.dll_file.version == "1.0"
+        assert _require_dll_file(response.dll_file).version == "1.0"
 
     def test_force_download_bypasses_cache(
         self,
@@ -405,7 +473,7 @@ class TestDownloadFlowCaching:
         repository.save(dll, sample_dll_content)
 
         # Register new content
-        new_content = b"MZ\x90\x00new version content"
+        new_content = _build_zip_payload("force.dll", b"MZ\x90\x00new version content")
         url = "https://test.example.com/dlls/x64/force.dll"
         http_client.register_url(url, new_content)
 
@@ -423,7 +491,7 @@ class TestDownloadFlowCaching:
 
         # Verify content was updated
         new_hash = hashlib.sha256(new_content).hexdigest()
-        assert response.dll_file.file_hash == new_hash
+        assert _require_dll_file(response.dll_file).file_hash == new_hash
 
 
 class TestDownloadFlowSecurityScanning:
@@ -460,8 +528,9 @@ class TestDownloadFlowSecurityScanning:
         response = use_case.execute(request)
 
         assert response.success is True
-        assert response.dll_file.security_status == SecurityStatus.CLEAN
-        assert response.dll_file.vt_detection_ratio == "0/72"
+        dll_file = _require_dll_file(response.dll_file)
+        assert dll_file.security_status == SecurityStatus.CLEAN
+        assert dll_file.vt_detection_ratio == "0/72"
         assert response.security_warning is None
 
     def test_download_with_security_scan_suspicious(
@@ -495,8 +564,9 @@ class TestDownloadFlowSecurityScanning:
         response = use_case.execute(request)
 
         assert response.success is True
-        assert response.dll_file.security_status == SecurityStatus.SUSPICIOUS
-        assert response.dll_file.vt_detection_ratio == "3/72"
+        dll_file = _require_dll_file(response.dll_file)
+        assert dll_file.security_status == SecurityStatus.SUSPICIOUS
+        assert dll_file.vt_detection_ratio == "3/72"
         assert response.security_warning is not None
         assert "CAUTION" in response.security_warning
         assert "3/72" in response.security_warning
@@ -532,8 +602,9 @@ class TestDownloadFlowSecurityScanning:
         response = use_case.execute(request)
 
         assert response.success is True
-        assert response.dll_file.security_status == SecurityStatus.MALICIOUS
-        assert response.dll_file.vt_detection_ratio == "45/72"
+        dll_file = _require_dll_file(response.dll_file)
+        assert dll_file.security_status == SecurityStatus.MALICIOUS
+        assert dll_file.vt_detection_ratio == "45/72"
         assert response.security_warning is not None
         assert "WARNING" in response.security_warning
         assert "45/72" in response.security_warning
@@ -576,7 +647,7 @@ class TestDownloadFlowSecurityScanning:
         response = use_case.execute(request)
 
         assert response.success is True
-        assert response.dll_file.security_status == SecurityStatus.NOT_SCANNED
+        assert _require_dll_file(response.dll_file).security_status == SecurityStatus.NOT_SCANNED
         assert response.security_warning is None
 
     def test_download_with_scan_disabled(
@@ -605,8 +676,9 @@ class TestDownloadFlowSecurityScanning:
         response = use_case.execute(request)
 
         assert response.success is True
-        assert response.dll_file.security_status == SecurityStatus.NOT_SCANNED
-        assert response.dll_file.vt_detection_ratio is None
+        dll_file = _require_dll_file(response.dll_file)
+        assert dll_file.security_status == SecurityStatus.NOT_SCANNED
+        assert dll_file.vt_detection_ratio is None
 
 
 class TestDownloadFlowErrorHandling:
@@ -670,7 +742,7 @@ class TestDownloadFlowErrorHandling:
         response = use_case.execute(request)
 
         assert response.success is True
-        assert response.dll_file.security_status == SecurityStatus.NOT_SCANNED
+        assert _require_dll_file(response.dll_file).security_status == SecurityStatus.NOT_SCANNED
         assert response.security_warning is None
 
 
@@ -718,7 +790,7 @@ class TestDownloadFlowEndToEnd:
         assert response.dll_file is not None
 
         # Verify DLL entity
-        dll = response.dll_file
+        dll = _require_dll_file(response.dll_file)
         assert dll.name == "complete.dll"
         assert dll.architecture == Architecture.X64
         assert dll.file_hash == file_hash
@@ -727,6 +799,7 @@ class TestDownloadFlowEndToEnd:
         assert dll.file_size == len(sample_dll_content)
 
         # Verify filesystem
+        assert dll.file_path is not None
         file_path = Path(dll.file_path)
         assert file_path.exists()
         assert file_path.read_bytes() == sample_dll_content
@@ -764,7 +837,7 @@ class TestDownloadFlowEndToEnd:
 
         for dll_name, arch in dlls:
             url = f"https://test.example.com/dlls/{arch.value}/{dll_name}"
-            content = dll_name.encode() + sample_dll_content
+            content = _build_zip_payload(dll_name, b"MZ\x90\x00" + dll_name.encode())
             http_client.register_url(url, content)
 
             request = DownloadDLLRequest(
@@ -803,7 +876,7 @@ class TestDownloadFlowEndToEnd:
         url = f"https://test.example.com/dlls/x64/{dll_name}"
 
         # Version 1
-        v1_content = b"MZ\x90\x00version 1 content"
+        v1_content = _build_zip_payload(dll_name, b"MZ\x90\x00version 1 content")
         http_client.register_url(url, v1_content)
 
         request = DownloadDLLRequest(
@@ -816,16 +889,16 @@ class TestDownloadFlowEndToEnd:
         response1 = use_case.execute(request)
         assert response1.success is True
         assert response1.was_cached is False
-        v1_hash = response1.dll_file.file_hash
+        v1_hash = _require_dll_file(response1.dll_file).file_hash
 
         # Second download (cached)
         response2 = use_case.execute(request)
         assert response2.success is True
         assert response2.was_cached is True
-        assert response2.dll_file.file_hash == v1_hash
+        assert _require_dll_file(response2.dll_file).file_hash == v1_hash
 
         # Update content
-        v2_content = b"MZ\x90\x00version 2 content"
+        v2_content = _build_zip_payload(dll_name, b"MZ\x90\x00version 2 content")
         http_client.register_url(url, v2_content)
 
         # Force re-download
@@ -833,11 +906,12 @@ class TestDownloadFlowEndToEnd:
         response3 = use_case.execute(request)
         assert response3.success is True
         assert response3.was_cached is False
-        v2_hash = response3.dll_file.file_hash
+        v2_hash = _require_dll_file(response3.dll_file).file_hash
         assert v2_hash != v1_hash
 
         # Verify updated content
         found = repository.find_by_name(dll_name, Architecture.X64)
+        assert found is not None
         assert found.file_hash == v2_hash
 
     def test_download_with_different_architectures_same_name(
@@ -860,12 +934,12 @@ class TestDownloadFlowEndToEnd:
 
         # x64 version
         x64_url = "https://test.example.com/dlls/x64/multiarch.dll"
-        x64_content = b"MZ\x90\x00x64 specific content" + sample_dll_content
+        x64_content = _build_zip_payload(dll_name, b"MZ\x90\x00x64 specific content")
         http_client.register_url(x64_url, x64_content)
 
         # x86 version
         x86_url = "https://test.example.com/dlls/x86/multiarch.dll"
-        x86_content = b"MZ\x90\x00x86 specific content" + sample_dll_content
+        x86_content = _build_zip_payload(dll_name, b"MZ\x90\x00x86 specific content")
         http_client.register_url(x86_url, x86_content)
 
         # Download x64
@@ -889,7 +963,9 @@ class TestDownloadFlowEndToEnd:
         assert response_x86.success is True
 
         # Verify different hashes
-        assert response_x64.dll_file.file_hash != response_x86.dll_file.file_hash
+        assert _require_dll_file(response_x64.dll_file).file_hash != _require_dll_file(
+            response_x86.dll_file
+        ).file_hash
 
         # Verify both are in repository
         found_x64 = repository.find_by_name(dll_name, Architecture.X64)
@@ -900,5 +976,7 @@ class TestDownloadFlowEndToEnd:
         assert found_x64.file_path != found_x86.file_path
 
         # Verify file paths are in correct directories
+        assert found_x64.file_path is not None
+        assert found_x86.file_path is not None
         assert "x64" in found_x64.file_path
         assert "x86" in found_x86.file_path

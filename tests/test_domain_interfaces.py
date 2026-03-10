@@ -1,3 +1,6 @@
+from collections.abc import Mapping
+from typing import cast
+
 import pytest
 
 from dll_downloader.domain.entities.dll_file import (
@@ -7,6 +10,7 @@ from dll_downloader.domain.entities.dll_file import (
 )
 from dll_downloader.domain.repositories.dll_repository import IDLLRepository
 from dll_downloader.domain.services.download_resolver import IDownloadURLResolver
+from dll_downloader.domain.services.http_client import HTTPFileInfo, IHTTPClient
 from dll_downloader.domain.services.security_scanner import ISecurityScanner, ScanResult
 
 
@@ -14,20 +18,43 @@ class DummyRepository(IDLLRepository):
     def save(self, dll_file: DLLFile, content: bytes) -> DLLFile:
         return IDLLRepository.save(self, dll_file, content)
 
-    def find_by_name(self, name: str, architecture=None):
+    def find_by_name(
+        self,
+        name: str,
+        architecture: Architecture | None = None,
+    ) -> DLLFile | None:
         return IDLLRepository.find_by_name(self, name, architecture)
 
-    def find_by_hash(self, file_hash: str):
+    def find_by_hash(self, file_hash: str) -> DLLFile | None:
         return IDLLRepository.find_by_hash(self, file_hash)
 
-    def list_all(self):
+    def list_all(self) -> list[DLLFile]:
         return IDLLRepository.list_all(self)
 
     def delete(self, dll_file: DLLFile) -> bool:
         return IDLLRepository.delete(self, dll_file)
 
-    def exists(self, name: str, architecture=None) -> bool:
+    def exists(self, name: str, architecture: Architecture | None = None) -> bool:
         return IDLLRepository.exists(self, name, architecture)
+
+
+class DummyHTTPClient(IHTTPClient):
+    def download(
+        self,
+        url: str,
+        headers: Mapping[str, str] | None = None,
+    ) -> bytes:
+        return IHTTPClient.download(self, url, headers)
+
+    def get_text(
+        self,
+        url: str,
+        headers: Mapping[str, str] | None = None,
+    ) -> str:
+        return IHTTPClient.get_text(self, url, headers)
+
+    def get_file_info(self, url: str) -> HTTPFileInfo:
+        return IHTTPClient.get_file_info(self, url)
 
 
 class DummyScanner(ISecurityScanner):
@@ -40,12 +67,12 @@ class DummyScanner(ISecurityScanner):
     def scan_dll(self, dll_file: DLLFile) -> DLLFile:
         return ISecurityScanner.scan_dll(self, dll_file)
 
-    def get_detailed_report(self, file_hash: str) -> dict:
+    def get_detailed_report(self, file_hash: str) -> dict[str, object]:
         return ISecurityScanner.get_detailed_report(self, file_hash)
 
     @property
     def is_available(self) -> bool:
-        return ISecurityScanner.is_available.fget(self)
+        return cast(bool, ISecurityScanner.is_available.__get__(self, DummyScanner))
 
 
 @pytest.mark.unit
@@ -95,4 +122,14 @@ def test_isecurityscanner_pass_throughs() -> None:
 
 @pytest.mark.unit
 def test_download_resolver_protocol_body() -> None:
-    assert IDownloadURLResolver.resolve_download_url(None, "a.dll", Architecture.X64) is None
+    resolver = cast(IDownloadURLResolver, None)
+    assert IDownloadURLResolver.resolve_download_url(resolver, "a.dll", Architecture.X64) is None
+
+
+@pytest.mark.unit
+def test_ihttpclient_protocol_method_bodies() -> None:
+    client: IHTTPClient = DummyHTTPClient()
+
+    assert client.download("url") is None
+    assert client.get_text("url") is None
+    assert client.get_file_info("url") is None

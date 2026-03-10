@@ -54,9 +54,9 @@ def test_architecture_enum_comparison() -> None:
     Expected Behavior:
         Same architecture constants are equal, different ones are not.
     """
-    assert Architecture.X64 == Architecture.X64
-    assert Architecture.X86 != Architecture.X64
-    assert Architecture.ARM != Architecture.ARM64
+    assert len({Architecture.X64, Architecture.X64}) == 1
+    assert len({Architecture.X86, Architecture.X64}) == 2
+    assert len({Architecture.ARM, Architecture.ARM64}) == 2
 
 
 # ============================================================================
@@ -92,9 +92,9 @@ def test_security_status_enum_comparison() -> None:
     Expected Behavior:
         Same status constants are equal, different ones are not.
     """
-    assert SecurityStatus.CLEAN == SecurityStatus.CLEAN
-    assert SecurityStatus.CLEAN != SecurityStatus.MALICIOUS
-    assert SecurityStatus.SUSPICIOUS != SecurityStatus.UNKNOWN
+    assert len({SecurityStatus.CLEAN, SecurityStatus.CLEAN}) == 1
+    assert len({SecurityStatus.CLEAN, SecurityStatus.MALICIOUS}) == 2
+    assert len({SecurityStatus.SUSPICIOUS, SecurityStatus.UNKNOWN}) == 2
 
 
 # ============================================================================

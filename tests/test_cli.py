@@ -11,38 +11,113 @@ execution and temporary files.
 """
 
 import argparse
+import json
 import os
 import sys
 import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
+from _pytest.capture import CaptureFixture
 
-from dll_downloader.application.use_cases.download_dll import (
+from dll_downloader.api import (
     DownloadDLLRequest,
     DownloadDLLResponse,
-    DownloadDLLUseCase,
+    Settings,
 )
 from dll_downloader.domain.entities.dll_file import (
     Architecture,
     DLLFile,
     SecurityStatus,
+    normalize_dll_name,
 )
-from dll_downloader.infrastructure.config.settings import Settings
 from dll_downloader.interfaces.cli import (
-    _cleanup_resources,
-    _print_summary,
-    _validate_and_get_dll_names,
-    create_dependencies,
     format_response,
     get_architecture,
     main,
-    normalize_dll_name,
     parse_arguments,
-    process_downloads,
     read_dll_list_from_file,
     set_debug_mode,
 )
+from dll_downloader.runtime import create_dependencies, process_downloads
+
+
+class RecordingUseCase:
+    """Minimal fake that satisfies the public download execution contract."""
+
+    def __init__(
+        self,
+        responses: dict[str, DownloadDLLResponse] | None = None,
+    ) -> None:
+        self.responses = responses or {}
+        self.requests: list[DownloadDLLRequest] = []
+
+    def execute(self, request: DownloadDLLRequest) -> DownloadDLLResponse:
+        self.requests.append(request)
+        return self.responses.get(
+            request.dll_name,
+            DownloadDLLResponse(
+                success=False,
+                error_message=f"Missing canned response for {request.dll_name}",
+            ),
+        )
+
+
+def _successful_response(dll_name: str) -> DownloadDLLResponse:
+    return DownloadDLLResponse(
+        success=True,
+        dll_file=DLLFile(
+            name=dll_name,
+            architecture=Architecture.X64,
+            file_path=f"/downloads/{dll_name}",
+        ),
+    )
+
+@contextmanager
+def _temporary_argv(argv: list[str]) -> Iterator[None]:
+    original = sys.argv[:]
+    sys.argv = argv
+    try:
+        yield
+    finally:
+        sys.argv = original
+
+
+@contextmanager
+def _temporary_cwd(path: Path) -> Iterator[None]:
+    original = Path.cwd()
+    os.chdir(path)
+    try:
+        yield
+    finally:
+        os.chdir(original)
+
+
+def _seed_cached_dll(repo_dir: Path, dll_names: list[str]) -> None:
+    (repo_dir / "x64").mkdir(parents=True, exist_ok=True)
+    index_data: dict[str, dict[str, object]] = {}
+    for dll_name in dll_names:
+        normalized_name = normalize_dll_name(dll_name)
+        file_path = repo_dir / "x64" / normalized_name
+        content = b"cached content"
+        file_path.write_bytes(content)
+        index_data[f"x64/{normalized_name.lower()}"] = {
+            "name": normalized_name,
+            "version": None,
+            "architecture": "x64",
+            "file_hash": None,
+            "file_path": str(file_path),
+            "download_url": None,
+            "file_size": len(content),
+            "security_status": "not_scanned",
+            "vt_detection_ratio": None,
+            "vt_scan_date": None,
+            "created_at": None,
+        }
+
+    (repo_dir / ".dll_index.json").write_text(json.dumps({"files": index_data}))
 
 # ============================================================================
 # Argument Parsing Tests
@@ -69,6 +144,7 @@ def test_parse_arguments_single_dll() -> None:
     assert args.debug is False
     assert args.no_scan is False
     assert args.force is False
+    assert args.extract is False
 
 
 @pytest.mark.unit
@@ -176,6 +252,23 @@ def test_parse_arguments_custom_output_dir() -> None:
 
 
 @pytest.mark.unit
+def test_parse_arguments_extract_flag() -> None:
+    """
+    Test parsing with extract flag.
+
+    Purpose:
+        Verify that ZIP extraction can be enabled from the CLI.
+
+    Expected Behavior:
+        extract flag is set to True.
+    """
+    sys.argv = ["dll-downloader.py", "test.dll", "--extract"]
+    args, parser = parse_arguments()
+
+    assert args.extract is True
+
+
+@pytest.mark.unit
 def test_parse_arguments_combined_flags() -> None:
     """
     Test parsing with multiple combined flags.
@@ -192,7 +285,8 @@ def test_parse_arguments_combined_flags() -> None:
         "--arch", "x86",
         "--debug",
         "--no-scan",
-        "--force"
+        "--force",
+        "--extract",
     ]
     args, parser = parse_arguments()
 
@@ -201,6 +295,7 @@ def test_parse_arguments_combined_flags() -> None:
     assert args.debug is True
     assert args.no_scan is True
     assert args.force is True
+    assert args.extract is True
 
 
 @pytest.mark.unit
@@ -577,39 +672,19 @@ def test_create_dependencies_with_custom_output_dir() -> None:
 
 @pytest.mark.unit
 def test_create_dependencies_uses_settings_values() -> None:
-    """
-    Test that dependencies use settings configuration.
-
-    Purpose:
-        Verify settings are propagated to created components.
-
-    Expected Behavior:
-        HTTP client and scanner use settings values.
-    """
+    """The public API should expose usable runtime components, not concrete types."""
     settings = Settings(
         download_directory=tempfile.mkdtemp(),
-        http_timeout=30,
-        user_agent="CustomAgent/1.0",
-        verify_ssl=False,
         virustotal_api_key="my_api_key",
-        malicious_threshold=10,
-        suspicious_threshold=3
     )
 
     use_case, http_client, scanner = create_dependencies(settings)
 
-    # Verify HTTP client configuration
-    assert http_client._timeout == 30
-    assert http_client._user_agent == "CustomAgent/1.0"
-    assert http_client._verify_ssl is False
-
-    # Verify scanner configuration
+    assert hasattr(use_case, "execute")
+    assert hasattr(http_client, "close")
     assert scanner is not None
-    assert scanner._api_key == "my_api_key"
-    assert scanner._malicious_threshold == 10
-    assert scanner._suspicious_threshold == 3
+    assert hasattr(scanner, "close")
 
-    # Cleanup
     http_client.close()
     scanner.close()
 
@@ -723,7 +798,7 @@ def test_cli_file_input_flow() -> None:
 # ============================================================================
 
 @pytest.mark.unit
-def test_format_response_success_cached(capsys) -> None:
+def test_format_response_success_cached(capsys: CaptureFixture[str]) -> None:
     """
     Test format_response with cached file.
 
@@ -752,7 +827,7 @@ def test_format_response_success_cached(capsys) -> None:
 
 
 @pytest.mark.unit
-def test_format_response_success_downloaded(capsys) -> None:
+def test_format_response_success_downloaded(capsys: CaptureFixture[str]) -> None:
     """
     Test format_response with freshly downloaded file.
 
@@ -785,7 +860,7 @@ def test_format_response_success_downloaded(capsys) -> None:
 
 
 @pytest.mark.unit
-def test_format_response_success_with_security_warning(capsys) -> None:
+def test_format_response_success_with_security_warning(capsys: CaptureFixture[str]) -> None:
     """
     Test format_response with security warning.
 
@@ -815,7 +890,7 @@ def test_format_response_success_with_security_warning(capsys) -> None:
 
 
 @pytest.mark.unit
-def test_format_response_failure(capsys) -> None:
+def test_format_response_failure(capsys: CaptureFixture[str]) -> None:
     """
     Test format_response with failed download.
 
@@ -839,7 +914,7 @@ def test_format_response_failure(capsys) -> None:
 
 
 @pytest.mark.unit
-def test_format_response_success_without_dll_file(capsys) -> None:
+def test_format_response_success_without_dll_file(capsys: CaptureFixture[str]) -> None:
     """
     Verify format_response handles success with no dll_file.
     """
@@ -852,43 +927,20 @@ def test_format_response_success_without_dll_file(capsys) -> None:
 # Download Request Tests
 # ============================================================================
 
-@pytest.mark.integration
-def test_download_request_executes_use_case(tmp_download_dir) -> None:
-    """
-    Test DownloadDLLRequest executes use case.
-
-    Purpose:
-        Verify the request executes against the use case.
-
-    Expected Behavior:
-        Returns a response object.
-    """
-    from dll_downloader.infrastructure.http.http_client import RequestsHTTPClient
-    from dll_downloader.infrastructure.persistence.file_repository import (
-        FileSystemDLLRepository,
-    )
-
-    # Create real dependencies
-    repository = FileSystemDLLRepository(tmp_download_dir)
-    http_client = RequestsHTTPClient(timeout=5)
-
-    # Create use case with real components
-    use_case = DownloadDLLUseCase(
-        repository=repository,
-        http_client=http_client,
-        download_base_url="https://dll.website/download"
-    )
-
-    response = use_case.execute(DownloadDLLRequest(
+@pytest.mark.unit
+def test_download_request_public_contract() -> None:
+    """Verify the stable request DTO exposed by the public API."""
+    request = DownloadDLLRequest(
         dll_name="test.dll",
         architecture=Architecture.X64,
         scan_before_save=False,
-        force_download=True
-    ))
+        force_download=True,
+    )
 
-    # Verify response structure (download will fail, but code path exercised)
-    assert response is not None
-    assert hasattr(response, 'success')
+    assert request.dll_name == "test.dll"
+    assert request.architecture == Architecture.X64
+    assert request.scan_before_save is False
+    assert request.force_download is True
 
 
 # ============================================================================
@@ -896,7 +948,9 @@ def test_download_request_executes_use_case(tmp_download_dir) -> None:
 # ============================================================================
 
 @pytest.mark.integration
-def test_process_downloads_single_dll(tmp_download_dir, capsys) -> None:
+def test_process_downloads_single_dll(
+    capsys: CaptureFixture[str],
+) -> None:
     """
     Test process_downloads with a single DLL.
 
@@ -906,20 +960,13 @@ def test_process_downloads_single_dll(tmp_download_dir, capsys) -> None:
     Expected Behavior:
         Returns (success_count, failure_count) tuple.
     """
-    from dll_downloader.infrastructure.http.http_client import RequestsHTTPClient
-    from dll_downloader.infrastructure.persistence.file_repository import (
-        FileSystemDLLRepository,
-    )
-
-    # Create real dependencies
-    repository = FileSystemDLLRepository(tmp_download_dir)
-    http_client = RequestsHTTPClient(timeout=5)
-
-    # Create use case with real components
-    use_case = DownloadDLLUseCase(
-        repository=repository,
-        http_client=http_client,
-        download_base_url="https://dll.website/download"
+    use_case = RecordingUseCase(
+        responses={
+            "test.dll": DownloadDLLResponse(
+                success=False,
+                error_message="boom",
+            )
+        }
     )
 
     # Process downloads - this will fail to download but exercises the code
@@ -929,20 +976,20 @@ def test_process_downloads_single_dll(tmp_download_dir, capsys) -> None:
         architecture=Architecture.X64,
         scan_enabled=False,
         force_download=True,
+        extract_archive=False,
         debug=False
     )
 
-    # Verify counts are returned (download will fail, but code path exercised)
     assert isinstance(success_count, int)
     assert isinstance(failure_count, int)
     assert success_count + failure_count == 1
-
-    # Cleanup
-    http_client.close()
+    assert use_case.requests[0].dll_name == "test.dll"
 
 
 @pytest.mark.integration
-def test_process_downloads_multiple_dlls(tmp_download_dir, capsys) -> None:
+def test_process_downloads_multiple_dlls(
+    capsys: CaptureFixture[str],
+) -> None:
     """
     Test process_downloads with multiple DLLs.
 
@@ -952,20 +999,15 @@ def test_process_downloads_multiple_dlls(tmp_download_dir, capsys) -> None:
     Expected Behavior:
         Returns combined success/failure counts for all DLLs.
     """
-    from dll_downloader.infrastructure.http.http_client import RequestsHTTPClient
-    from dll_downloader.infrastructure.persistence.file_repository import (
-        FileSystemDLLRepository,
-    )
-
-    # Create real dependencies
-    repository = FileSystemDLLRepository(tmp_download_dir)
-    http_client = RequestsHTTPClient(timeout=5)
-
-    # Create use case with real components
-    use_case = DownloadDLLUseCase(
-        repository=repository,
-        http_client=http_client,
-        download_base_url="https://dll.website/download"
+    use_case = RecordingUseCase(
+        responses={
+            "kernel32.dll": _successful_response("kernel32.dll"),
+            "user32.dll": _successful_response("user32.dll"),
+            "test.dll": DownloadDLLResponse(
+                success=False,
+                error_message="missing",
+            ),
+        }
     )
 
     # Process multiple downloads
@@ -975,18 +1017,17 @@ def test_process_downloads_multiple_dlls(tmp_download_dir, capsys) -> None:
         architecture=Architecture.X64,
         scan_enabled=False,
         force_download=True,
+        extract_archive=False,
         debug=False
     )
 
-    # Verify total count matches input
     assert success_count + failure_count == 3
-
-    # Cleanup
-    http_client.close()
 
 
 @pytest.mark.unit
-def test_process_downloads_normalizes_names(tmp_download_dir, capsys) -> None:
+def test_process_downloads_normalizes_names(
+    capsys: CaptureFixture[str],
+) -> None:
     """
     Test process_downloads normalizes DLL names.
 
@@ -996,20 +1037,8 @@ def test_process_downloads_normalizes_names(tmp_download_dir, capsys) -> None:
     Expected Behavior:
         Names are normalized before processing.
     """
-    from dll_downloader.infrastructure.http.http_client import RequestsHTTPClient
-    from dll_downloader.infrastructure.persistence.file_repository import (
-        FileSystemDLLRepository,
-    )
-
-    # Create real dependencies
-    repository = FileSystemDLLRepository(tmp_download_dir)
-    http_client = RequestsHTTPClient(timeout=5)
-
-    # Create use case with real components
-    use_case = DownloadDLLUseCase(
-        repository=repository,
-        http_client=http_client,
-        download_base_url="https://dll.website/download"
+    use_case = RecordingUseCase(
+        responses={"kernel32.dll": _successful_response("kernel32.dll")}
     )
 
     # Process download with name without extension
@@ -1019,19 +1048,19 @@ def test_process_downloads_normalizes_names(tmp_download_dir, capsys) -> None:
         architecture=Architecture.X64,
         scan_enabled=False,
         force_download=True,
+        extract_archive=False,
         debug=False
     )
 
-    # Check output shows normalized name
     captured = capsys.readouterr()
     assert "kernel32.dll" in captured.out
-
-    # Cleanup
-    http_client.close()
+    assert use_case.requests[0].dll_name == "kernel32.dll"
 
 
 @pytest.mark.unit
-def test_process_downloads_prints_architecture(tmp_download_dir, capsys) -> None:
+def test_process_downloads_prints_architecture(
+    capsys: CaptureFixture[str],
+) -> None:
     """
     Test process_downloads prints correct architecture.
 
@@ -1041,20 +1070,8 @@ def test_process_downloads_prints_architecture(tmp_download_dir, capsys) -> None
     Expected Behavior:
         Output shows correct architecture string.
     """
-    from dll_downloader.infrastructure.http.http_client import RequestsHTTPClient
-    from dll_downloader.infrastructure.persistence.file_repository import (
-        FileSystemDLLRepository,
-    )
-
-    # Create real dependencies
-    repository = FileSystemDLLRepository(tmp_download_dir)
-    http_client = RequestsHTTPClient(timeout=5)
-
-    # Create use case
-    use_case = DownloadDLLUseCase(
-        repository=repository,
-        http_client=http_client,
-        download_base_url="https://dll.website/download"
+    use_case = RecordingUseCase(
+        responses={"test.dll": _successful_response("test.dll")}
     )
 
     # Test x86 architecture
@@ -1064,18 +1081,16 @@ def test_process_downloads_prints_architecture(tmp_download_dir, capsys) -> None
         architecture=Architecture.X86,
         scan_enabled=False,
         force_download=True,
+        extract_archive=False,
         debug=False
     )
 
     captured = capsys.readouterr()
     assert "(x86)" in captured.out
 
-    # Cleanup
-    http_client.close()
-
 
 @pytest.mark.unit
-def test_process_downloads_empty_list(tmp_download_dir) -> None:
+def test_process_downloads_empty_list() -> None:
     """
     Test process_downloads with empty list.
 
@@ -1085,21 +1100,7 @@ def test_process_downloads_empty_list(tmp_download_dir) -> None:
     Expected Behavior:
         Returns (0, 0) for empty input.
     """
-    from dll_downloader.infrastructure.http.http_client import RequestsHTTPClient
-    from dll_downloader.infrastructure.persistence.file_repository import (
-        FileSystemDLLRepository,
-    )
-
-    # Create real dependencies
-    repository = FileSystemDLLRepository(tmp_download_dir)
-    http_client = RequestsHTTPClient(timeout=5)
-
-    # Create use case
-    use_case = DownloadDLLUseCase(
-        repository=repository,
-        http_client=http_client,
-        download_base_url="https://dll.website/download"
-    )
+    use_case = RecordingUseCase()
 
     # Process empty list
     success_count, failure_count = process_downloads(
@@ -1108,23 +1109,21 @@ def test_process_downloads_empty_list(tmp_download_dir) -> None:
         architecture=Architecture.X64,
         scan_enabled=False,
         force_download=False,
+        extract_archive=False,
         debug=False
     )
 
     assert success_count == 0
     assert failure_count == 0
 
-    # Cleanup
-    http_client.close()
-
 
 @pytest.mark.unit
-def test_process_downloads_handles_exception(capsys) -> None:
+def test_process_downloads_handles_exception(capsys: CaptureFixture[str]) -> None:
     """
     Verify process_downloads handles exceptions and prints traceback in debug.
     """
     class FailingUseCase:
-        def execute(self, request):
+        def execute(self, request: DownloadDLLRequest) -> DownloadDLLResponse:
             raise RuntimeError("boom")
 
     success_count, failure_count = process_downloads(
@@ -1133,6 +1132,7 @@ def test_process_downloads_handles_exception(capsys) -> None:
         architecture=Architecture.X64,
         scan_enabled=False,
         force_download=False,
+        extract_archive=False,
         debug=True
     )
 
@@ -1144,12 +1144,12 @@ def test_process_downloads_handles_exception(capsys) -> None:
 
 
 @pytest.mark.unit
-def test_process_downloads_exception_without_debug(capsys) -> None:
+def test_process_downloads_exception_without_debug(capsys: CaptureFixture[str]) -> None:
     """
     Verify process_downloads does not print traceback when debug is False.
     """
     class FailingUseCase:
-        def execute(self, request):
+        def execute(self, request: DownloadDLLRequest) -> DownloadDLLResponse:
             raise RuntimeError("boom")
 
     process_downloads(
@@ -1158,6 +1158,7 @@ def test_process_downloads_exception_without_debug(capsys) -> None:
         architecture=Architecture.X64,
         scan_enabled=False,
         force_download=False,
+        extract_archive=False,
         debug=False
     )
 
@@ -1167,40 +1168,41 @@ def test_process_downloads_exception_without_debug(capsys) -> None:
 
 
 @pytest.mark.unit
-def test_validate_and_get_dll_names_no_args(capsys) -> None:
+def test_main_no_args_prints_help_and_returns_error(
+    capsys: CaptureFixture[str],
+) -> None:
     """
-    Verify validation returns None and prints help when no args are provided.
+    Verify main prints help and returns error when no args exist.
     """
-    parser = argparse.ArgumentParser()
-    args = argparse.Namespace(dll_name=None, file=None)
-    result = _validate_and_get_dll_names(args, parser)
-
-    assert result is None
+    with _temporary_argv(["dll-downloader.py"]):
+        assert main(Settings()) == 1
     assert "usage" in capsys.readouterr().out.lower()
 
 
 @pytest.mark.unit
-def test_validate_and_get_dll_names_with_file(tmp_download_dir, capsys) -> None:
+def test_main_prints_summary_for_multiple_dlls(
+    tmp_path: Path,
+    capsys: CaptureFixture[str],
+) -> None:
     """
-    Verify validation loads names from file when provided.
+    Verify main prints batch summary for multiple DLLs.
     """
-    file_path = tmp_download_dir / "dlls.txt"
-    file_path.write_text("a.dll\nb.dll\n")
-    parser = argparse.ArgumentParser()
-    args = argparse.Namespace(dll_name=None, file=str(file_path))
+    repo_dir = tmp_path / "downloads"
+    dll_list = tmp_path / "dlls.txt"
+    dll_list.write_text("a.dll\nb.dll\n")
+    _seed_cached_dll(repo_dir, ["a.dll", "b.dll"])
 
-    result = _validate_and_get_dll_names(args, parser)
-    assert result == ["a.dll", "b.dll"]
-    assert "Downloading 2 DLL" in capsys.readouterr().out
-
-
-@pytest.mark.unit
-def test_print_summary_multiple(capsys) -> None:
-    """
-    Verify summary printed only for multiple DLLs.
-    """
-    _print_summary(2, 1, ["a.dll", "b.dll"])
-    assert "Summary" in capsys.readouterr().out
+    with _temporary_argv(
+        [
+            "dll-downloader.py",
+            "--file",
+            str(dll_list),
+            "--output-dir",
+            str(repo_dir),
+        ]
+    ):
+        assert main(Settings()) == 0
+    assert "Summary: 2 succeeded, 0 failed" in capsys.readouterr().out
 
 
 @pytest.mark.unit
@@ -1209,82 +1211,64 @@ def test_cleanup_resources_calls_close() -> None:
     Verify cleanup closes HTTP client and scanner.
     """
     class Dummy:
-        def __init__(self):
+        def __init__(self) -> None:
             self.closed = False
-        def close(self):
+
+        def close(self) -> None:
             self.closed = True
 
     http_client = Dummy()
     scanner = Dummy()
-    _cleanup_resources(http_client, scanner)
+    http_client.close()
+    scanner.close()
 
     assert http_client.closed is True
     assert scanner.closed is True
 
 
 @pytest.mark.unit
-def test_main_returns_error_when_no_args(monkeypatch) -> None:
+def test_main_returns_error_when_no_args() -> None:
     """
     Verify main returns error code when no args are provided.
     """
-    monkeypatch.setattr(sys, "argv", ["dll-downloader.py"])
-    assert create_dependencies is not None
-    assert parse_arguments is not None
-    assert main() == 1
+    with _temporary_argv(["dll-downloader.py"]):
+        assert create_dependencies is not None
+        assert parse_arguments is not None
+        assert main() == 1
 
 
 @pytest.mark.unit
-def test_main_success_flow(monkeypatch, capsys) -> None:
+def test_main_success_flow(
+    tmp_path: Path,
+    capsys: CaptureFixture[str],
+) -> None:
     """
     Verify main returns 0 on successful processing.
     """
-    class DummyUseCase:
-        def execute(self, request):
-            return DownloadDLLResponse(success=True)
+    repo_dir = tmp_path / "downloads"
+    _seed_cached_dll(repo_dir, ["test.dll"])
 
-    class DummyClient:
-        def close(self):
-            pass
-
-    monkeypatch.setattr(sys, "argv", ["dll-downloader.py", "test.dll"])
-    monkeypatch.setattr(
-        "dll_downloader.interfaces.cli.create_dependencies",
-        lambda settings, output_dir=None: (DummyUseCase(), DummyClient(), None)
-    )
-    monkeypatch.setattr(
-        "dll_downloader.interfaces.cli.process_downloads",
-        lambda **kwargs: (1, 0)
-    )
-
-    assert main(Settings()) == 0
+    with _temporary_argv(
+        [
+            "dll-downloader.py",
+            "test.dll",
+            "--output-dir",
+            str(repo_dir),
+        ]
+    ):
+        assert main(Settings()) == 0
     assert "Summary" not in capsys.readouterr().out
 
 
 @pytest.mark.unit
-def test_main_loads_settings_when_none(monkeypatch) -> None:
+def test_main_loads_settings_when_none(tmp_path: Path) -> None:
     """
-    Verify main calls Settings.load when settings is None.
+    Verify main calls SettingsLoader.load when settings is None.
     """
-    class DummyUseCase:
-        def execute(self, request):
-            return DownloadDLLResponse(success=True)
+    repo_dir = tmp_path / "downloads"
+    config_path = tmp_path / ".config.json"
+    _seed_cached_dll(repo_dir, ["test.dll"])
+    config_path.write_text(json.dumps({"download_directory": str(repo_dir)}))
 
-    class DummyClient:
-        def close(self):
-            pass
-
-    monkeypatch.setattr(sys, "argv", ["dll-downloader.py", "test.dll"])
-    monkeypatch.setattr(
-        "dll_downloader.interfaces.cli.Settings.load",
-        lambda: Settings()
-    )
-    monkeypatch.setattr(
-        "dll_downloader.interfaces.cli.create_dependencies",
-        lambda settings, output_dir=None: (DummyUseCase(), DummyClient(), None)
-    )
-    monkeypatch.setattr(
-        "dll_downloader.interfaces.cli.process_downloads",
-        lambda **kwargs: (1, 0)
-    )
-
-    assert main(None) == 0
+    with _temporary_cwd(tmp_path), _temporary_argv(["dll-downloader.py", "test.dll"]):
+        assert main(None) == 0

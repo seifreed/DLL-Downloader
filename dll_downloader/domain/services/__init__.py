@@ -7,11 +7,13 @@ These define contracts for cross-cutting concerns like security scanning and HTT
 
 from .download_resolver import IDownloadURLResolver
 from .hash_service import calculate_sha256
-from .http_client import IHTTPClient
+from .http_client import HTTPFileInfo, IHTTPClient, ITextHTTPClient
 from .security_scanner import ISecurityScanner, ScanResult
 
 __all__ = [
+    "HTTPFileInfo",
     "IHTTPClient",
+    "ITextHTTPClient",
     "ISecurityScanner",
     "ScanResult",
     "IDownloadURLResolver",

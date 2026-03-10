@@ -1,0 +1,91 @@
+name: Publish
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  validate-and-build:
+    name: Validate And Build
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .[dev]
+
+      - name: Ensure tag matches package version
+        shell: bash
+        run: |
+          PACKAGE_VERSION="$(python -m pip show dll-downloader | awk '/^Version: / {print $2}')"
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          if [[ "$PACKAGE_VERSION" != "$TAG_VERSION" ]]; then
+            echo "Tag version ($TAG_VERSION) does not match package version ($PACKAGE_VERSION)"
+            exit 1
+          fi
+
+      - name: Run Ruff
+        run: ruff check .
+
+      - name: Run MyPy
+        run: mypy dll_downloader tests
+
+      - name: Run tests with coverage
+        run: pytest --cov=dll_downloader --cov-report=xml --cov-report=term-missing
+
+      - name: Enforce critical coverage thresholds
+        run: python scripts/check_critical_coverage.py
+
+      - name: Enforce module guardrails
+        run: python scripts/check_module_guardrails.py
+
+      - name: Enforce governance guardrails
+        run: python scripts/check_governance_requirements.py
+
+      - name: Enforce structural doc sync
+        run: python scripts/check_structural_docs_sync.py
+
+      - name: Build distributions
+        run: python -m build
+
+      - name: Check distributions
+        run: twine check dist/*
+
+      - name: Upload distributions
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-package-distributions
+          path: dist/
+
+  publish-to-pypi:
+    name: Publish To PyPI
+    needs: validate-and-build
+    runs-on: ubuntu-24.04
+    environment:
+      name: pypi
+      url: https://pypi.org/p/dll-downloader
+    permissions:
+      id-token: write
+
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: python-package-distributions
+          path: dist/
+
+      - name: Publish distributions to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1

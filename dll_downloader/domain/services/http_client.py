@@ -6,10 +6,42 @@ This Protocol enables structural typing for dependency injection without
 requiring infrastructure implementations to explicitly inherit from it.
 """
 
-from typing import Protocol
+from collections.abc import Mapping
+from typing import Protocol, TypedDict
 
 
-class IHTTPClient(Protocol):
+class HTTPFileInfo(TypedDict):
+    """Structured metadata returned by an HTTP adapter."""
+
+    content_type: str | None
+    content_length: int
+    last_modified: str | None
+    etag: str | None
+    accept_ranges: bool
+
+
+class ITextHTTPClient(Protocol):
+    """Protocol for adapters that only need text-fetching behavior."""
+
+    def get_text(
+        self,
+        url: str,
+        headers: Mapping[str, str] | None = None,
+    ) -> str:
+        """
+        Fetch a text response from a URL.
+
+        Args:
+            url: The URL to fetch
+            headers: Optional HTTP headers
+
+        Returns:
+            Response body decoded as text
+        """
+        ...
+
+
+class IHTTPClient(ITextHTTPClient, Protocol):
     """
     Protocol defining HTTP client interface for dependency injection.
 
@@ -22,7 +54,11 @@ class IHTTPClient(Protocol):
         ...     return client.download(url)
     """
 
-    def download(self, url: str) -> bytes:
+    def download(
+        self,
+        url: str,
+        headers: Mapping[str, str] | None = None,
+    ) -> bytes:
         """
         Download binary content from a URL.
 
@@ -37,7 +73,7 @@ class IHTTPClient(Protocol):
         """
         ...
 
-    def get_file_info(self, url: str) -> dict[str, object]:
+    def get_file_info(self, url: str) -> HTTPFileInfo:
         """
         Get file metadata from a URL without downloading.
 
@@ -45,6 +81,6 @@ class IHTTPClient(Protocol):
             url: The URL to check
 
         Returns:
-            Dictionary with file information (size, content-type, etc.)
+            Structured file information
         """
         ...

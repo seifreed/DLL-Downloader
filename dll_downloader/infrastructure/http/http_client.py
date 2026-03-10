@@ -11,11 +11,14 @@ through structural typing (duck typing).
 """
 
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 import requests
 
-from ..base import SessionMixin
+from ...domain.errors import HTTPServiceError
+from ...domain.services.http_client import HTTPFileInfo
+from ..http_session import HTTPSessionProtocol, HTTPSessionResource
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +52,7 @@ class HTTPResponse:
         return int(length) if length else None
 
 
-class HTTPClientError(Exception):
+class HTTPClientError(HTTPServiceError):
     """Exception raised for HTTP client errors."""
 
     def __init__(
@@ -63,7 +66,7 @@ class HTTPClientError(Exception):
         super().__init__(message)
 
 
-class RequestsHTTPClient(SessionMixin):
+class RequestsHTTPClient:
     """
     HTTP client implementation using the requests library.
 
@@ -77,10 +80,9 @@ class RequestsHTTPClient(SessionMixin):
     through structural typing (implements download() and get_file_info() methods).
 
     Architecture Notes:
-        Inherits from SessionMixin to reuse HTTP session management logic.
-        This is an intentional infrastructure-layer coupling for shared
-        technical concerns (connection pooling, resource cleanup).
-        See base.py for design rationale.
+        Uses a composed HTTPSessionResource for connection pooling and cleanup.
+        The transport lifecycle is now isolated as a small technical dependency
+        rather than shared through inheritance.
 
     Example:
         >>> client = RequestsHTTPClient(timeout=30)
@@ -95,9 +97,10 @@ class RequestsHTTPClient(SessionMixin):
 
     def __init__(
         self,
-        timeout: int = 60,
+        timeout: float = 60,
         user_agent: str | None = None,
-        verify_ssl: bool = True
+        verify_ssl: bool = True,
+        session_resource: HTTPSessionResource | None = None,
     ) -> None:
         """
         Initialize the HTTP client.
@@ -107,13 +110,41 @@ class RequestsHTTPClient(SessionMixin):
             user_agent: Custom User-Agent header
             verify_ssl: Whether to verify SSL certificates
         """
-        super().__init__()
         self._timeout = timeout
         self._user_agent = user_agent or self.DEFAULT_USER_AGENT
         self._verify_ssl = verify_ssl
-        self._session_headers = {'User-Agent': self._user_agent}
+        self._session_resource = session_resource or HTTPSessionResource(
+            headers={"User-Agent": self._user_agent}
+        )
 
-    def get(self, url: str, headers: dict[str, str] | None = None) -> HTTPResponse:
+    @property
+    def session(self) -> HTTPSessionProtocol:
+        return self._session_resource.session
+
+    @property
+    def has_active_session(self) -> bool:
+        """Report whether this client currently owns a live session instance."""
+        return self._session_resource.has_session
+
+    def close(self) -> None:
+        self._session_resource.close()
+
+    def __enter__(self) -> "RequestsHTTPClient":
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: object | None,
+    ) -> None:
+        self.close()
+
+    def get(
+        self,
+        url: str,
+        headers: Mapping[str, str] | None = None,
+    ) -> HTTPResponse:
         """
         Perform an HTTP GET request.
 
@@ -127,7 +158,7 @@ class RequestsHTTPClient(SessionMixin):
         try:
             response = self.session.get(
                 url,
-                headers=headers,
+                headers=dict(headers) if headers else None,
                 timeout=self._timeout,
                 verify=self._verify_ssl
             )
@@ -143,7 +174,35 @@ class RequestsHTTPClient(SessionMixin):
             logger.error(f"GET request failed for {url}: {e}")
             raise HTTPClientError(f"GET request failed: {e}", url=url) from e
 
-    def download(self, url: str, headers: dict[str, str] | None = None) -> bytes:
+    def get_text(
+        self,
+        url: str,
+        headers: Mapping[str, str] | None = None,
+    ) -> str:
+        """
+        Fetch text content from a URL.
+
+        Args:
+            url: The URL to request
+            headers: Optional additional headers
+
+        Returns:
+            Response body decoded as text
+        """
+        response = self.get(url, headers=headers)
+        if not response.is_success:
+            raise HTTPClientError(
+                f"GET request failed with status {response.status_code}",
+                status_code=response.status_code,
+                url=url,
+            )
+        return response.content.decode("utf-8", errors="replace")
+
+    def download(
+        self,
+        url: str,
+        headers: Mapping[str, str] | None = None,
+    ) -> bytes:
         """
         Download binary content from a URL with streaming.
 
@@ -157,7 +216,7 @@ class RequestsHTTPClient(SessionMixin):
         try:
             response = self.session.get(
                 url,
-                headers=headers,
+                headers=dict(headers) if headers else None,
                 timeout=self._timeout,
                 verify=self._verify_ssl,
                 stream=True
@@ -205,7 +264,7 @@ class RequestsHTTPClient(SessionMixin):
             logger.error(f"HEAD request failed for {url}: {e}")
             raise HTTPClientError(f"HEAD request failed: {e}", url=url) from e
 
-    def get_file_info(self, url: str) -> dict[str, object]:
+    def get_file_info(self, url: str) -> HTTPFileInfo:
         """
         Get file metadata from a URL.
 

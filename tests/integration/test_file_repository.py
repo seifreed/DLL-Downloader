@@ -28,6 +28,11 @@ from dll_downloader.infrastructure.persistence.file_repository import (
 )
 
 
+def _require_str(value: str | None) -> str:
+    assert value is not None
+    return value
+
+
 @pytest.fixture
 def repository(tmp_path: Path) -> FileSystemDLLRepository:
     """
@@ -159,6 +164,30 @@ class TestFileSystemDLLRepositoryInitialization:
         assert existing_file.exists()
         assert existing_file.read_bytes() == b"MZ\x90\x00existing content"
 
+    def test_load_index_returns_empty_for_invalid_top_level_json(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        repo_path = tmp_path / "dll_repo"
+        repo_path.mkdir()
+        (repo_path / ".dll_index.json").write_text('["bad"]')
+
+        repository = FileSystemDLLRepository(repo_path)
+
+        assert repository._load_index() == {"files": {}}
+
+    def test_load_index_returns_empty_for_invalid_files_shape(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        repo_path = tmp_path / "dll_repo"
+        repo_path.mkdir()
+        (repo_path / ".dll_index.json").write_text('{"files": []}')
+
+        repository = FileSystemDLLRepository(repo_path)
+
+        assert repository._load_index() == {"files": {}}
+
 
 class TestFileSystemDLLRepositorySave:
     """Test save() operation with real filesystem writes."""
@@ -262,6 +291,21 @@ class TestFileSystemDLLRepositorySave:
         assert key in index_data["files"]
         assert index_data["files"][key]["name"] == "kernel32.dll"
         assert index_data["files"][key]["architecture"] == "x64"
+
+    def test_normalize_index_entry_rejects_invalid_shapes(
+        self,
+        repository: FileSystemDLLRepository,
+    ) -> None:
+        with pytest.raises(ValueError):
+            repository._normalize_index_entry("bad")
+        with pytest.raises(ValueError):
+            repository._normalize_index_entry({"name": 1})
+        with pytest.raises(ValueError):
+            repository._normalize_index_entry({"name": "a.dll", "architecture": 1})
+        with pytest.raises(ValueError):
+            repository._normalize_index_entry({"name": "a.dll", "architecture": "x64", "security_status": 1})
+        with pytest.raises(ValueError):
+            repository._normalize_index_entry({"name": "a.dll", "architecture": "x64", "file_size": "1"})
 
     def test_save_x86_architecture(
         self,
@@ -422,7 +466,9 @@ class TestFileSystemDLLRepositoryFindByName:
         assert found.version == "2.0"
 
 
-def test_find_without_architecture_no_match_hits_unknown(repository) -> None:
+def test_find_without_architecture_no_match_hits_unknown(
+    repository: FileSystemDLLRepository,
+) -> None:
     """
     Verify loop reaches UNKNOWN when no matches exist.
     """
@@ -430,7 +476,7 @@ def test_find_without_architecture_no_match_hits_unknown(repository) -> None:
     assert found is None
 
 
-def test_find_with_unknown_architecture_finds_x64(tmp_download_dir) -> None:
+def test_find_with_unknown_architecture_finds_x64(tmp_download_dir: Path) -> None:
     """
     Verify UNKNOWN architecture falls back to x64 path.
     """
@@ -443,53 +489,50 @@ def test_find_with_unknown_architecture_finds_x64(tmp_download_dir) -> None:
     assert found.architecture == Architecture.UNKNOWN
 
 
-def test_save_index_raises_repository_error(tmp_download_dir, monkeypatch) -> None:
+def test_save_index_raises_repository_error(
+    tmp_download_dir: Path,
+) -> None:
     """
     Verify _save_index raises RepositoryError on OSError.
     """
     repository = FileSystemDLLRepository(tmp_download_dir)
-
-    def raise_oserror(*args, **kwargs):
-        raise OSError("nope")
-
-    monkeypatch.setattr("builtins.open", raise_oserror)
+    repository._index_path.mkdir()
 
     with pytest.raises(RepositoryError):
         repository._save_index({"files": {}})
 
 
-def test_save_raises_repository_error_on_write(tmp_download_dir, monkeypatch) -> None:
+def test_save_raises_repository_error_on_write(
+    tmp_download_dir: Path,
+) -> None:
     """
     Verify save raises RepositoryError on file write error.
     """
     repository = FileSystemDLLRepository(tmp_download_dir)
     dll = DLLFile(name="writefail.dll", architecture=Architecture.X64)
-
-    def raise_oserror(*args, **kwargs):
-        raise OSError("nope")
-
-    monkeypatch.setattr("builtins.open", raise_oserror)
+    target_path = repository._get_file_path(dll.name, dll.architecture)
+    target_path.mkdir()
 
     with pytest.raises(RepositoryError):
         repository.save(dll, b"data")
 
 
-def test_delete_returns_false_on_exception(tmp_download_dir, monkeypatch) -> None:
+def test_delete_returns_false_on_exception(
+    tmp_download_dir: Path,
+) -> None:
     """
     Verify delete returns False when unlink raises.
     """
     repository = FileSystemDLLRepository(tmp_download_dir)
     dll = DLLFile(name="deletefail.dll", architecture=Architecture.X64)
     saved = repository.save(dll, b"data")
-
-    def raise_unlink(self):
-        raise OSError("nope")
-
-    monkeypatch.setattr(Path, "unlink", raise_unlink, raising=True)
+    saved_path = Path(saved.file_path or "")
+    saved_path.unlink()
+    saved_path.mkdir()
     assert repository.delete(saved) is False
 
 
-def test_delete_with_missing_file_path_returns_true(tmp_download_dir) -> None:
+def test_delete_with_missing_file_path_returns_true(tmp_download_dir: Path) -> None:
     """
     Verify delete succeeds when file_path does not exist on disk.
     """
@@ -498,45 +541,44 @@ def test_delete_with_missing_file_path_returns_true(tmp_download_dir) -> None:
 
     assert repository.delete(dll) is True
 
-    def test_find_nonexistent_dll_returns_none(
-        self,
-        repository: FileSystemDLLRepository,
-    ) -> None:
-        """
-        Verify that searching for non-existent DLL returns None.
 
-        Expected Behavior:
-            - Returns None when DLL doesn't exist
-            - No exceptions are raised
-        """
-        found = repository.find_by_name("nonexistent.dll", Architecture.X64)
+def test_find_nonexistent_dll_returns_none(
+    repository: FileSystemDLLRepository,
+) -> None:
+    """
+    Verify that searching for non-existent DLL returns None.
 
-        assert found is None
+    Expected Behavior:
+        - Returns None when DLL doesn't exist
+        - No exceptions are raised
+    """
+    found = repository.find_by_name("nonexistent.dll", Architecture.X64)
 
-    def test_find_file_on_disk_without_index_entry(
-        self,
-        repository: FileSystemDLLRepository,
-        tmp_path: Path,
-    ) -> None:
-        """
-        Verify that repository can find DLLs that exist on disk but not in index.
+    assert found is None
 
-        Expected Behavior:
-            - Finds file on filesystem
-            - Creates DLLFile entity from file
-            - Calculates hash from actual file content
-        """
-        # Manually create DLL file bypassing repository
-        dll_path = tmp_path / "x64" / "orphaned.dll"
-        content = b"MZ\x90\x00orphaned content"
-        dll_path.write_bytes(content)
 
-        found = repository.find_by_name("orphaned.dll", Architecture.X64)
+def test_find_file_on_disk_without_index_entry(
+    repository: FileSystemDLLRepository,
+    tmp_path: Path,
+) -> None:
+    """
+    Verify that repository can find DLLs that exist on disk but not in index.
 
-        assert found is not None
-        assert found.name == "orphaned.dll"
-        assert found.architecture == Architecture.X64
-        assert found.file_hash == hashlib.sha256(content).hexdigest()
+    Expected Behavior:
+        - Finds file on filesystem
+        - Creates DLLFile entity from file
+        - Calculates hash from actual file content
+    """
+    dll_path = tmp_path / "x64" / "orphaned.dll"
+    content = b"MZ\x90\x00orphaned content"
+    dll_path.write_bytes(content)
+
+    found = repository.find_by_name("orphaned.dll", Architecture.X64)
+
+    assert found is not None
+    assert found.name == "orphaned.dll"
+    assert found.architecture == Architecture.X64
+    assert found.file_hash == hashlib.sha256(content).hexdigest()
 
 
 class TestFileSystemDLLRepositoryFindByHash:
@@ -557,7 +599,7 @@ class TestFileSystemDLLRepositoryFindByHash:
         """
         saved_dll = repository.save(dll_file_entity, sample_dll_content)
 
-        found = repository.find_by_hash(saved_dll.file_hash)
+        found = repository.find_by_hash(_require_str(saved_dll.file_hash))
 
         assert found is not None
         assert found.name == "kernel32.dll"
@@ -584,7 +626,7 @@ class TestFileSystemDLLRepositoryFindByHash:
         saved1 = repository.save(dll1, content1)
         saved2 = repository.save(dll2, content2)
 
-        found = repository.find_by_hash(saved1.file_hash)
+        found = repository.find_by_hash(_require_str(saved1.file_hash))
 
         assert found is not None
         assert found.name == "file1.dll"
@@ -627,7 +669,7 @@ class TestFileSystemDLLRepositoryDelete:
             - Returns True on success
         """
         saved_dll = repository.save(dll_file_entity, sample_dll_content)
-        file_path = Path(saved_dll.file_path)
+        file_path = Path(_require_str(saved_dll.file_path))
 
         assert file_path.exists()
 

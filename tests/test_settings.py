@@ -13,11 +13,48 @@ I/O and environment manipulation.
 import json
 import os
 import tempfile
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
 
+from dll_downloader.infrastructure.config.loader import (
+    SettingsLoader,
+    _VTTomlSettingsSource,
+)
 from dll_downloader.infrastructure.config.settings import Settings
+
+
+@contextmanager
+def _temporary_env(updates: Mapping[str, str | None]) -> Iterator[None]:
+    original: dict[str, str | None] = {
+        key: os.environ.get(key)
+        for key in updates
+    }
+    try:
+        for key, value in updates.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        yield
+    finally:
+        for key, value in original.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
+@contextmanager
+def _temporary_cwd(path: Path) -> Iterator[None]:
+    original = Path.cwd()
+    os.chdir(path)
+    try:
+        yield
+    finally:
+        os.chdir(original)
 
 # ============================================================================
 # Settings Initialization Tests
@@ -90,7 +127,7 @@ def test_settings_creation_with_custom_values() -> None:
 # ============================================================================
 
 @pytest.mark.unit
-def test_settings_from_env_all_variables(monkeypatch) -> None:
+def test_settings_from_env_all_variables() -> None:
     """
     Test loading Settings from environment variables.
 
@@ -100,18 +137,21 @@ def test_settings_from_env_all_variables(monkeypatch) -> None:
     Expected Behavior:
         Environment variables override defaults with correct types.
     """
-    monkeypatch.setenv("DLL_VIRUSTOTAL_API_KEY", "env_api_key")
-    monkeypatch.setenv("DLL_DOWNLOAD_DIRECTORY", "/env/downloads")
-    monkeypatch.setenv("DLL_DOWNLOAD_BASE_URL", "https://env.url")
-    monkeypatch.setenv("DLL_HTTP_TIMEOUT", "45")
-    monkeypatch.setenv("DLL_VERIFY_SSL", "false")
-    monkeypatch.setenv("DLL_SCAN_BEFORE_SAVE", "no")
-    monkeypatch.setenv("DLL_MALICIOUS_THRESHOLD", "8")
-    monkeypatch.setenv("DLL_SUSPICIOUS_THRESHOLD", "2")
-    monkeypatch.setenv("DLL_LOG_LEVEL", "WARNING")
-    monkeypatch.setenv("DLL_USER_AGENT", "EnvAgent/1.0")
-
-    settings = Settings.from_env()
+    with _temporary_env(
+        {
+            "DLL_VIRUSTOTAL_API_KEY": "env_api_key",
+            "DLL_DOWNLOAD_DIRECTORY": "/env/downloads",
+            "DLL_DOWNLOAD_BASE_URL": "https://env.url",
+            "DLL_HTTP_TIMEOUT": "45",
+            "DLL_VERIFY_SSL": "false",
+            "DLL_SCAN_BEFORE_SAVE": "no",
+            "DLL_MALICIOUS_THRESHOLD": "8",
+            "DLL_SUSPICIOUS_THRESHOLD": "2",
+            "DLL_LOG_LEVEL": "WARNING",
+            "DLL_USER_AGENT": "EnvAgent/1.0",
+        }
+    ):
+        settings = SettingsLoader.from_env()
 
     assert settings.virustotal_api_key == "env_api_key"
     assert settings.download_directory == "/env/downloads"
@@ -126,7 +166,7 @@ def test_settings_from_env_all_variables(monkeypatch) -> None:
 
 
 @pytest.mark.unit
-def test_settings_from_env_partial_variables(monkeypatch) -> None:
+def test_settings_from_env_partial_variables() -> None:
     """
     Test loading with only some environment variables set.
 
@@ -137,10 +177,13 @@ def test_settings_from_env_partial_variables(monkeypatch) -> None:
         - Set variables override defaults
         - Unset variables use default values
     """
-    monkeypatch.setenv("DLL_VIRUSTOTAL_API_KEY", "partial_key")
-    monkeypatch.setenv("DLL_HTTP_TIMEOUT", "90")
-
-    settings = Settings.from_env()
+    with _temporary_env(
+        {
+            "DLL_VIRUSTOTAL_API_KEY": "partial_key",
+            "DLL_HTTP_TIMEOUT": "90",
+        }
+    ):
+        settings = SettingsLoader.from_env()
 
     assert settings.virustotal_api_key == "partial_key"
     assert settings.http_timeout == 90
@@ -150,7 +193,7 @@ def test_settings_from_env_partial_variables(monkeypatch) -> None:
 
 
 @pytest.mark.unit
-def test_settings_from_env_boolean_parsing(monkeypatch) -> None:
+def test_settings_from_env_boolean_parsing() -> None:
     """
     Test boolean value parsing from environment.
 
@@ -162,19 +205,19 @@ def test_settings_from_env_boolean_parsing(monkeypatch) -> None:
     """
     # Test True values
     for true_value in ["true", "True", "TRUE", "1", "yes", "Yes"]:
-        monkeypatch.setenv("DLL_VERIFY_SSL", true_value)
-        settings = Settings.from_env()
-        assert settings.verify_ssl is True, f"Failed for value: {true_value}"
+        with _temporary_env({"DLL_VERIFY_SSL": true_value}):
+            settings = SettingsLoader.from_env()
+            assert settings.verify_ssl is True, f"Failed for value: {true_value}"
 
     # Test False values
     for false_value in ["false", "False", "0", "no", "anything"]:
-        monkeypatch.setenv("DLL_VERIFY_SSL", false_value)
-        settings = Settings.from_env()
-        assert settings.verify_ssl is False, f"Failed for value: {false_value}"
+        with _temporary_env({"DLL_VERIFY_SSL": false_value}):
+            settings = SettingsLoader.from_env()
+            assert settings.verify_ssl is False, f"Failed for value: {false_value}"
 
 
 @pytest.mark.unit
-def test_settings_from_env_integer_parsing(monkeypatch) -> None:
+def test_settings_from_env_integer_parsing() -> None:
     """
     Test integer value parsing from environment.
 
@@ -184,11 +227,14 @@ def test_settings_from_env_integer_parsing(monkeypatch) -> None:
     Expected Behavior:
         Numeric strings are converted to int type.
     """
-    monkeypatch.setenv("DLL_HTTP_TIMEOUT", "120")
-    monkeypatch.setenv("DLL_MALICIOUS_THRESHOLD", "15")
-    monkeypatch.setenv("DLL_SUSPICIOUS_THRESHOLD", "5")
-
-    settings = Settings.from_env()
+    with _temporary_env(
+        {
+            "DLL_HTTP_TIMEOUT": "120",
+            "DLL_MALICIOUS_THRESHOLD": "15",
+            "DLL_SUSPICIOUS_THRESHOLD": "5",
+        }
+    ):
+        settings = SettingsLoader.from_env()
 
     assert settings.http_timeout == 120
     assert isinstance(settings.http_timeout, int)
@@ -196,6 +242,50 @@ def test_settings_from_env_integer_parsing(monkeypatch) -> None:
     assert isinstance(settings.malicious_threshold, int)
     assert settings.suspicious_threshold == 5
     assert isinstance(settings.suspicious_threshold, int)
+
+
+@pytest.mark.unit
+def test_settings_loader_load_reads_vt_toml_when_api_key_missing(tmp_path: Path) -> None:
+    vt_file = tmp_path / ".vt.toml"
+    vt_file.write_text("apikey = 'vt-test-key'")
+
+    with _temporary_env({"HOME": str(tmp_path)}):
+        settings = SettingsLoader.load(config_path=str(tmp_path / "missing.json"))
+
+    assert settings.virustotal_api_key == "vt-test-key"
+
+
+@pytest.mark.unit
+def test_settings_loader_from_json_rejects_non_object_payload(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text('["not", "an", "object"]')
+
+    with pytest.raises(ValueError, match="JSON object"):
+        SettingsLoader.from_json(str(config_path))
+
+
+@pytest.mark.unit
+def test_settings_loader_mapped_kwargs_ignores_unsupported_value_types() -> None:
+    mapped = SettingsLoader._mapped_kwargs(
+        {
+            "download_directory": ["not", "valid"],
+            "http_timeout": {"bad": "type"},
+            "verify_ssl": object(),
+        },
+        SettingsLoader.JSON_MAPPING,
+    )
+
+    assert mapped == {}
+
+
+@pytest.mark.unit
+def test_settings_loader_assign_helpers_return_false_for_non_matching_inputs() -> None:
+    mapped = SettingsLoader._mapped_kwargs({}, SettingsLoader.JSON_MAPPING)
+
+    assert SettingsLoader._assign_string(mapped, "unknown", "value") is False
+    assert SettingsLoader._assign_int(mapped, "http_timeout", "10") is False
+    assert SettingsLoader._assign_bool(mapped, "verify_ssl", "true") is False
+    assert SettingsLoader._assign_bool(mapped, "unknown", True) is False
 
 
 @pytest.mark.unit
@@ -209,12 +299,13 @@ def test_settings_from_env_no_variables_set() -> None:
     Expected Behavior:
         Returns Settings with all default values.
     """
-    # Ensure no DLL_ variables are set
-    for key in list(os.environ.keys()):
-        if key.startswith("DLL_"):
-            del os.environ[key]
-
-    settings = Settings.from_env()
+    dll_keys = {
+        key: None
+        for key in os.environ
+        if key.startswith("DLL_")
+    }
+    with _temporary_env(dll_keys):
+        settings = SettingsLoader.from_env()
 
     assert settings.virustotal_api_key is None
     assert settings.http_timeout == 60
@@ -254,7 +345,7 @@ def test_settings_from_json_all_fields() -> None:
         temp_path = f.name
 
     try:
-        settings = Settings.from_json(temp_path)
+        settings = SettingsLoader.from_json(temp_path)
 
         assert settings.virustotal_api_key == "json_api_key"
         assert settings.download_directory == "/json/downloads"
@@ -292,7 +383,7 @@ def test_settings_from_json_partial_fields() -> None:
         temp_path = f.name
 
     try:
-        settings = Settings.from_json(temp_path)
+        settings = SettingsLoader.from_json(temp_path)
 
         assert settings.virustotal_api_key == "partial_json_key"
         assert settings.http_timeout == 100
@@ -315,7 +406,7 @@ def test_settings_from_json_nonexistent_file_raises_error() -> None:
         FileNotFoundError is raised.
     """
     with pytest.raises(FileNotFoundError):
-        Settings.from_json("/nonexistent/config.json")
+        SettingsLoader.from_json("/nonexistent/config.json")
 
 
 @pytest.mark.unit
@@ -335,7 +426,7 @@ def test_settings_from_json_invalid_json_raises_error() -> None:
 
     try:
         with pytest.raises(json.JSONDecodeError):
-            Settings.from_json(temp_path)
+            SettingsLoader.from_json(temp_path)
     finally:
         os.unlink(temp_path)
 
@@ -364,7 +455,7 @@ def test_settings_merge_override_values() -> None:
         malicious_threshold=10
     )
 
-    merged = Settings._merge(base, override)
+    merged = SettingsLoader._merge(base, override)
 
     assert merged.virustotal_api_key == "override_key"
     assert merged.malicious_threshold == 10
@@ -388,7 +479,7 @@ def test_settings_merge_preserves_base_when_override_is_default() -> None:
     )
     override = Settings()  # All defaults
 
-    merged = Settings._merge(base, override)
+    merged = SettingsLoader._merge(base, override)
 
     assert merged.http_timeout == 120
     assert merged.malicious_threshold == 15
@@ -408,7 +499,7 @@ def test_settings_merge_handles_none_values() -> None:
     base = Settings(virustotal_api_key="base_key")
     override = Settings(virustotal_api_key=None)
 
-    merged = Settings._merge(base, override)
+    merged = SettingsLoader._merge(base, override)
 
     assert merged.virustotal_api_key == "base_key"
 
@@ -418,7 +509,7 @@ def test_settings_merge_handles_none_values() -> None:
 # ============================================================================
 
 @pytest.mark.unit
-def test_settings_load_priority_env_over_file(monkeypatch) -> None:
+def test_settings_load_priority_env_over_file() -> None:
     """
     Test that environment variables override JSON config.
 
@@ -439,10 +530,8 @@ def test_settings_load_priority_env_over_file(monkeypatch) -> None:
         temp_path = f.name
 
     try:
-        # Set environment variable
-        monkeypatch.setenv("DLL_VIRUSTOTAL_API_KEY", "env_key")
-
-        settings = Settings.load(config_path=temp_path)
+        with _temporary_env({"DLL_VIRUSTOTAL_API_KEY": "env_key"}):
+            settings = SettingsLoader.load(config_path=temp_path)
 
         # Env should override file
         assert settings.virustotal_api_key == "env_key"
@@ -463,7 +552,7 @@ def test_settings_load_with_no_config_file() -> None:
     Expected Behavior:
         Returns Settings with default values.
     """
-    settings = Settings.load(config_path="/nonexistent/config.json")
+    settings = SettingsLoader.load(config_path="/nonexistent/config.json")
 
     # Should have default values (no file, no env)
     assert settings.http_timeout == 60
@@ -471,98 +560,99 @@ def test_settings_load_with_no_config_file() -> None:
 
 
 @pytest.mark.unit
-def test_settings_load_vt_toml_key(monkeypatch) -> None:
+def test_settings_load_vt_toml_key() -> None:
     """
     Test loading VirusTotal API key from ~/.vt.toml.
     """
     with tempfile.TemporaryDirectory() as temp_dir:
-        monkeypatch.setenv("HOME", temp_dir)
-        monkeypatch.setenv("USERPROFILE", temp_dir)
-        monkeypatch.delenv("DLL_VIRUSTOTAL_API_KEY", raising=False)
+        with _temporary_env(
+            {
+                "HOME": temp_dir,
+                "USERPROFILE": temp_dir,
+                "DLL_VIRUSTOTAL_API_KEY": None,
+            }
+        ):
+            vt_path = Path(temp_dir) / ".vt.toml"
+            vt_path.write_text('apikey="vt_file_key"')
 
-        vt_path = Path(temp_dir) / ".vt.toml"
-        vt_path.write_text('apikey="vt_file_key"')
-
-        settings = Settings.load(config_path="/nonexistent/config.json")
+            settings = SettingsLoader.load(config_path="/nonexistent/config.json")
 
         assert settings.virustotal_api_key == "vt_file_key"
 
 
 @pytest.mark.unit
-def test_settings_load_env_over_vt_toml(monkeypatch) -> None:
+def test_settings_load_env_over_vt_toml() -> None:
     """
     Test that environment variable overrides ~/.vt.toml.
     """
     with tempfile.TemporaryDirectory() as temp_dir:
-        monkeypatch.setenv("HOME", temp_dir)
-        monkeypatch.setenv("USERPROFILE", temp_dir)
-        monkeypatch.setenv("DLL_VIRUSTOTAL_API_KEY", "env_key")
+        with _temporary_env(
+            {
+                "HOME": temp_dir,
+                "USERPROFILE": temp_dir,
+                "DLL_VIRUSTOTAL_API_KEY": "env_key",
+            }
+        ):
+            vt_path = Path(temp_dir) / ".vt.toml"
+            vt_path.write_text('apikey="vt_file_key"')
 
-        vt_path = Path(temp_dir) / ".vt.toml"
-        vt_path.write_text('apikey="vt_file_key"')
-
-        settings = Settings.load(config_path="/nonexistent/config.json")
+            settings = SettingsLoader.load(config_path="/nonexistent/config.json")
 
         assert settings.virustotal_api_key == "env_key"
 
 
 @pytest.mark.unit
-def test_settings_load_without_vt_toml(monkeypatch) -> None:
+def test_settings_load_without_vt_toml() -> None:
     with tempfile.TemporaryDirectory() as temp_dir:
-        monkeypatch.setenv("HOME", temp_dir)
-        monkeypatch.setenv("USERPROFILE", temp_dir)
-        monkeypatch.delenv("DLL_VIRUSTOTAL_API_KEY", raising=False)
-
-        settings = Settings.load(config_path="/nonexistent/config.json")
+        with _temporary_env(
+            {
+                "HOME": temp_dir,
+                "USERPROFILE": temp_dir,
+                "DLL_VIRUSTOTAL_API_KEY": None,
+            }
+        ):
+            settings = SettingsLoader.load(config_path="/nonexistent/config.json")
 
         assert settings.virustotal_api_key is None
 
 
 @pytest.mark.unit
-def test_load_vt_toml_key_missing_file(monkeypatch) -> None:
-    with tempfile.TemporaryDirectory() as temp_dir:
-        monkeypatch.setenv("HOME", temp_dir)
-        monkeypatch.setenv("USERPROFILE", temp_dir)
-        assert Settings._load_vt_toml_key() is None
+def test_load_vt_toml_key_missing_file() -> None:
+    with tempfile.TemporaryDirectory() as temp_dir, _temporary_env(
+        {"HOME": temp_dir, "USERPROFILE": temp_dir}
+    ):
+        assert _VTTomlSettingsSource.load(temp_dir) is None
 
 
 @pytest.mark.unit
-def test_load_vt_toml_key_invalid_contents(monkeypatch) -> None:
-    with tempfile.TemporaryDirectory() as temp_dir:
-        monkeypatch.setenv("HOME", temp_dir)
-        monkeypatch.setenv("USERPROFILE", temp_dir)
+def test_load_vt_toml_key_invalid_contents() -> None:
+    with tempfile.TemporaryDirectory() as temp_dir, _temporary_env(
+        {"HOME": temp_dir, "USERPROFILE": temp_dir}
+    ):
         vt_path = Path(temp_dir) / ".vt.toml"
         vt_path.write_text("not_a_key=true")
-        assert Settings._load_vt_toml_key() is None
+        assert _VTTomlSettingsSource.load(temp_dir) is None
 
 
 @pytest.mark.unit
-def test_load_vt_toml_key_read_error(monkeypatch) -> None:
-    with tempfile.TemporaryDirectory() as temp_dir:
-        monkeypatch.setenv("HOME", temp_dir)
-        monkeypatch.setenv("USERPROFILE", temp_dir)
+def test_load_vt_toml_key_read_error() -> None:
+    with tempfile.TemporaryDirectory() as temp_dir, _temporary_env(
+        {"HOME": temp_dir, "USERPROFILE": temp_dir}
+    ):
         vt_path = Path(temp_dir) / ".vt.toml"
-        vt_path.write_text('apikey="vt_file_key"')
-
-        original_read = Path.read_text
-
-        def _raise(*_args, **_kwargs):
-            raise OSError("read error")
-
-        monkeypatch.setattr(Path, "read_text", _raise)
-        try:
-            assert Settings._load_vt_toml_key() is None
-        finally:
-            monkeypatch.setattr(Path, "read_text", original_read)
+        vt_path.mkdir()
+        assert _VTTomlSettingsSource.load(temp_dir) is None
 
 
 @pytest.mark.unit
-def test_settings_load_config_over_vt_toml(monkeypatch) -> None:
-    with tempfile.TemporaryDirectory() as temp_dir:
-        monkeypatch.setenv("HOME", temp_dir)
-        monkeypatch.setenv("USERPROFILE", temp_dir)
-        monkeypatch.delenv("DLL_VIRUSTOTAL_API_KEY", raising=False)
-
+def test_settings_load_config_over_vt_toml() -> None:
+    with tempfile.TemporaryDirectory() as temp_dir, _temporary_env(
+        {
+            "HOME": temp_dir,
+            "USERPROFILE": temp_dir,
+            "DLL_VIRUSTOTAL_API_KEY": None,
+        }
+    ):
         vt_path = Path(temp_dir) / ".vt.toml"
         vt_path.write_text('apikey="vt_file_key"')
 
@@ -572,14 +662,14 @@ def test_settings_load_config_over_vt_toml(monkeypatch) -> None:
             temp_path = f.name
 
         try:
-            settings = Settings.load(config_path=temp_path)
+            settings = SettingsLoader.load(config_path=temp_path)
             assert settings.virustotal_api_key == "file_key"
         finally:
             os.unlink(temp_path)
 
 
 @pytest.mark.unit
-def test_settings_load_searches_default_locations(monkeypatch) -> None:
+def test_settings_load_searches_default_locations() -> None:
     """
     Test that load() searches default config file locations.
 
@@ -597,18 +687,17 @@ def test_settings_load_searches_default_locations(monkeypatch) -> None:
         with open(config_path, "w") as f:
             json.dump(config_data, f)
 
-        original_cwd = Path.cwd()
-        try:
-            monkeypatch.chdir(temp_dir)
-            settings = Settings.load(config_path=None)
+        with _temporary_cwd(Path(temp_dir)):
+            settings = SettingsLoader.load(config_path=None)
             # Should find .config.json in current directory
             assert settings.http_timeout == 999
-        finally:
-            monkeypatch.chdir(original_cwd)
 
 
 @pytest.mark.unit
-def test_settings_load_invalid_json_logs_warning(tmp_download_dir, caplog) -> None:
+def test_settings_load_invalid_json_logs_warning(
+    tmp_download_dir: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """
     Verify Settings.load logs warning on invalid JSON and returns defaults.
     """
@@ -616,10 +705,33 @@ def test_settings_load_invalid_json_logs_warning(tmp_download_dir, caplog) -> No
     bad_config.write_text("{invalid json")
 
     with caplog.at_level("WARNING"):
-        settings = Settings.load(config_path=str(bad_config))
+        settings = SettingsLoader.load(config_path=str(bad_config))
 
     assert "Failed to load config" in caplog.text
     assert settings.download_directory == Settings().download_directory
+
+
+@pytest.mark.unit
+def test_settings_loader_finds_home_config_when_cwd_has_none() -> None:
+    with tempfile.TemporaryDirectory() as temp_home, tempfile.TemporaryDirectory() as temp_cwd:
+        home_config_dir = Path(temp_home) / ".dll_downloader"
+        home_config_dir.mkdir()
+        (home_config_dir / "config.json").write_text(json.dumps({"http_timeout": 777}))
+
+        with _temporary_env({"HOME": temp_home, "USERPROFILE": temp_home}), _temporary_cwd(
+            Path(temp_cwd)
+        ):
+            settings = SettingsLoader.load(config_path=None)
+
+        assert settings.http_timeout == 777
+
+
+@pytest.mark.unit
+def test_settings_loader_find_config_path_returns_none_when_defaults_missing() -> None:
+    with tempfile.TemporaryDirectory() as temp_home, tempfile.TemporaryDirectory() as temp_cwd, _temporary_env(
+        {"HOME": temp_home, "USERPROFILE": temp_home}
+    ), _temporary_cwd(Path(temp_cwd)):
+        assert SettingsLoader._find_config_path() is None
 
 
 # ============================================================================

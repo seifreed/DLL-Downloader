@@ -1,6 +1,6 @@
 # ADR 001: SessionMixin for HTTP Session Management
 
-**Status**: Accepted
+**Status**: Superseded by ADR 009
 
 **Date**: 2026-01-31
 
@@ -9,6 +9,9 @@
 **License**: GPLv3
 
 ## Context
+
+Historical note: this ADR reflects an earlier design that has since been replaced
+by composition-based session management in `HTTPSessionResource`.
 
 Multiple infrastructure components (`RequestsHTTPClient` and `VirusTotalScanner`) require identical HTTP session management behavior:
 

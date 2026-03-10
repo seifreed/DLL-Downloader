@@ -11,6 +11,9 @@ and validate real behavior without mocking.
 """
 
 
+from collections.abc import Iterator, Mapping
+from typing import Any, cast
+
 import pytest
 import requests
 
@@ -20,6 +23,14 @@ from dll_downloader.infrastructure.http.http_client import (
     HTTPResponse,
     RequestsHTTPClient,
 )
+from dll_downloader.infrastructure.http_session import (
+    HTTPSessionProtocol,
+    HTTPSessionResource,
+)
+
+
+def _resource_with_session(session: HTTPSessionProtocol) -> HTTPSessionResource:
+    return HTTPSessionResource(session=session)
 
 # ============================================================================
 # HTTPResponse Tests
@@ -151,7 +162,7 @@ def test_requests_http_client_initialization_defaults() -> None:
     assert client._timeout == 60
     assert client._user_agent == RequestsHTTPClient.DEFAULT_USER_AGENT
     assert client._verify_ssl is True
-    assert client._session is None
+    assert client.has_active_session is False
 
 
 @pytest.mark.unit
@@ -192,11 +203,12 @@ def test_requests_http_client_session_lazy_initialization() -> None:
     """
     client = RequestsHTTPClient()
 
-    assert client._session is None
+    assert client.has_active_session is False
 
     # First access creates session
     session1 = client.session
     assert session1 is not None
+    assert client.has_active_session is True
 
     # Second access returns same session
     session2 = client.session
@@ -226,7 +238,7 @@ def test_requests_http_client_session_headers_set() -> None:
 # ============================================================================
 
 @pytest.mark.integration
-def test_requests_http_client_get_real_request(test_http_server) -> None:
+def test_requests_http_client_get_real_request(test_http_server: int) -> None:
     """
     Test GET request against real local HTTP server.
 
@@ -252,7 +264,7 @@ def test_requests_http_client_get_real_request(test_http_server) -> None:
 
 
 @pytest.mark.integration
-def test_requests_http_client_get_with_custom_headers(test_http_server) -> None:
+def test_requests_http_client_get_with_custom_headers(test_http_server: int) -> None:
     """
     Test GET request with custom headers.
 
@@ -273,7 +285,7 @@ def test_requests_http_client_get_with_custom_headers(test_http_server) -> None:
 
 
 @pytest.mark.integration
-def test_requests_http_client_download_method(test_http_server) -> None:
+def test_requests_http_client_download_method(test_http_server: int) -> None:
     """
     Test download method with streaming.
 
@@ -297,7 +309,7 @@ def test_requests_http_client_download_method(test_http_server) -> None:
 
 
 @pytest.mark.integration
-def test_requests_http_client_head_request(test_http_server) -> None:
+def test_requests_http_client_head_request(test_http_server: int) -> None:
     """
     Test HEAD request to retrieve headers only.
 
@@ -321,7 +333,7 @@ def test_requests_http_client_head_request(test_http_server) -> None:
 
 
 @pytest.mark.integration
-def test_requests_http_client_get_file_info(test_http_server) -> None:
+def test_requests_http_client_get_file_info(test_http_server: int) -> None:
     """
     Test get_file_info method.
 
@@ -373,7 +385,7 @@ def test_requests_http_client_get_invalid_url_raises_error() -> None:
 
 
 @pytest.mark.integration
-def test_requests_http_client_download_404_raises_error(test_http_server) -> None:
+def test_requests_http_client_download_404_raises_error(test_http_server: int) -> None:
     """
     Test download of non-existent resource raises HTTPClientError.
 
@@ -436,11 +448,11 @@ def test_requests_http_client_close_method() -> None:
 
     # Create session
     _ = client.session
-    assert client._session is not None
+    assert client.has_active_session is True
 
     # Close it
     client.close()
-    assert client._session is None
+    assert client.has_active_session is False
 
     # Closing again should not raise error
     client.close()
@@ -463,14 +475,14 @@ def test_requests_http_client_context_manager() -> None:
     with client as ctx_client:
         # Session is created when accessed
         _ = ctx_client.session
-        assert ctx_client._session is not None
+        assert ctx_client.has_active_session is True
 
     # After context exit, session should be closed
-    assert client._session is None
+    assert client.has_active_session is False
 
 
 @pytest.mark.integration
-def test_requests_http_client_session_reuse(test_http_server) -> None:
+def test_requests_http_client_session_reuse(test_http_server: int) -> None:
     """
     Test that session is reused across multiple requests.
 
@@ -485,11 +497,11 @@ def test_requests_http_client_session_reuse(test_http_server) -> None:
 
     # First request creates session
     _ = client.get(url)
-    session1 = client._session
+    session1 = client.session
 
     # Second request reuses session
     _ = client.get(url)
-    session2 = client._session
+    session2 = client.session
 
     assert session1 is session2
 
@@ -558,6 +570,7 @@ def test_requests_http_client_satisfies_protocol() -> None:
 
     # Protocol requires these methods - verify they exist and are callable
     assert callable(getattr(client, "download", None))
+    assert callable(getattr(client, "get_text", None))
     assert callable(getattr(client, "get_file_info", None))
 
 
@@ -570,9 +583,9 @@ def test_http_client_protocol_has_required_methods() -> None:
         Verify Protocol completeness.
 
     Expected Behavior:
-        IHTTPClient Protocol defines download and get_file_info methods.
+        IHTTPClient Protocol defines download, get_text, and get_file_info methods.
     """
-    required_methods = ["download", "get_file_info"]
+    required_methods = ["download", "get_text", "get_file_info"]
 
     for method_name in required_methods:
         assert hasattr(IHTTPClient, method_name)
@@ -583,8 +596,57 @@ def test_http_client_protocol_method_bodies() -> None:
     """
     Execute Protocol method bodies to cover ellipsis lines.
     """
-    assert IHTTPClient.download(None, "url") is None
-    assert IHTTPClient.get_file_info(None, "url") is None
+    protocol = cast(Any, IHTTPClient)
+    assert protocol.download(None, "url") is None
+    assert protocol.get_text(None, "url") is None
+    assert protocol.get_file_info(None, "url") is None
+
+
+@pytest.mark.unit
+def test_http_client_get_text_decodes_response() -> None:
+    """
+    Verify get_text decodes successful HTTP responses.
+    """
+    class FixedResponseClient(RequestsHTTPClient):
+        def get(
+            self,
+            url: str,
+            headers: Mapping[str, str] | None = None,
+        ) -> HTTPResponse:
+            return HTTPResponse(
+                status_code=200,
+                content=b"hola",
+                headers={},
+                url=url,
+            )
+
+    client = FixedResponseClient()
+
+    assert client.get_text("https://example.com") == "hola"
+
+
+@pytest.mark.unit
+def test_http_client_get_text_raises_on_unsuccessful_response() -> None:
+    """
+    Verify get_text normalizes non-2xx responses as HTTPClientError.
+    """
+    class FixedErrorClient(RequestsHTTPClient):
+        def get(
+            self,
+            url: str,
+            headers: Mapping[str, str] | None = None,
+        ) -> HTTPResponse:
+            return HTTPResponse(
+                status_code=503,
+                content=b"down",
+                headers={},
+                url=url,
+            )
+
+    client = FixedErrorClient()
+
+    with pytest.raises(HTTPClientError):
+        client.get_text("https://example.com")
 
 
 @pytest.mark.unit
@@ -593,11 +655,23 @@ def test_http_client_download_request_exception_raises() -> None:
     Verify download wraps request exceptions into HTTPClientError.
     """
     class DummySession:
-        def get(self, *args, **kwargs):
+        headers: dict[str, str] = {}
+
+        def get(self, *args: Any, **kwargs: Any) -> Any:
             raise requests.RequestException("boom")
 
-    client = RequestsHTTPClient()
-    client._session = DummySession()
+        def head(self, *args: Any, **kwargs: Any) -> Any:
+            raise NotImplementedError
+
+        def post(self, *args: Any, **kwargs: Any) -> Any:
+            raise NotImplementedError
+
+        def close(self) -> None:
+            pass
+
+    client = RequestsHTTPClient(
+        session_resource=_resource_with_session(cast(HTTPSessionProtocol, DummySession()))
+    )
 
     with pytest.raises(HTTPClientError):
         client.download("https://example.com/file.dll")
@@ -609,11 +683,23 @@ def test_http_client_head_request_exception_raises() -> None:
     Verify head wraps request exceptions into HTTPClientError.
     """
     class DummySession:
-        def head(self, *args, **kwargs):
+        headers: dict[str, str] = {}
+
+        def get(self, *args: Any, **kwargs: Any) -> Any:
+            raise NotImplementedError
+
+        def head(self, *args: Any, **kwargs: Any) -> Any:
             raise requests.RequestException("boom")
 
-    client = RequestsHTTPClient()
-    client._session = DummySession()
+        def post(self, *args: Any, **kwargs: Any) -> Any:
+            raise NotImplementedError
+
+        def close(self) -> None:
+            pass
+
+    client = RequestsHTTPClient(
+        session_resource=_resource_with_session(cast(HTTPSessionProtocol, DummySession()))
+    )
 
     with pytest.raises(HTTPClientError):
         client.head("https://example.com/file.dll")
@@ -624,8 +710,11 @@ def test_get_file_info_invalid_content_length() -> None:
     """
     Verify invalid content-length header is handled safely.
     """
-    client = RequestsHTTPClient()
-    client.head = lambda url: {"content-length": "not-a-number"}
+    class InvalidHeadClient(RequestsHTTPClient):
+        def head(self, url: str) -> dict[str, str]:
+            return {"content-length": "not-a-number"}
+
+    client = InvalidHeadClient()
     info = client.get_file_info("https://example.com/file.dll")
     assert info["content_length"] == 0
 
@@ -638,14 +727,27 @@ def test_http_client_download_ignores_empty_chunks() -> None:
     class DummyResponse:
         ok = True
         status_code = 200
-        def iter_content(self, chunk_size=8192):
+
+        def iter_content(self, chunk_size: int = 8192) -> Iterator[bytes]:
             yield b""
             yield b"abc"
 
     class DummySession:
-        def get(self, *args, **kwargs):
+        headers: dict[str, str] = {}
+
+        def get(self, *args: Any, **kwargs: Any) -> DummyResponse:
             return DummyResponse()
 
-    client = RequestsHTTPClient()
-    client._session = DummySession()
+        def head(self, *args: Any, **kwargs: Any) -> Any:
+            raise NotImplementedError
+
+        def post(self, *args: Any, **kwargs: Any) -> Any:
+            raise NotImplementedError
+
+        def close(self) -> None:
+            pass
+
+    client = RequestsHTTPClient(
+        session_resource=_resource_with_session(cast(HTTPSessionProtocol, DummySession()))
+    )
     assert client.download("https://example.com/file.dll") == b"abc"

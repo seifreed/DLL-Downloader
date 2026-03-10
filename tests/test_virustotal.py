@@ -10,8 +10,11 @@ scanning functionality. Tests use in-memory data structures and real method
 execution to validate behavior.
 """
 
+from collections.abc import MutableMapping
 from dataclasses import replace
 from datetime import datetime
+from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
@@ -19,10 +22,54 @@ from dll_downloader.domain.entities.dll_file import (
     DLLFile,
     SecurityStatus,
 )
+from dll_downloader.domain.services.security_scanner import ScanResult
+from dll_downloader.infrastructure.http_session import (
+    HTTPSessionProtocol,
+    HTTPSessionResource,
+)
 from dll_downloader.infrastructure.services.virustotal import (
     VirusTotalError,
     VirusTotalScanner,
 )
+
+
+class WeirdMapping(dict[object, object]):
+    pass
+
+
+def _resource_with_session(session: HTTPSessionProtocol) -> HTTPSessionResource:
+    return HTTPSessionResource(session=session)
+
+
+class HashNotFoundScanner(VirusTotalScanner):
+    def scan_hash(self, file_hash: str) -> ScanResult:
+        raise FileNotFoundError(file_hash)
+
+
+class HashErrorScanner(VirusTotalScanner):
+    def scan_hash(self, file_hash: str) -> ScanResult:
+        raise VirusTotalError("err")
+
+
+class FixedResultScanner(VirusTotalScanner):
+    def __init__(
+        self,
+        result: ScanResult,
+        api_key: str | None = None,
+        malicious_threshold: int = 5,
+        suspicious_threshold: int = 1,
+        session_resource: HTTPSessionResource | None = None,
+    ) -> None:
+        super().__init__(
+            api_key=api_key,
+            malicious_threshold=malicious_threshold,
+            suspicious_threshold=suspicious_threshold,
+            session_resource=session_resource,
+        )
+        self._result = result
+
+    def scan_hash(self, file_hash: str) -> ScanResult:
+        return self._result
 
 # ============================================================================
 # VirusTotalScanner Initialization Tests
@@ -49,7 +96,7 @@ def test_virustotal_scanner_initialization_with_api_key() -> None:
     assert scanner.is_available is True
     assert scanner._malicious_threshold == 5
     assert scanner._suspicious_threshold == 1
-    assert scanner._session_headers["x-apikey"] == api_key
+    assert scanner.session.headers["x-apikey"] == api_key
 
 
 @pytest.mark.unit
@@ -69,7 +116,7 @@ def test_virustotal_scanner_initialization_without_api_key() -> None:
 
     assert scanner._api_key is None
     assert scanner.is_available is False
-    assert scanner._session_headers == {}
+    assert "x-apikey" not in scanner.session.headers
 
 
 @pytest.mark.unit
@@ -175,6 +222,62 @@ def test_virustotal_scanner_parse_response_clean_file() -> None:
     assert result.detection_ratio == "0/72"
     assert isinstance(result.scan_date, datetime)
     assert result.permalink == f"https://www.virustotal.com/gui/file/{file_hash}"
+
+
+@pytest.mark.unit
+def test_virustotal_scanner_parse_response_with_non_mapping_stats_defaults_unknown() -> None:
+    scanner = VirusTotalScanner(api_key="test_key")
+    result = scanner._parse_response(
+        "z" * 64,
+        {
+            "data": {
+                "attributes": {
+                    "last_analysis_stats": "bad",
+                    "last_analysis_results": {},
+                }
+            }
+        },
+    )
+
+    assert result.status == SecurityStatus.UNKNOWN
+    assert result.detection_ratio is None
+
+
+@pytest.mark.unit
+def test_virustotal_safe_json_rejects_non_string_keys() -> None:
+    class DummyResponse:
+        status_code = 200
+        headers: MutableMapping[str, str] = {}
+        content = b""
+        url = "https://example.com"
+        ok = True
+
+        def json(self) -> WeirdMapping:
+            return WeirdMapping({1: "bad"})
+
+        def iter_content(self, chunk_size: int = 1) -> Any:
+            return iter(())
+
+    with pytest.raises(TypeError, match="response keys must be strings"):
+        from dll_downloader.infrastructure.services.virustotal import _safe_json
+
+        _safe_json(DummyResponse())
+
+
+@pytest.mark.unit
+def test_virustotal_data_section_filters_non_string_keys() -> None:
+    from dll_downloader.infrastructure.services.virustotal import _data_section
+
+    payload: dict[str, object] = {"data": WeirdMapping({1: "bad", "ok": "value"})}
+
+    assert _data_section(payload) == {"ok": "value"}
+
+
+@pytest.mark.unit
+def test_virustotal_data_section_returns_empty_for_non_mapping() -> None:
+    from dll_downloader.infrastructure.services.virustotal import _data_section
+
+    assert _data_section({"data": "bad"}) == {}
 
 
 @pytest.mark.unit
@@ -315,6 +418,40 @@ def test_virustotal_scanner_parse_response_with_detections_dict() -> None:
     assert "Sophos" not in result.detections  # None result excluded
 
 
+@pytest.mark.unit
+def test_virustotal_scanner_extract_engine_detections_ignores_invalid_shapes() -> None:
+    scanner = VirusTotalScanner(api_key="test_key")
+    detections = scanner._extract_engine_detections(
+        {
+            "data": {
+                "attributes": {
+                    "last_analysis_results": {
+                        "good": {"result": "Malware"},
+                        "bad": "oops",
+                    }
+                }
+            }
+        }
+    )
+
+    assert detections == {"good": "Malware"}
+
+
+@pytest.mark.unit
+def test_virustotal_scanner_extract_engine_detections_returns_empty_for_non_mapping_results() -> None:
+    scanner = VirusTotalScanner(api_key="test_key")
+    assert scanner._extract_engine_detections(
+        {"data": {"attributes": {"last_analysis_results": "bad"}}}
+    ) == {}
+
+
+@pytest.mark.unit
+def test_virustotal_scanner_extract_attributes_returns_empty_for_invalid_shapes() -> None:
+    scanner = VirusTotalScanner(api_key="test_key")
+    assert scanner._extract_attributes({"data": "bad"}) == {}
+    assert scanner._extract_attributes({"data": {"attributes": "bad"}}) == {}
+
+
 # ============================================================================
 # VirusTotalScanner scan_hash Tests
 # ============================================================================
@@ -338,11 +475,12 @@ def test_virustotal_scanner_scan_hash_unavailable_returns_unknown() -> None:
 
     assert result.file_hash == file_hash
     assert result.status == SecurityStatus.UNKNOWN
+    assert result.error_message is not None
     assert "not configured" in result.error_message
 
 
 @pytest.mark.integration
-def test_virustotal_scanner_scan_hash_with_mock_server(vt_mock_server) -> None:
+def test_virustotal_scanner_scan_hash_with_mock_server(vt_mock_server: int) -> None:
     """
     Test scan_hash with local mock VirusTotal API server.
 
@@ -459,10 +597,10 @@ def test_virustotal_scanner_scan_dll_updates_entity() -> None:
 @pytest.mark.unit
 def test_virustotal_scanner_session_lazy_initialization() -> None:
     """
-    Test that session is created lazily via SessionMixin.
+    Test that session is created lazily via composed session resource.
 
     Purpose:
-        Verify lazy initialization pattern inherited from SessionMixin.
+        Verify lazy initialization pattern provided by the session resource.
 
     Expected Behavior:
         - Session is None initially
@@ -471,11 +609,12 @@ def test_virustotal_scanner_session_lazy_initialization() -> None:
     """
     scanner = VirusTotalScanner(api_key="test_key")
 
-    assert scanner._session is None
+    assert scanner.has_active_session is False
 
     # First access creates session
     session1 = scanner.session
     assert session1 is not None
+    assert scanner.has_active_session is True
 
     # Second access returns same session
     session2 = scanner.session
@@ -508,7 +647,7 @@ def test_virustotal_scanner_close_cleanup() -> None:
     Test explicit session cleanup with close().
 
     Purpose:
-        Verify resource cleanup via SessionMixin.
+        Verify resource cleanup via the composed session resource.
 
     Expected Behavior:
         - Session is closed
@@ -518,11 +657,11 @@ def test_virustotal_scanner_close_cleanup() -> None:
 
     # Create session
     _ = scanner.session
-    assert scanner._session is not None
+    assert scanner.has_active_session is True
 
     # Close it
     scanner.close()
-    assert scanner._session is None
+    assert scanner.has_active_session is False
 
 
 @pytest.mark.unit
@@ -540,9 +679,9 @@ def test_virustotal_scanner_context_manager() -> None:
 
     with scanner as ctx_scanner:
         _ = ctx_scanner.session
-        assert ctx_scanner._session is not None
+        assert ctx_scanner.has_active_session is True
 
-    assert scanner._session is None
+    assert scanner.has_active_session is False
 
 
 # ============================================================================
@@ -651,7 +790,7 @@ def test_virustotal_scanner_threshold_boundaries() -> None:
 
 
 @pytest.mark.unit
-def test_scan_file_unavailable_returns_unknown(tmp_download_dir) -> None:
+def test_scan_file_unavailable_returns_unknown(tmp_download_dir: Path) -> None:
     """
     Verify scan_file returns UNKNOWN when API key missing.
     """
@@ -665,24 +804,39 @@ def test_scan_file_unavailable_returns_unknown(tmp_download_dir) -> None:
 
 
 @pytest.mark.unit
-def test_scan_file_upload_success(tmp_download_dir, monkeypatch) -> None:
+def test_scan_file_upload_success(
+    tmp_download_dir: Path,
+) -> None:
     """
     Verify scan_file uploads when hash not found and returns pending result.
     """
     class DummyResponse:
-        def __init__(self, status_code, payload):
+        def __init__(self, status_code: int, payload: dict[str, object]) -> None:
             self.status_code = status_code
             self._payload = payload
-        def json(self):
+
+        def json(self) -> dict[str, object]:
             return self._payload
 
     class DummySession:
-        def post(self, url, files=None):
+        headers: dict[str, str] = {}
+
+        def get(self, *args: Any, **kwargs: Any) -> Any:
+            raise NotImplementedError
+
+        def post(self, url: str, files: Any = None, **kwargs: Any) -> DummyResponse:
             return DummyResponse(200, {"data": {"id": "abc"}})
 
-    scanner = VirusTotalScanner(api_key="key")
-    scanner._session = DummySession()
-    monkeypatch.setattr(scanner, "scan_hash", lambda _: (_ for _ in ()).throw(FileNotFoundError()))
+        def head(self, *args: Any, **kwargs: Any) -> Any:
+            raise NotImplementedError
+
+        def close(self) -> None:
+            pass
+
+    scanner = HashNotFoundScanner(
+        api_key="key",
+        session_resource=_resource_with_session(cast(HTTPSessionProtocol, DummySession())),
+    )
 
     sample = tmp_download_dir / "file.dll"
     sample.write_bytes(b"data")
@@ -693,23 +847,38 @@ def test_scan_file_upload_success(tmp_download_dir, monkeypatch) -> None:
 
 
 @pytest.mark.unit
-def test_scan_file_upload_failure_raises(tmp_download_dir, monkeypatch) -> None:
+def test_scan_file_upload_failure_raises(
+    tmp_download_dir: Path,
+) -> None:
     """
     Verify scan_file raises on upload failure.
     """
     class DummyResponse:
-        def __init__(self, status_code):
+        def __init__(self, status_code: int) -> None:
             self.status_code = status_code
-        def json(self):
+
+        def json(self) -> dict[str, object]:
             return {}
 
     class DummySession:
-        def post(self, url, files=None):
+        headers: dict[str, str] = {}
+
+        def get(self, *args: Any, **kwargs: Any) -> Any:
+            raise NotImplementedError
+
+        def post(self, url: str, files: Any = None, **kwargs: Any) -> DummyResponse:
             return DummyResponse(500)
 
-    scanner = VirusTotalScanner(api_key="key")
-    scanner._session = DummySession()
-    monkeypatch.setattr(scanner, "scan_hash", lambda _: (_ for _ in ()).throw(FileNotFoundError()))
+        def head(self, *args: Any, **kwargs: Any) -> Any:
+            raise NotImplementedError
+
+        def close(self) -> None:
+            pass
+
+    scanner = HashNotFoundScanner(
+        api_key="key",
+        session_resource=_resource_with_session(cast(HTTPSessionProtocol, DummySession())),
+    )
 
     sample = tmp_download_dir / "file.dll"
     sample.write_bytes(b"data")
@@ -719,22 +888,73 @@ def test_scan_file_upload_failure_raises(tmp_download_dir, monkeypatch) -> None:
 
 
 @pytest.mark.unit
-def test_scan_hash_404_raises(monkeypatch) -> None:
+def test_scan_file_upload_type_error_raises(
+    tmp_download_dir: Path,
+) -> None:
+    class DummyResponse:
+        status_code = 200
+
+        def json(self) -> list[str]:
+            return ["bad"]
+
+    class DummySession:
+        headers: dict[str, str] = {}
+
+        def get(self, *args: object, **kwargs: object) -> object:
+            raise NotImplementedError
+
+        def post(self, url: str, files: object = None, **kwargs: object) -> DummyResponse:
+            return DummyResponse()
+
+        def head(self, *args: object, **kwargs: object) -> object:
+            raise NotImplementedError
+
+        def close(self) -> None:
+            pass
+
+    scanner = HashNotFoundScanner(
+        api_key="key",
+        session_resource=_resource_with_session(cast(HTTPSessionProtocol, DummySession())),
+    )
+
+    sample = tmp_download_dir / "file.dll"
+    sample.write_bytes(b"data")
+
+    with pytest.raises(VirusTotalError, match="File upload failed"):
+        scanner.scan_file(str(sample))
+
+
+@pytest.mark.unit
+def test_scan_hash_404_raises() -> None:
     """
     Verify scan_hash raises FileNotFoundError on 404.
     """
     class DummyResponse:
-        def __init__(self, status_code):
+        def __init__(self, status_code: int) -> None:
             self.status_code = status_code
-        def json(self):
+
+        def json(self) -> dict[str, object]:
             return {}
 
     class DummySession:
-        def get(self, url):
+        headers: dict[str, str] = {}
+
+        def get(self, url: str, **kwargs: Any) -> DummyResponse:
             return DummyResponse(404)
 
-    scanner = VirusTotalScanner(api_key="key")
-    scanner._session = DummySession()
+        def head(self, *args: Any, **kwargs: Any) -> Any:
+            raise NotImplementedError
+
+        def post(self, *args: Any, **kwargs: Any) -> Any:
+            raise NotImplementedError
+
+        def close(self) -> None:
+            pass
+
+    scanner = VirusTotalScanner(
+        api_key="key",
+        session_resource=_resource_with_session(cast(HTTPSessionProtocol, DummySession())),
+    )
 
     with pytest.raises(FileNotFoundError):
         scanner.scan_hash("hash")
@@ -746,17 +966,31 @@ def test_scan_hash_non_200_raises() -> None:
     Verify scan_hash raises VirusTotalError on non-200.
     """
     class DummyResponse:
-        def __init__(self, status_code):
+        def __init__(self, status_code: int) -> None:
             self.status_code = status_code
-        def json(self):
+
+        def json(self) -> dict[str, object]:
             return {}
 
     class DummySession:
-        def get(self, url):
+        headers: dict[str, str] = {}
+
+        def get(self, url: str, **kwargs: Any) -> DummyResponse:
             return DummyResponse(500)
 
-    scanner = VirusTotalScanner(api_key="key")
-    scanner._session = DummySession()
+        def head(self, *args: Any, **kwargs: Any) -> Any:
+            raise NotImplementedError
+
+        def post(self, *args: Any, **kwargs: Any) -> Any:
+            raise NotImplementedError
+
+        def close(self) -> None:
+            pass
+
+    scanner = VirusTotalScanner(
+        api_key="key",
+        session_resource=_resource_with_session(cast(HTTPSessionProtocol, DummySession())),
+    )
 
     with pytest.raises(VirusTotalError):
         scanner.scan_hash("hash")
@@ -768,23 +1002,35 @@ def test_scan_hash_request_exception_raises() -> None:
     Verify scan_hash wraps exceptions into VirusTotalError.
     """
     class DummySession:
-        def get(self, url):
+        headers: dict[str, str] = {}
+
+        def get(self, url: str, **kwargs: Any) -> Any:
             raise RuntimeError("boom")
 
-    scanner = VirusTotalScanner(api_key="key")
-    scanner._session = DummySession()
+        def head(self, *args: Any, **kwargs: Any) -> Any:
+            raise NotImplementedError
+
+        def post(self, *args: Any, **kwargs: Any) -> Any:
+            raise NotImplementedError
+
+        def close(self) -> None:
+            pass
+
+    scanner = VirusTotalScanner(
+        api_key="key",
+        session_resource=_resource_with_session(cast(HTTPSessionProtocol, DummySession())),
+    )
 
     with pytest.raises(VirusTotalError):
         scanner.scan_hash("hash")
 
 
 @pytest.mark.unit
-def test_scan_dll_no_results_sets_unknown(monkeypatch) -> None:
+def test_scan_dll_no_results_sets_unknown() -> None:
     """
     Verify scan_dll returns UNKNOWN when no results exist.
     """
-    scanner = VirusTotalScanner(api_key="key")
-    monkeypatch.setattr(scanner, "scan_hash", lambda _: (_ for _ in ()).throw(FileNotFoundError()))
+    scanner = HashNotFoundScanner(api_key="key")
 
     dll = DLLFile(name="a.dll", file_hash="hash")
     result = scanner.scan_dll(dll)
@@ -792,12 +1038,11 @@ def test_scan_dll_no_results_sets_unknown(monkeypatch) -> None:
 
 
 @pytest.mark.unit
-def test_scan_dll_error_returns_original(monkeypatch) -> None:
+def test_scan_dll_error_returns_original() -> None:
     """
     Verify scan_dll returns original on VirusTotalError.
     """
-    scanner = VirusTotalScanner(api_key="key")
-    monkeypatch.setattr(scanner, "scan_hash", lambda _: (_ for _ in ()).throw(VirusTotalError("err")))
+    scanner = HashErrorScanner(api_key="key")
 
     dll = DLLFile(name="a.dll", file_hash="hash")
     result = scanner.scan_dll(dll)
@@ -805,7 +1050,7 @@ def test_scan_dll_error_returns_original(monkeypatch) -> None:
 
 
 @pytest.mark.unit
-def test_scan_dll_success_updates_entity(monkeypatch) -> None:
+def test_scan_dll_success_updates_entity() -> None:
     """
     Verify scan_dll updates entity on successful scan_hash.
     """
@@ -828,7 +1073,7 @@ def test_scan_dll_success_updates_entity(monkeypatch) -> None:
             }
         }
     )
-    monkeypatch.setattr(scanner, "scan_hash", lambda _: scan_result)
+    scanner = FixedResultScanner(scan_result, api_key="key")
 
     dll = DLLFile(name="a.dll", file_hash="hash")
     result = scanner.scan_dll(dll)
@@ -841,18 +1086,32 @@ def test_get_detailed_report_success() -> None:
     Verify get_detailed_report returns JSON on success.
     """
     class DummyResponse:
-        def __init__(self, status_code, payload):
+        def __init__(self, status_code: int, payload: dict[str, object]) -> None:
             self.status_code = status_code
             self._payload = payload
-        def json(self):
+
+        def json(self) -> dict[str, object]:
             return self._payload
 
     class DummySession:
-        def get(self, url):
+        headers: dict[str, str] = {}
+
+        def get(self, url: str, **kwargs: Any) -> DummyResponse:
             return DummyResponse(200, {"ok": True})
 
-    scanner = VirusTotalScanner(api_key="key")
-    scanner._session = DummySession()
+        def head(self, *args: Any, **kwargs: Any) -> Any:
+            raise NotImplementedError
+
+        def post(self, *args: Any, **kwargs: Any) -> Any:
+            raise NotImplementedError
+
+        def close(self) -> None:
+            pass
+
+    scanner = VirusTotalScanner(
+        api_key="key",
+        session_resource=_resource_with_session(cast(HTTPSessionProtocol, DummySession())),
+    )
 
     assert scanner.get_detailed_report("hash") == {"ok": True}
 
@@ -863,17 +1122,31 @@ def test_get_detailed_report_non_200_raises() -> None:
     Verify get_detailed_report raises on non-200 response.
     """
     class DummyResponse:
-        def __init__(self, status_code):
+        def __init__(self, status_code: int) -> None:
             self.status_code = status_code
-        def json(self):
+
+        def json(self) -> dict[str, object]:
             return {}
 
     class DummySession:
-        def get(self, url):
+        headers: dict[str, str] = {}
+
+        def get(self, url: str, **kwargs: Any) -> DummyResponse:
             return DummyResponse(500)
 
-    scanner = VirusTotalScanner(api_key="key")
-    scanner._session = DummySession()
+        def head(self, *args: Any, **kwargs: Any) -> Any:
+            raise NotImplementedError
+
+        def post(self, *args: Any, **kwargs: Any) -> Any:
+            raise NotImplementedError
+
+        def close(self) -> None:
+            pass
+
+    scanner = VirusTotalScanner(
+        api_key="key",
+        session_resource=_resource_with_session(cast(HTTPSessionProtocol, DummySession())),
+    )
 
     with pytest.raises(VirusTotalError):
         scanner.get_detailed_report("hash")
@@ -885,13 +1158,58 @@ def test_get_detailed_report_exception_raises() -> None:
     Verify get_detailed_report wraps exceptions into VirusTotalError.
     """
     class DummySession:
-        def get(self, url):
+        headers: dict[str, str] = {}
+
+        def get(self, url: str, **kwargs: Any) -> Any:
             raise RuntimeError("boom")
 
-    scanner = VirusTotalScanner(api_key="key")
-    scanner._session = DummySession()
+        def head(self, *args: Any, **kwargs: Any) -> Any:
+            raise NotImplementedError
+
+        def post(self, *args: Any, **kwargs: Any) -> Any:
+            raise NotImplementedError
+
+        def close(self) -> None:
+            pass
+
+    scanner = VirusTotalScanner(
+        api_key="key",
+        session_resource=_resource_with_session(cast(HTTPSessionProtocol, DummySession())),
+    )
 
     with pytest.raises(VirusTotalError):
+        scanner.get_detailed_report("hash")
+
+
+@pytest.mark.unit
+def test_get_detailed_report_invalid_json_raises() -> None:
+    class DummyResponse:
+        status_code = 200
+
+        def json(self) -> list[str]:
+            return ["bad"]
+
+    class DummySession:
+        headers: dict[str, str] = {}
+
+        def get(self, url: str, **kwargs: object) -> DummyResponse:
+            return DummyResponse()
+
+        def head(self, *args: object, **kwargs: object) -> object:
+            raise NotImplementedError
+
+        def post(self, *args: object, **kwargs: object) -> object:
+            raise NotImplementedError
+
+        def close(self) -> None:
+            pass
+
+    scanner = VirusTotalScanner(
+        api_key="key",
+        session_resource=_resource_with_session(cast(HTTPSessionProtocol, DummySession())),
+    )
+
+    with pytest.raises(VirusTotalError, match="Report retrieval failed"):
         scanner.get_detailed_report("hash")
 
 
