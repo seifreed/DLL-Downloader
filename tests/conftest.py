@@ -20,7 +20,7 @@ import pytest
 
 
 @pytest.fixture
-def tmp_download_dir() -> Generator[Path, None, None]:
+def tmp_download_dir() -> Generator[Path]:
     """
     Create a temporary directory for test downloads.
 
@@ -177,7 +177,7 @@ def sample_html_file(tmp_download_dir: Path) -> Path:
 
 
 @pytest.fixture(autouse=True)
-def reset_debug_mode() -> Generator[None, None, None]:
+def reset_debug_mode() -> Generator[None]:
     """
     Automatically reset debug mode before and after each test.
 
@@ -223,7 +223,7 @@ def empty_zip_file(tmp_download_dir: Path) -> Path:
 
 
 @pytest.fixture
-def test_http_server() -> Generator[int, None, None]:
+def test_http_server() -> Generator[int]:
     """
     Create a local HTTP server for testing real HTTP requests.
 
@@ -281,7 +281,7 @@ def test_http_server() -> Generator[int, None, None]:
 
 
 @pytest.fixture
-def vt_mock_server() -> Generator[int, None, None]:
+def vt_mock_server() -> Generator[int]:
     """
     Create a mock VirusTotal API server for testing.
 

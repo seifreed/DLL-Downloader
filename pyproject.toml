@@ -3,7 +3,7 @@ name = "dll-downloader"
 version = "1.0.0"
 description = "A Python script to automatically search and download DLL files"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.13,<3.15"
 license = "LicenseRef-MIT-Attribution"
 authors = [
     { name = "Marc Rivero Lopez", email = "mriverolopez@gmail.com" }
@@ -15,6 +15,8 @@ keywords = ["dll", "windows", "download", "security", "virustotal"]
 classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Operating System :: OS Independent",
 ]
 
@@ -53,7 +55,7 @@ build-backend = "setuptools.build_meta"
 # Black configuration
 [tool.black]
 line-length = 88
-target-version = ["py310", "py311", "py312", "py313"]
+target-version = ["py313", "py314"]
 include = '\.pyi?$'
 exclude = '''
 /(
@@ -70,7 +72,7 @@ exclude = '''
 # Ruff configuration
 [tool.ruff]
 line-length = 88
-target-version = "py310"
+target-version = "py313"
 exclude = [
     ".git",
     ".mypy_cache",
@@ -109,7 +111,7 @@ max-complexity = 10
 
 # Mypy configuration
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.13"
 strict = true
 warn_return_any = true
 warn_unused_configs = true

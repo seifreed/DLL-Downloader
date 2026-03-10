@@ -4,10 +4,10 @@ Architecture guardrails for layer dependencies.
 
 import ast
 import re
+import tomllib
 from pathlib import Path
 
 import pytest
-import tomllib  # type: ignore[import-untyped]
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PACKAGE_ROOT = PROJECT_ROOT / "dll_downloader"

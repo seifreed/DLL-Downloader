@@ -26,7 +26,7 @@ class StubTextHTTPClient:
 
 
 @pytest.fixture
-def resolver_server(tmp_path: Path) -> Generator[str, None, None]:
+def resolver_server(tmp_path: Path) -> Generator[str]:
     import http.server
     import socketserver
     import threading
