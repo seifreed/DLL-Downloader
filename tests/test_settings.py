@@ -16,6 +16,7 @@ import tempfile
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -78,6 +79,7 @@ def test_settings_creation_with_defaults() -> None:
     assert settings.download_directory == str(Path.cwd() / "downloads")
     assert settings.download_base_url == "https://es.dll-files.com"
     assert settings.http_timeout == 60
+    assert settings.http_max_retries == 5
     assert settings.verify_ssl is True
     assert settings.user_agent is None
     assert settings.scan_before_save is True
@@ -102,6 +104,7 @@ def test_settings_creation_with_custom_values() -> None:
         download_directory="/custom/path",
         download_base_url="https://custom.url",
         http_timeout=30,
+        http_max_retries=7,
         verify_ssl=False,
         user_agent="CustomAgent/1.0",
         scan_before_save=False,
@@ -114,6 +117,7 @@ def test_settings_creation_with_custom_values() -> None:
     assert settings.download_directory == "/custom/path"
     assert settings.download_base_url == "https://custom.url"
     assert settings.http_timeout == 30
+    assert settings.http_max_retries == 7
     assert settings.verify_ssl is False
     assert settings.user_agent == "CustomAgent/1.0"
     assert settings.scan_before_save is False
@@ -143,12 +147,16 @@ def test_settings_from_env_all_variables() -> None:
             "DLL_DOWNLOAD_DIRECTORY": "/env/downloads",
             "DLL_DOWNLOAD_BASE_URL": "https://env.url",
             "DLL_HTTP_TIMEOUT": "45",
+            "DLL_HTTP_MAX_RETRIES": "6",
+            "DLL_HTTP_RETRY_BACKOFF_SECONDS": "0.5",
+            "DLL_HTTP_RETRY_JITTER_SECONDS": "0.1",
             "DLL_VERIFY_SSL": "false",
             "DLL_SCAN_BEFORE_SAVE": "no",
             "DLL_MALICIOUS_THRESHOLD": "8",
             "DLL_SUSPICIOUS_THRESHOLD": "2",
             "DLL_LOG_LEVEL": "WARNING",
             "DLL_USER_AGENT": "EnvAgent/1.0",
+            "DLL_USER_AGENT_POOL": "AgentA, AgentB",
         }
     ):
         settings = SettingsLoader.from_env()
@@ -157,12 +165,16 @@ def test_settings_from_env_all_variables() -> None:
     assert settings.download_directory == "/env/downloads"
     assert settings.download_base_url == "https://env.url"
     assert settings.http_timeout == 45
+    assert settings.http_max_retries == 6
+    assert settings.http_retry_backoff_seconds == 0.5
+    assert settings.http_retry_jitter_seconds == 0.1
     assert settings.verify_ssl is False
     assert settings.scan_before_save is False
     assert settings.malicious_threshold == 8
     assert settings.suspicious_threshold == 2
     assert settings.log_level == "WARNING"
     assert settings.user_agent == "EnvAgent/1.0"
+    assert settings.user_agent_pool == ("AgentA", "AgentB")
 
 
 @pytest.mark.unit
@@ -284,8 +296,44 @@ def test_settings_loader_assign_helpers_return_false_for_non_matching_inputs() -
 
     assert SettingsLoader._assign_string(mapped, "unknown", "value") is False
     assert SettingsLoader._assign_int(mapped, "http_timeout", "10") is False
+    assert SettingsLoader._assign_int(mapped, "http_max_retries", "10") is False
+    assert SettingsLoader._assign_float(mapped, "http_retry_backoff_seconds", 1) is False
+    assert SettingsLoader._assign_float(mapped, "unknown", 0.2) is False
+    assert (
+        SettingsLoader._assign_string_tuple(
+            mapped,
+            "user_agent_pool",
+            cast(tuple[str, ...], ("ua-1", 2)),
+        )
+        is False
+    )
     assert SettingsLoader._assign_bool(mapped, "verify_ssl", "true") is False
     assert SettingsLoader._assign_bool(mapped, "unknown", True) is False
+
+
+@pytest.mark.unit
+def test_settings_loader_assign_helpers_accept_supported_float_and_tuple_values() -> None:
+    mapped = SettingsLoader._mapped_kwargs({}, SettingsLoader.JSON_MAPPING)
+
+    assert (
+        SettingsLoader._assign_float(
+            mapped,
+            "http_retry_jitter_seconds",
+            0.2,
+        )
+        is True
+    )
+    assert (
+        SettingsLoader._assign_string_tuple(
+            mapped,
+            "user_agent_pool",
+            ("ua-1", "ua-2"),
+        )
+        is True
+    )
+
+    assert mapped["http_retry_jitter_seconds"] == 0.2
+    assert mapped["user_agent_pool"] == ("ua-1", "ua-2")
 
 
 @pytest.mark.unit
@@ -332,8 +380,12 @@ def test_settings_from_json_all_fields() -> None:
         "download_directory": "/json/downloads",
         "download_base_url": "https://json.url",
         "http_timeout": 75,
+        "http_max_retries": 9,
+        "http_retry_backoff_seconds": 0.2,
+        "http_retry_jitter_seconds": 0.05,
         "verify_ssl": False,
         "user_agent": "JsonAgent/1.0",
+        "user_agent_pool": ["Agent1", "Agent2"],
         "scan_before_save": False,
         "malicious_threshold": 12,
         "suspicious_threshold": 4,
@@ -351,8 +403,12 @@ def test_settings_from_json_all_fields() -> None:
         assert settings.download_directory == "/json/downloads"
         assert settings.download_base_url == "https://json.url"
         assert settings.http_timeout == 75
+        assert settings.http_max_retries == 9
+        assert settings.http_retry_backoff_seconds == 0.2
+        assert settings.http_retry_jitter_seconds == 0.05
         assert settings.verify_ssl is False
         assert settings.user_agent == "JsonAgent/1.0"
+        assert settings.user_agent_pool == ("Agent1", "Agent2")
         assert settings.scan_before_save is False
         assert settings.malicious_threshold == 12
         assert settings.suspicious_threshold == 4
@@ -774,6 +830,44 @@ def test_settings_validate_negative_timeout_raises_error() -> None:
     settings = Settings(http_timeout=0)
 
     with pytest.raises(ValueError, match="http_timeout must be positive"):
+        settings.validate()
+
+
+@pytest.mark.unit
+def test_settings_validate_negative_http_max_retries_raises_error() -> None:
+    settings = Settings(http_max_retries=0)
+
+    with pytest.raises(ValueError, match="http_max_retries must be positive"):
+        settings.validate()
+
+
+@pytest.mark.unit
+def test_settings_validate_negative_http_retry_backoff_raises_error() -> None:
+    settings = Settings(http_retry_backoff_seconds=-0.1)
+
+    with pytest.raises(
+        ValueError,
+        match="http_retry_backoff_seconds cannot be negative",
+    ):
+        settings.validate()
+
+
+@pytest.mark.unit
+def test_settings_validate_negative_http_retry_jitter_raises_error() -> None:
+    settings = Settings(http_retry_jitter_seconds=-0.1)
+
+    with pytest.raises(
+        ValueError,
+        match="http_retry_jitter_seconds cannot be negative",
+    ):
+        settings.validate()
+
+
+@pytest.mark.unit
+def test_settings_validate_empty_user_agent_pool_raises_error() -> None:
+    settings = Settings(user_agent_pool=())
+
+    with pytest.raises(ValueError, match="user_agent_pool must contain at least one value"):
         settings.validate()
 
 

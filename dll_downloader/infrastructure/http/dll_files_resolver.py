@@ -48,7 +48,7 @@ class DllFilesResolver:
         return direct
 
     def _get(self, url: str) -> str:
-        return self.http_client.get_text(url, headers={"User-Agent": "Mozilla/5.0"})
+        return self.http_client.get_text(url)
 
     def _extract_dll_page(self, html: str, dll_name: str) -> str | None:
         name_root = dll_name.lower().replace(".dll", "")

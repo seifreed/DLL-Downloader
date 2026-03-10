@@ -167,7 +167,7 @@ class FileSystemDLLRepository(IDLLRepository):
             index["files"][key] = self._serialize_dll(dll_file)
             self._save_index(index)
 
-            logger.info(f"Saved DLL: {dll_file.name} to {file_path}")
+            logger.debug("Saved DLL %s to %s", dll_file.name, file_path)
             return dll_file
 
         except OSError as e:

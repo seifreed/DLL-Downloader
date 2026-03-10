@@ -13,10 +13,16 @@ import sys
 from ..api import Settings
 from ..application.use_cases.download_dll import DownloadDLLResponse
 from ..domain.entities.dll_file import Architecture
-from ..runtime import create_application, load_settings
+from ..runtime import load_settings
+from .cli_contracts import OutputFormat
+from .cli_formatters import (
+    create_batch_presenter,
+    create_cli_service,
+    emit_cli_input_error,
+    get_output_format,
+)
 from .cli_runner import CLIApplicationService
 from .presenters.download_presenter import (
-    DownloadBatchConsolePresenter,
     DownloadConsolePresenter,
 )
 
@@ -26,25 +32,11 @@ logging.basicConfig(
     format="%(message)s"
 )
 logger = logging.getLogger(__name__)
-_single_presenter = DownloadConsolePresenter()
-_batch_presenter = DownloadBatchConsolePresenter(_single_presenter)
-_cli_service = CLIApplicationService(
-    _batch_presenter,
-    create_application,
-)
 
 
-def parse_arguments() -> tuple[argparse.Namespace, argparse.ArgumentParser]:
-    """
-    Parse and return command line arguments.
-
-    Creates an argument parser with options for specifying DLL names,
-    input files, target architecture, and debug mode.
-
-    Returns:
-        A tuple containing the parsed arguments namespace and the parser object.
-    """
-    parser = argparse.ArgumentParser(
+def _build_argument_parser() -> argparse.ArgumentParser:
+    """Create the CLI parser with its help text."""
+    return argparse.ArgumentParser(
         description="Download DLL files from DLL-files.com",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
@@ -58,6 +50,9 @@ Examples:
         """
     )
 
+
+def _add_standard_arguments(parser: argparse.ArgumentParser) -> None:
+    """Register all supported CLI arguments on the parser."""
     parser.add_argument(
         'dll_name',
         nargs='?',
@@ -106,6 +101,32 @@ Examples:
         help='Extract the DLL when the downloaded file is a ZIP archive'
     )
 
+    output_group = parser.add_mutually_exclusive_group()
+    output_group.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit machine-readable JSON output",
+    )
+    output_group.add_argument(
+        "--sarif",
+        action="store_true",
+        help="Emit SARIF v2.1.0 output",
+    )
+
+
+def parse_arguments() -> tuple[argparse.Namespace, argparse.ArgumentParser]:
+    """
+    Parse and return command line arguments.
+
+    Creates an argument parser with options for specifying DLL names,
+    input files, target architecture, and debug mode.
+
+    Returns:
+        A tuple containing the parsed arguments namespace and the parser object.
+    """
+    parser = _build_argument_parser()
+    _add_standard_arguments(parser)
+
     return parser.parse_args(), parser
 
 
@@ -132,18 +153,18 @@ def read_dll_list_from_file(file_path: str) -> list[str]:
         A list of DLL names read from the file.
 
     Raises:
-        SystemExit: If the file does not exist or is empty.
+        ValueError: If the file does not exist or is empty.
     """
     if not os.path.exists(file_path):
-        print(f"Error: File '{file_path}' not found.")
-        sys.exit(1)
+        raise ValueError(f"File '{file_path}' not found.")
 
     with open(file_path) as f:
         dll_names = [line.strip() for line in f if line.strip()]
 
     if not dll_names:
-        print(f"Error: File '{file_path}' is empty or contains no valid DLL names.")
-        sys.exit(1)
+        raise ValueError(
+            f"File '{file_path}' is empty or contains no valid DLL names."
+        )
 
     return dll_names
 
@@ -172,8 +193,54 @@ def format_response(response: DownloadDLLResponse, dll_name: str) -> None:
         response: The download response from the use case
         dll_name: Name of the DLL that was requested
     """
-    print(_single_presenter.format(response, dll_name))
+    print(DownloadConsolePresenter().format(response, dll_name))
 
+
+def _handle_missing_cli_input(
+    parser: argparse.ArgumentParser,
+    output_format: OutputFormat,
+    service: CLIApplicationService,
+) -> int:
+    """Emit the correct missing-input response for the selected output format."""
+    if output_format == OutputFormat.CONSOLE:
+        parser.print_help()
+        return 1
+
+    emit_cli_input_error(
+        service,
+        create_batch_presenter(output_format).boundary_error(
+            "Please provide a DLL name or use --file"
+        ),
+    )
+    return 1
+
+
+def _run_cli_session(
+    service: CLIApplicationService,
+    output_format: OutputFormat,
+    args: argparse.Namespace,
+    parser: argparse.ArgumentParser,
+    settings: Settings,
+) -> int:
+    """Execute one CLI session and normalize input failures."""
+    try:
+        result = service.run_from_args(
+            args,
+            parser,
+            settings,
+            read_dll_list_from_file,
+        )
+    except ValueError as exc:
+        emit_cli_input_error(
+            service,
+            create_batch_presenter(output_format).boundary_error(str(exc)),
+        )
+        return 1
+
+    summary = service.render_summary(result)
+    if summary:
+        print(summary)
+    return result.session.exit_code
 
 def main(settings: Settings | None = None) -> int:
     """
@@ -188,34 +255,18 @@ def main(settings: Settings | None = None) -> int:
     """
     args, parser = parse_arguments()
     set_debug_mode(args.debug)
+    output_format = get_output_format(args)
+    service = create_cli_service(output_format)
+
+    if not args.dll_name and not args.file:
+        return _handle_missing_cli_input(parser, output_format, service)
 
     if settings is None:
         settings = load_settings()
 
-    result = _cli_service.run_from_args(
-        args,
-        parser,
-        settings,
-        read_dll_list_from_file,
-    )
-    if result is None:
-        return 1
-
-    summary = _cli_service.render_summary(result)
-    if summary:
-        print(summary)
-    return result.session.exit_code
-
-
+    return _run_cli_session(service, output_format, args, parser, settings)
 if __name__ == "__main__":
     sys.exit(main())
 
 
-__all__ = [
-    "parse_arguments",
-    "set_debug_mode",
-    "read_dll_list_from_file",
-    "get_architecture",
-    "format_response",
-    "main",
-]
+__all__ = ["parse_arguments", "set_debug_mode", "read_dll_list_from_file", "get_architecture", "format_response", "main"]

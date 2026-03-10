@@ -111,6 +111,12 @@ python3 dll-downloader.py msvcp140.dll --extract
 
 # Download from a list
 python3 dll-downloader.py --file dll_list.txt
+
+# Emit machine-readable JSON
+python3 dll-downloader.py msvcp140.dll --json
+
+# Emit SARIF for CI/security pipelines
+python3 dll-downloader.py msvcp140.dll --sarif
 ```
 
 ---
@@ -134,6 +140,8 @@ python3 dll-downloader.py <dll_name> [options]
 | `--force` | Force download even if cached |
 | `--output-dir` | Custom output directory |
 | `--extract` | Extract the DLL when the download is a ZIP archive |
+| `--json` | Emit machine-readable JSON output |
+| `--sarif` | Emit SARIF v2.1.0 output |
 
 Some providers return the DLL inside a ZIP archive. By default, `dll-downloader`
 expects the payload to be a real ZIP and validates that it contains a valid PE
@@ -141,6 +149,22 @@ DLL. Without `--extract`, the validated ZIP is saved as-is. With `--extract`,
 the tool saves the unpacked `.dll`, which is useful in CI/CD workflows. If the
 payload is not a valid ZIP or the embedded DLL is not a valid PE file, the
 download fails with an explicit error.
+
+The HTTP transport retries transient failures up to 5 times by default and
+rotates across a pool of 5 legitimate `User-Agent` strings unless you provide
+an explicit `user_agent` in configuration.
+
+Retry policy settings:
+
+- `http_max_retries`
+- `http_retry_backoff_seconds`
+- `http_retry_jitter_seconds`
+- `user_agent`
+- `user_agent_pool`
+
+For pipeline integration, `--json` emits one structured JSON document and
+`--sarif` emits one SARIF v2.1.0 log. Both formats also serialize boundary
+errors such as invalid CLI input or unreadable DLL list files.
 
 ---
 
@@ -180,7 +204,7 @@ finally:
 
 ## Requirements
 
-- Python 3.13+
+- Python 3.13 or 3.14
 - See `pyproject.toml` for dependencies
 
 ---

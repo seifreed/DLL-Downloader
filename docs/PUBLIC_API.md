@@ -8,6 +8,7 @@ This document defines the supported stable surface for consumers of the project.
 - `dll_downloader.runtime`
 - `dll_downloader.interfaces.cli`
 - `dll_downloader`
+- `docs/STRUCTURED_OUTPUTS.md`
 
 ## Stable Library Symbols (`dll_downloader.api`)
 
@@ -41,6 +42,7 @@ Any replacement with a narrower public configuration surface must ship as a `2.0
 - Backward-compatible additions to the public API require documentation updates.
 - Breaking changes to the public API require a major version change.
 - `Settings` must remain stable throughout the current major version line.
+- Structured CLI output changes require `docs/STRUCTURED_OUTPUTS.md` review.
 - Any change to the stable module list or exported symbol list requires:
   - ADR update
   - `ARCHITECTURE.md` update

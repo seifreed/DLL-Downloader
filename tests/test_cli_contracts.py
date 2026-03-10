@@ -31,20 +31,16 @@ def test_parse_architecture_defaults_to_x64() -> None:
 
 
 @pytest.mark.unit
-def test_resolve_dll_names_prints_help_when_missing_inputs(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
+def test_resolve_dll_names_raises_when_missing_inputs() -> None:
     parser = argparse.ArgumentParser()
     args = argparse.Namespace(dll_name=None, file=None)
 
-    assert resolve_dll_names(args, parser, RecordingReader([])) is None
-    assert "usage:" in capsys.readouterr().out.lower()
+    with pytest.raises(ValueError, match="Please provide a DLL name or use --file"):
+        resolve_dll_names(args, parser, RecordingReader([]))
 
 
 @pytest.mark.unit
-def test_resolve_dll_names_reads_batch_file(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
+def test_resolve_dll_names_reads_batch_file() -> None:
     parser = argparse.ArgumentParser()
     args = argparse.Namespace(dll_name=None, file="dlls.txt")
     reader = RecordingReader(["a.dll", "b.dll"])
@@ -53,7 +49,6 @@ def test_resolve_dll_names_reads_batch_file(
 
     assert dll_names == ["a.dll", "b.dll"]
     assert reader.calls == ["dlls.txt"]
-    assert "Downloading 2 DLL(s) from 'dlls.txt'" in capsys.readouterr().out
 
 
 @pytest.mark.unit

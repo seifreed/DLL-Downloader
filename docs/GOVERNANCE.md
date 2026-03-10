@@ -7,6 +7,7 @@ These rules keep the architecture from drifting.
 - Add or update an ADR for changes to wiring, ports, boundaries, or public API.
 - Update `ARCHITECTURE.md` if the current runtime structure changes.
 - Update `docs/PUBLIC_API.md` when the supported symbol surface changes.
+- Update `docs/STRUCTURED_OUTPUTS.md` when JSON/SARIF contracts change.
 - Update architecture guardrails if a new boundary is introduced.
 - Keep `Settings` stable throughout the current major version line unless a major-version migration is introduced.
 
@@ -32,7 +33,9 @@ Structural changes include:
 - Supported default runtime helpers live in `dll_downloader.runtime`.
 - Supported CLI entrypoint lives in `dll_downloader.interfaces.cli`.
 - Public compatibility and versioning policy lives in `docs/PUBLIC_API.md`.
+- Structured CLI output compatibility rules live in `docs/STRUCTURED_OUTPUTS.md`.
 - Tests should prefer stable public modules over semiprivate helpers.
 - Documentation examples must not import internal modules directly.
 - Behavior tests and interface adapters must not take shortcuts into internal wiring or infrastructure internals.
 - Compatibility shims should be removed once callers and tests are migrated; they are not preserved by default.
+- Human-oriented logging must not pollute `stdout` for `--json` or `--sarif`; structured modes own `stdout`.

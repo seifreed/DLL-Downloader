@@ -206,11 +206,9 @@ class CLIApplicationService:
         parser: argparse.ArgumentParser,
         settings: Settings,
         read_dll_list: "DLLListReader",
-    ) -> CLIInvocation | None:
+    ) -> CLIInvocation:
         """Normalize raw CLI arguments into a validated invocation."""
         dll_names = resolve_dll_names(args, parser, read_dll_list)
-        if dll_names is None:
-            return None
 
         return CLIInvocation(
             dll_names=dll_names,
@@ -242,11 +240,9 @@ class CLIApplicationService:
         parser: argparse.ArgumentParser,
         settings: Settings,
         read_dll_list: "DLLListReader",
-    ) -> CLIRunResult | None:
+    ) -> CLIRunResult:
         """Normalize args and execute one CLI session."""
         invocation = self.create_invocation(args, parser, settings, read_dll_list)
-        if invocation is None:
-            return None
         return CLIRunResult(
             invocation=invocation,
             session=self.run(settings, invocation),

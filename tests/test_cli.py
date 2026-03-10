@@ -41,6 +41,12 @@ from dll_downloader.interfaces.cli import (
     read_dll_list_from_file,
     set_debug_mode,
 )
+from dll_downloader.interfaces.cli_contracts import OutputFormat
+from dll_downloader.interfaces.cli_formatters import (
+    create_batch_presenter,
+    create_cli_service,
+    get_output_format,
+)
 from dll_downloader.runtime import create_dependencies, process_downloads
 
 
@@ -269,6 +275,44 @@ def test_parse_arguments_extract_flag() -> None:
 
 
 @pytest.mark.unit
+def test_parse_arguments_json_flag() -> None:
+    sys.argv = ["dll-downloader.py", "test.dll", "--json"]
+    args, parser = parse_arguments()
+
+    assert args.json is True
+    assert args.sarif is False
+
+
+@pytest.mark.unit
+def test_parse_arguments_sarif_flag() -> None:
+    sys.argv = ["dll-downloader.py", "test.dll", "--sarif"]
+    args, parser = parse_arguments()
+
+    assert args.sarif is True
+    assert args.json is False
+
+
+@pytest.mark.unit
+def test_get_output_format_prefers_console_by_default() -> None:
+    args = argparse.Namespace(json=False, sarif=False)
+
+    assert get_output_format(args) == OutputFormat.CONSOLE
+
+
+@pytest.mark.unit
+def test_create_batch_presenter_supports_structured_formats() -> None:
+    assert create_batch_presenter(OutputFormat.JSON).summary_counts(1, 0) is None
+    assert create_batch_presenter(OutputFormat.SARIF).summary_counts(1, 0) is None
+    assert create_batch_presenter(OutputFormat.CONSOLE).summary_counts(1, 0) is not None
+
+
+@pytest.mark.unit
+def test_create_cli_service_returns_service_for_structured_output() -> None:
+    assert create_cli_service(OutputFormat.JSON) is not None
+    assert create_cli_service(OutputFormat.SARIF) is not None
+
+
+@pytest.mark.unit
 def test_parse_arguments_combined_flags() -> None:
     """
     Test parsing with multiple combined flags.
@@ -402,9 +446,9 @@ def test_read_dll_list_from_file_nonexistent_raises_error() -> None:
         Verify proper error handling for missing files.
 
     Expected Behavior:
-        SystemExit is raised when file doesn't exist.
+        ValueError is raised when file doesn't exist.
     """
-    with pytest.raises(SystemExit):
+    with pytest.raises(ValueError, match="not found"):
         read_dll_list_from_file("/nonexistent/path/file.txt")
 
 
@@ -417,14 +461,14 @@ def test_read_dll_list_from_file_empty_file_raises_error() -> None:
         Verify that empty files are rejected.
 
     Expected Behavior:
-        SystemExit is raised when file contains no valid DLL names.
+        ValueError is raised when file contains no valid DLL names.
     """
     with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".txt") as f:
         f.write("\n\n\n")  # Only empty lines
         temp_path = f.name
 
     try:
-        with pytest.raises(SystemExit):
+        with pytest.raises(ValueError, match="contains no valid DLL names"):
             read_dll_list_from_file(temp_path)
     finally:
         os.unlink(temp_path)
@@ -439,7 +483,7 @@ def test_read_dll_list_from_file_whitespace_only_raises_error() -> None:
         Verify that whitespace-only files are rejected.
 
     Expected Behavior:
-        SystemExit is raised when no valid names exist.
+        ValueError is raised when no valid names exist.
     """
     with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".txt") as f:
         f.write("   \n")
@@ -447,7 +491,7 @@ def test_read_dll_list_from_file_whitespace_only_raises_error() -> None:
         temp_path = f.name
 
     try:
-        with pytest.raises(SystemExit):
+        with pytest.raises(ValueError, match="contains no valid DLL names"):
             read_dll_list_from_file(temp_path)
     finally:
         os.unlink(temp_path)
@@ -1177,6 +1221,103 @@ def test_main_no_args_prints_help_and_returns_error(
     with _temporary_argv(["dll-downloader.py"]):
         assert main(Settings()) == 1
     assert "usage" in capsys.readouterr().out.lower()
+
+
+@pytest.mark.unit
+def test_main_no_args_returns_json_error(
+    capsys: CaptureFixture[str],
+) -> None:
+    with _temporary_argv(["dll-downloader.py", "--json"]):
+        assert main(Settings()) == 1
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["format"] == "json"
+    assert payload["error"]["kind"] == "boundary"
+    assert "Please provide a DLL name" in payload["error"]["message"]
+
+
+@pytest.mark.unit
+def test_main_no_args_returns_sarif_error(
+    capsys: CaptureFixture[str],
+) -> None:
+    with _temporary_argv(["dll-downloader.py", "--sarif"]):
+        assert main(Settings()) == 1
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["version"] == "2.1.0"
+    assert payload["runs"][0]["results"][0]["ruleId"] == (
+        "dll-downloader/boundary-failure"
+    )
+
+
+@pytest.mark.unit
+def test_main_json_output_for_missing_batch_file(
+    capsys: CaptureFixture[str],
+) -> None:
+    with _temporary_argv(
+        [
+            "dll-downloader.py",
+            "--file",
+            "/does/not/exist.txt",
+            "--json",
+        ]
+    ):
+        assert main(Settings()) == 1
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["format"] == "json"
+    assert "not found" in payload["error"]["message"]
+
+
+@pytest.mark.unit
+def test_main_json_output_for_cached_download(
+    tmp_path: Path,
+    capsys: CaptureFixture[str],
+) -> None:
+    repo_dir = tmp_path / "downloads"
+    _seed_cached_dll(repo_dir, ["test.dll"])
+
+    with _temporary_argv(
+        [
+            "dll-downloader.py",
+            "test.dll",
+            "--output-dir",
+            str(repo_dir),
+            "--json",
+        ]
+    ):
+        assert main(Settings()) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["format"] == "json"
+    assert payload["items"][0]["success"] is True
+    assert payload["items"][0]["was_cached"] is True
+
+
+@pytest.mark.unit
+def test_main_sarif_output_for_cached_download(
+    tmp_path: Path,
+    capsys: CaptureFixture[str],
+) -> None:
+    repo_dir = tmp_path / "downloads"
+    _seed_cached_dll(repo_dir, ["test.dll"])
+
+    with _temporary_argv(
+        [
+            "dll-downloader.py",
+            "test.dll",
+            "--output-dir",
+            str(repo_dir),
+            "--sarif",
+        ]
+    ):
+        assert main(Settings()) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["version"] == "2.1.0"
+    assert payload["runs"][0]["results"][0]["ruleId"] == (
+        "dll-downloader/download-cached"
+    )
 
 
 @pytest.mark.unit

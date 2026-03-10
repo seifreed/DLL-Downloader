@@ -28,6 +28,7 @@ This document is the current source of truth for the runtime architecture.
 - Stable default runtime helpers: `dll_downloader.runtime`
 - Stable CLI entrypoint: `dll_downloader.interfaces.cli:main`
 - Stable symbol list and compatibility rules live in `docs/PUBLIC_API.md`
+- Stable machine-readable CLI output contract lives in `docs/STRUCTURED_OUTPUTS.md`
 - `Settings` remains part of the supported public API for the full current major version line.
 - Internal modules are not considered stable unless explicitly exported through `__all__`.
 - `dll_downloader.api` is the contract/data-facing surface and does not expose default runtime wiring helpers.
@@ -45,12 +46,14 @@ This document is the current source of truth for the runtime architecture.
 
 - HTTP session lifecycle uses composition via `infrastructure/http_session.py`.
 - Concrete adapters may share that resource, but not through inheritance-based architecture shortcuts.
+- HTTP retry policy, request-header construction, and retried transport execution are explicit technical collaborators under `infrastructure/http/`.
 
 ## Guardrails
 
 - `tests/test_architecture.py` checks layer boundaries, bootstrap purity, and the narrowed CLI public API.
 - Behavior-oriented tests should prefer `dll_downloader.api`, `dll_downloader.interfaces.cli`, and public domain contracts over internal modules.
 - Structural changes must update ADRs plus `ARCHITECTURE.md` and `docs/PUBLIC_API.md`.
+- Structured CLI output changes must also update `docs/STRUCTURED_OUTPUTS.md`.
 - `mypy` runs on the package and the full test suite in CI.
 - `ruff` and `pytest` run in CI on every push and pull request.
 - CI also enforces critical coverage, module/function guardrails, and governance source-of-truth files.

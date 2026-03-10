@@ -13,18 +13,21 @@ MAX_LINES = {
     "dll_downloader/api.py": 120,
     "dll_downloader/runtime.py": 140,
     "dll_downloader/infrastructure/composition.py": 140,
+    "dll_downloader/infrastructure/http/http_client.py": 220,
 }
 MAX_FUNCTION_LINES = {
     "dll_downloader/interfaces/cli.py": 80,
     "dll_downloader/interfaces/cli_runner.py": 80,
     "dll_downloader/api.py": 35,
     "dll_downloader/infrastructure/composition.py": 55,
+    "dll_downloader/infrastructure/http/http_client.py": 55,
 }
 MAX_FUNCTION_COMPLEXITY = {
     "dll_downloader/interfaces/cli.py": 6,
     "dll_downloader/interfaces/cli_runner.py": 6,
     "dll_downloader/api.py": 5,
     "dll_downloader/interfaces/presenters/download_presenter.py": 10,
+    "dll_downloader/infrastructure/http/http_client.py": 9,
 }
 
 

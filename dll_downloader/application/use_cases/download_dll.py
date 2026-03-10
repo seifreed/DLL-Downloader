@@ -273,14 +273,7 @@ class DownloadDLLUseCase:
         request: DownloadDLLRequest,
     ) -> bytes:
         """Validate downloaded content and optionally extract a DLL from a ZIP payload."""
-        try:
-            is_zip_archive = zipfile.is_zipfile(BytesIO(content))
-        except (OSError, ValueError, zipfile.BadZipFile) as exc:
-            raise ArchiveExtractionError(
-                "Downloaded archive is not a valid ZIP file"
-            ) from exc
-
-        if not is_zip_archive:
+        if not zipfile.is_zipfile(BytesIO(content)):
             raise ArchiveExtractionError("Downloaded archive is not a valid ZIP file")
 
         if not request.extract_archive:

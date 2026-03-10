@@ -14,6 +14,7 @@ from typing import ClassVar, TypedDict
 from .settings import Settings
 
 RawSettingsMap = Mapping[str, object]
+ConvertedSettingValue = str | int | float | bool | tuple[str, ...]
 
 
 class SettingsInitKwargs(TypedDict, total=False):
@@ -21,8 +22,12 @@ class SettingsInitKwargs(TypedDict, total=False):
     download_directory: str
     download_base_url: str
     http_timeout: int
+    http_max_retries: int
+    http_retry_backoff_seconds: float
+    http_retry_jitter_seconds: float
     verify_ssl: bool
     user_agent: str | None
+    user_agent_pool: tuple[str, ...] | None
     scan_before_save: bool
     malicious_threshold: int
     suspicious_threshold: int
@@ -85,12 +90,16 @@ class SettingsLoader:
         "DLL_DOWNLOAD_DIRECTORY": "download_directory",
         "DLL_DOWNLOAD_BASE_URL": "download_base_url",
         "DLL_HTTP_TIMEOUT": "http_timeout",
+        "DLL_HTTP_MAX_RETRIES": "http_max_retries",
+        "DLL_HTTP_RETRY_BACKOFF_SECONDS": "http_retry_backoff_seconds",
+        "DLL_HTTP_RETRY_JITTER_SECONDS": "http_retry_jitter_seconds",
         "DLL_VERIFY_SSL": "verify_ssl",
         "DLL_SCAN_BEFORE_SAVE": "scan_before_save",
         "DLL_MALICIOUS_THRESHOLD": "malicious_threshold",
         "DLL_SUSPICIOUS_THRESHOLD": "suspicious_threshold",
         "DLL_LOG_LEVEL": "log_level",
         "DLL_USER_AGENT": "user_agent",
+        "DLL_USER_AGENT_POOL": "user_agent_pool",
     }
 
     JSON_MAPPING: ClassVar[dict[str, str]] = {
@@ -98,12 +107,16 @@ class SettingsLoader:
         "download_directory": "download_directory",
         "download_base_url": "download_base_url",
         "http_timeout": "http_timeout",
+        "http_max_retries": "http_max_retries",
+        "http_retry_backoff_seconds": "http_retry_backoff_seconds",
+        "http_retry_jitter_seconds": "http_retry_jitter_seconds",
         "verify_ssl": "verify_ssl",
         "scan_before_save": "scan_before_save",
         "malicious_threshold": "malicious_threshold",
         "suspicious_threshold": "suspicious_threshold",
         "log_level": "log_level",
         "user_agent": "user_agent",
+        "user_agent_pool": "user_agent_pool",
     }
 
     @classmethod
@@ -150,8 +163,11 @@ class SettingsLoader:
             if source_name not in source:
                 continue
             value = source[source_name]
-            if value is None or isinstance(value, (str, int, bool)):
+            if value is None or isinstance(value, (str, int, float, bool, tuple)):
                 cls._assign_mapped_value(mapped, attr_name, value)
+                continue
+            if isinstance(value, list) and all(isinstance(item, str) for item in value):
+                cls._assign_mapped_value(mapped, attr_name, tuple(value))
         return mapped
 
     @classmethod
@@ -165,9 +181,22 @@ class SettingsLoader:
         return mapped
 
     @staticmethod
-    def _convert_env_value(attr_name: str, value: str) -> str | int | bool:
-        if attr_name in {"http_timeout", "malicious_threshold", "suspicious_threshold"}:
+    def _convert_env_value(attr_name: str, value: str) -> ConvertedSettingValue:
+        if attr_name in {
+            "http_timeout",
+            "http_max_retries",
+            "malicious_threshold",
+            "suspicious_threshold",
+        }:
             return int(value)
+        if attr_name in {"http_retry_backoff_seconds", "http_retry_jitter_seconds"}:
+            return float(value)
+        if attr_name == "user_agent_pool":
+            return tuple(
+                item.strip()
+                for item in value.split(",")
+                if item.strip()
+            )
         if attr_name in {"verify_ssl", "scan_before_save"}:
             return value.lower() in ("true", "1", "yes")
         return value
@@ -176,7 +205,7 @@ class SettingsLoader:
     def _assign_mapped_value(
         mapped: SettingsInitKwargs,
         attr_name: str,
-        value: str | int | bool | None,
+        value: str | int | float | bool | tuple[str, ...] | None,
     ) -> None:
         if SettingsLoader._assign_optional_string(mapped, attr_name, value):
             return
@@ -184,13 +213,17 @@ class SettingsLoader:
             return
         if SettingsLoader._assign_int(mapped, attr_name, value):
             return
+        if SettingsLoader._assign_float(mapped, attr_name, value):
+            return
+        if SettingsLoader._assign_string_tuple(mapped, attr_name, value):
+            return
         SettingsLoader._assign_bool(mapped, attr_name, value)
 
     @staticmethod
     def _assign_optional_string(
         mapped: SettingsInitKwargs,
         attr_name: str,
-        value: str | int | bool | None,
+        value: ConvertedSettingValue | None,
     ) -> bool:
         normalized = value if value is None or isinstance(value, str) else str(value)
         if attr_name == "virustotal_api_key":
@@ -202,10 +235,25 @@ class SettingsLoader:
         return False
 
     @staticmethod
+    def _assign_string_tuple(
+        mapped: SettingsInitKwargs,
+        attr_name: str,
+        value: str | int | float | bool | tuple[str, ...] | None,
+    ) -> bool:
+        if not isinstance(value, tuple):
+            return False
+        if not all(isinstance(item, str) for item in value):
+            return False
+        if attr_name == "user_agent_pool":
+            mapped["user_agent_pool"] = value
+            return True
+        return False
+
+    @staticmethod
     def _assign_string(
         mapped: SettingsInitKwargs,
         attr_name: str,
-        value: str | int | bool | None,
+        value: str | int | float | bool | tuple[str, ...] | None,
     ) -> bool:
         if not isinstance(value, str):
             return False
@@ -224,12 +272,15 @@ class SettingsLoader:
     def _assign_int(
         mapped: SettingsInitKwargs,
         attr_name: str,
-        value: str | int | bool | None,
+        value: str | int | float | bool | tuple[str, ...] | None,
     ) -> bool:
         if not isinstance(value, int):
             return False
         if attr_name == "http_timeout":
             mapped["http_timeout"] = value
+            return True
+        if attr_name == "http_max_retries":
+            mapped["http_max_retries"] = value
             return True
         if attr_name == "malicious_threshold":
             mapped["malicious_threshold"] = value
@@ -240,10 +291,26 @@ class SettingsLoader:
         return False
 
     @staticmethod
+    def _assign_float(
+        mapped: SettingsInitKwargs,
+        attr_name: str,
+        value: str | int | float | bool | tuple[str, ...] | None,
+    ) -> bool:
+        if not isinstance(value, float):
+            return False
+        if attr_name == "http_retry_backoff_seconds":
+            mapped["http_retry_backoff_seconds"] = value
+            return True
+        if attr_name == "http_retry_jitter_seconds":
+            mapped["http_retry_jitter_seconds"] = value
+            return True
+        return False
+
+    @staticmethod
     def _assign_bool(
         mapped: SettingsInitKwargs,
         attr_name: str,
-        value: str | int | bool | None,
+        value: str | int | float | bool | tuple[str, ...] | None,
     ) -> bool:
         if not isinstance(value, bool):
             return False

@@ -338,3 +338,67 @@ def vt_mock_server() -> Generator[int]:
         yield port
 
         httpd.shutdown()
+
+
+@pytest.fixture
+def transient_http_server() -> Generator[int]:
+    """
+    Create a local HTTP server that recovers after transient failures.
+
+    Yields:
+        Port number of the running transient test server
+    """
+    import http.server
+    import socketserver
+    import threading
+
+    class TransientHandler(http.server.BaseHTTPRequestHandler):
+        """Serve transient 429/503 responses before succeeding."""
+
+        GET_CALLS = 0
+        DOWNLOAD_CALLS = 0
+        TEST_CONTENT = b"<html><body>Recovered Content</body></html>"
+        DLL_CONTENT = b"MZ\x90\x00Recovered DLL"
+
+        def do_GET(self) -> None:
+            if self.path == "/transient-get":
+                type(self).GET_CALLS += 1
+                if type(self).GET_CALLS < 3:
+                    self.send_response(429)
+                    self.end_headers()
+                    return
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html")
+                self.send_header("Content-Length", str(len(self.TEST_CONTENT)))
+                self.end_headers()
+                self.wfile.write(self.TEST_CONTENT)
+                return
+
+            if self.path == "/transient-download":
+                type(self).DOWNLOAD_CALLS += 1
+                if type(self).DOWNLOAD_CALLS < 3:
+                    self.send_response(503)
+                    self.end_headers()
+                    return
+                self.send_response(200)
+                self.send_header("Content-Type", "application/octet-stream")
+                self.send_header("Content-Length", str(len(self.DLL_CONTENT)))
+                self.end_headers()
+                self.wfile.write(self.DLL_CONTENT)
+                return
+
+            self.send_response(404)
+            self.end_headers()
+
+        def log_message(self, format: str, *args: object) -> None:
+            pass
+
+    with socketserver.TCPServer(("", 0), TransientHandler) as httpd:
+        port = httpd.server_address[1]
+        thread = threading.Thread(target=httpd.serve_forever)
+        thread.daemon = True
+        thread.start()
+
+        yield port
+
+        httpd.shutdown()

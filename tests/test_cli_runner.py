@@ -313,7 +313,7 @@ def test_cli_application_service_create_invocation_uses_settings_and_args() -> N
 
 
 @pytest.mark.unit
-def test_cli_application_service_run_from_args_returns_none_on_invalid_input() -> None:
+def test_cli_application_service_run_from_args_raises_on_invalid_input() -> None:
     service = CLIApplicationService(
         StubPresenter(),
         lambda settings, output_dir=None: _application_with_use_case(SuccessfulUseCase()),
@@ -322,7 +322,8 @@ def test_cli_application_service_run_from_args_returns_none_on_invalid_input() -
     parser = __import__("argparse").ArgumentParser()
     args = type("Args", (), {"dll_name": None, "file": None})()
 
-    assert service.run_from_args(args, parser, Settings(), lambda path: []) is None
+    with pytest.raises(ValueError, match="Please provide a DLL name or use --file"):
+        service.run_from_args(args, parser, Settings(), lambda path: [])
 
 
 @pytest.mark.unit

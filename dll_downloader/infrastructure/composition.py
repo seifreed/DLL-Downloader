@@ -17,6 +17,7 @@ from ..domain.services import IDownloadURLResolver, IHTTPClient, ISecurityScanne
 from .config.settings import Settings
 from .http.dll_files_resolver import DllFilesResolver
 from .http.http_client import RequestsHTTPClient
+from .http.user_agents import RandomUserAgentProvider
 from .persistence.file_repository import FileSystemDLLRepository
 from .services.virustotal import VirusTotalScanner
 
@@ -28,10 +29,17 @@ class DefaultDownloadComponentFactory:
         return FileSystemDLLRepository(output_path)
 
     def create_http_client(self, settings: Settings) -> RequestsHTTPClient:
+        user_agent_provider = None
+        if settings.user_agent_pool:
+            user_agent_provider = RandomUserAgentProvider(settings.user_agent_pool)
         return RequestsHTTPClient(
             timeout=settings.http_timeout,
             user_agent=settings.user_agent,
+            max_retries=settings.http_max_retries,
+            retry_backoff_seconds=settings.http_retry_backoff_seconds,
+            retry_jitter_seconds=settings.http_retry_jitter_seconds,
             verify_ssl=settings.verify_ssl,
+            user_agent_provider=user_agent_provider,
         )
 
     def create_scanner(

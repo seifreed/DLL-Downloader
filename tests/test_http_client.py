@@ -10,8 +10,8 @@ and related HTTP functionality. Tests use real HTTP requests to actual test serv
 and validate real behavior without mocking.
 """
 
-
 from collections.abc import Iterator, Mapping
+from random import Random
 from typing import Any, cast
 
 import pytest
@@ -23,7 +23,11 @@ from dll_downloader.infrastructure.http.http_client import (
     HTTPResponse,
     RequestsHTTPClient,
 )
+from dll_downloader.infrastructure.http.request_headers import RequestHeaderBuilder
+from dll_downloader.infrastructure.http.retry_policy import RetryPolicy
+from dll_downloader.infrastructure.http.user_agents import RandomUserAgentProvider
 from dll_downloader.infrastructure.http_session import (
+    HTTPResponseProtocol,
     HTTPSessionProtocol,
     HTTPSessionResource,
 )
@@ -31,6 +35,17 @@ from dll_downloader.infrastructure.http_session import (
 
 def _resource_with_session(session: HTTPSessionProtocol) -> HTTPSessionResource:
     return HTTPSessionResource(session=session)
+
+
+class SequenceUserAgentProvider:
+    def __init__(self, values: list[str]) -> None:
+        self._values = values
+        self._index = 0
+
+    def next_user_agent(self) -> str:
+        value = self._values[self._index % len(self._values)]
+        self._index += 1
+        return value
 
 # ============================================================================
 # HTTPResponse Tests
@@ -160,7 +175,8 @@ def test_requests_http_client_initialization_defaults() -> None:
     client = RequestsHTTPClient()
 
     assert client._timeout == 60
-    assert client._user_agent == RequestsHTTPClient.DEFAULT_USER_AGENT
+    assert client._user_agent is None
+    assert client._retry_policy.max_attempts == RequestsHTTPClient.DEFAULT_MAX_RETRIES
     assert client._verify_ssl is True
     assert client.has_active_session is False
 
@@ -180,12 +196,20 @@ def test_requests_http_client_initialization_custom_values() -> None:
     client = RequestsHTTPClient(
         timeout=30,
         user_agent=custom_agent,
+        max_retries=3,
         verify_ssl=False
     )
 
     assert client._timeout == 30
     assert client._user_agent == custom_agent
+    assert client._retry_policy.max_attempts == 3
     assert client._verify_ssl is False
+
+
+@pytest.mark.unit
+def test_requests_http_client_rejects_invalid_retry_count() -> None:
+    with pytest.raises(ValueError, match="max_attempts must be positive"):
+        RequestsHTTPClient(max_retries=0)
 
 
 @pytest.mark.unit
@@ -231,6 +255,14 @@ def test_requests_http_client_session_headers_set() -> None:
 
     session = client.session
     assert session.headers["User-Agent"] == custom_agent
+
+
+@pytest.mark.unit
+def test_requests_http_client_default_user_agent_comes_from_rotation_pool() -> None:
+    client = RequestsHTTPClient()
+
+    session = client.session
+    assert session.headers["User-Agent"] in RandomUserAgentProvider.DEFAULT_USER_AGENTS
 
 
 # ============================================================================
@@ -358,6 +390,31 @@ def test_requests_http_client_get_file_info(test_http_server: int) -> None:
     assert "accept_ranges" in info
     assert isinstance(info["content_length"], int)
     assert isinstance(info["accept_ranges"], bool)
+
+
+@pytest.mark.integration
+def test_requests_http_client_get_retries_transient_429(
+    transient_http_server: int,
+) -> None:
+    client = RequestsHTTPClient(max_retries=5)
+    url = f"http://localhost:{transient_http_server}/transient-get"
+
+    response = client.get(url)
+
+    assert response.status_code == 200
+    assert response.content == b"<html><body>Recovered Content</body></html>"
+
+
+@pytest.mark.integration
+def test_requests_http_client_download_retries_transient_503(
+    transient_http_server: int,
+) -> None:
+    client = RequestsHTTPClient(max_retries=5)
+    url = f"http://localhost:{transient_http_server}/transient-download"
+
+    content = client.download(url)
+
+    assert content == b"MZ\x90\x00Recovered DLL"
 
 
 # ============================================================================
@@ -751,3 +808,339 @@ def test_http_client_download_ignores_empty_chunks() -> None:
         session_resource=_resource_with_session(cast(HTTPSessionProtocol, DummySession()))
     )
     assert client.download("https://example.com/file.dll") == b"abc"
+
+
+@pytest.mark.unit
+def test_http_client_download_retries_retryable_status() -> None:
+    class DummyResponse:
+        def __init__(self, status_code: int, content: bytes = b"") -> None:
+            self.status_code = status_code
+            self.ok = 200 <= status_code < 300
+            self.content = content
+            self.headers: dict[str, str] = {}
+            self.url = "https://example.com/file.dll"
+
+        def iter_content(self, chunk_size: int = 8192) -> Iterator[bytes]:
+            yield self.content
+
+    class DummySession:
+        def __init__(self) -> None:
+            self.headers: dict[str, str] = {}
+            self.calls = 0
+
+        def get(self, *args: Any, **kwargs: Any) -> HTTPResponseProtocol:
+            self.calls += 1
+            if self.calls < 3:
+                return cast(HTTPResponseProtocol, DummyResponse(503))
+            return cast(HTTPResponseProtocol, DummyResponse(200, b"ok"))
+
+        def head(self, *args: Any, **kwargs: Any) -> HTTPResponseProtocol:
+            raise NotImplementedError
+
+        def post(self, *args: Any, **kwargs: Any) -> HTTPResponseProtocol:
+            raise NotImplementedError
+
+        def close(self) -> None:
+            pass
+
+    session = DummySession()
+    client = RequestsHTTPClient(
+        max_retries=5,
+        session_resource=_resource_with_session(cast(HTTPSessionProtocol, session)),
+    )
+
+    assert client.download("https://example.com/file.dll") == b"ok"
+    assert session.calls == 3
+
+
+@pytest.mark.unit
+def test_http_client_download_does_not_retry_non_retryable_status() -> None:
+    class DummyResponse:
+        ok = False
+        status_code = 404
+        content = b""
+        headers: dict[str, str] = {}
+        url = "https://example.com/file.dll"
+
+        def iter_content(self, chunk_size: int = 8192) -> Iterator[bytes]:
+            yield b""
+
+    class DummySession:
+        def __init__(self) -> None:
+            self.headers: dict[str, str] = {}
+            self.calls = 0
+
+        def get(self, *args: Any, **kwargs: Any) -> HTTPResponseProtocol:
+            self.calls += 1
+            return cast(HTTPResponseProtocol, DummyResponse())
+
+        def head(self, *args: Any, **kwargs: Any) -> HTTPResponseProtocol:
+            raise NotImplementedError
+
+        def post(self, *args: Any, **kwargs: Any) -> HTTPResponseProtocol:
+            raise NotImplementedError
+
+        def close(self) -> None:
+            pass
+
+    session = DummySession()
+    client = RequestsHTTPClient(
+        max_retries=5,
+        session_resource=_resource_with_session(cast(HTTPSessionProtocol, session)),
+    )
+
+    with pytest.raises(HTTPClientError) as exc_info:
+        client.download("https://example.com/file.dll")
+
+    assert exc_info.value.status_code == 404
+    assert session.calls == 1
+
+
+@pytest.mark.unit
+def test_http_client_download_fails_after_exhausting_retryable_statuses() -> None:
+    class DummyResponse:
+        ok = False
+        status_code = 503
+        content = b""
+        headers: dict[str, str] = {}
+        url = "https://example.com/file.dll"
+
+        def iter_content(self, chunk_size: int = 8192) -> Iterator[bytes]:
+            yield b""
+
+    class DummySession:
+        def __init__(self) -> None:
+            self.headers: dict[str, str] = {}
+            self.calls = 0
+
+        def get(self, *args: Any, **kwargs: Any) -> HTTPResponseProtocol:
+            self.calls += 1
+            return cast(HTTPResponseProtocol, DummyResponse())
+
+        def head(self, *args: Any, **kwargs: Any) -> HTTPResponseProtocol:
+            raise NotImplementedError
+
+        def post(self, *args: Any, **kwargs: Any) -> HTTPResponseProtocol:
+            raise NotImplementedError
+
+        def close(self) -> None:
+            pass
+
+    session = DummySession()
+    client = RequestsHTTPClient(
+        max_retries=3,
+        session_resource=_resource_with_session(cast(HTTPSessionProtocol, session)),
+    )
+
+    with pytest.raises(
+        HTTPClientError,
+        match="Download failed with status 503",
+    ) as exc_info:
+        client.download("https://example.com/file.dll")
+
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.url == "https://example.com/file.dll"
+    assert session.calls == 3
+
+
+@pytest.mark.unit
+def test_http_client_get_fails_after_exhausting_request_exceptions() -> None:
+    class DummySession:
+        def __init__(self) -> None:
+            self.headers: dict[str, str] = {}
+            self.calls = 0
+
+        def get(self, *args: Any, **kwargs: Any) -> HTTPResponseProtocol:
+            self.calls += 1
+            raise requests.RequestException("temporary outage")
+
+        def head(self, *args: Any, **kwargs: Any) -> HTTPResponseProtocol:
+            raise NotImplementedError
+
+        def post(self, *args: Any, **kwargs: Any) -> HTTPResponseProtocol:
+            raise NotImplementedError
+
+        def close(self) -> None:
+            pass
+
+    session = DummySession()
+    client = RequestsHTTPClient(
+        max_retries=3,
+        session_resource=_resource_with_session(cast(HTTPSessionProtocol, session)),
+    )
+
+    with pytest.raises(
+        HTTPClientError,
+        match="GET request failed: temporary outage",
+    ) as exc_info:
+        client.get("https://example.com/file.dll")
+
+    assert exc_info.value.url == "https://example.com/file.dll"
+    assert session.calls == 3
+
+
+@pytest.mark.unit
+def test_http_client_respects_non_retryable_transport_exception_policy() -> None:
+    class DummySession:
+        def __init__(self) -> None:
+            self.headers: dict[str, str] = {}
+            self.calls = 0
+
+        def get(self, *args: Any, **kwargs: Any) -> HTTPResponseProtocol:
+            self.calls += 1
+            raise requests.RequestException("do not retry")
+
+        def head(self, *args: Any, **kwargs: Any) -> HTTPResponseProtocol:
+            raise NotImplementedError
+
+        def post(self, *args: Any, **kwargs: Any) -> HTTPResponseProtocol:
+            raise NotImplementedError
+
+        def close(self) -> None:
+            pass
+
+    class NonRetryingPolicy(RetryPolicy):
+        def should_retry_exception(
+            self,
+            exc: requests.RequestException,
+            attempt: int,
+        ) -> bool:
+            del exc, attempt
+            return False
+
+    session = DummySession()
+    client = RequestsHTTPClient(
+        max_retries=3,
+        session_resource=_resource_with_session(cast(HTTPSessionProtocol, session)),
+        retry_policy=NonRetryingPolicy(max_attempts=3),
+    )
+
+    with pytest.raises(
+        HTTPClientError,
+        match="GET request failed: do not retry",
+    ):
+        client.get("https://example.com/file.dll")
+
+    assert session.calls == 1
+
+
+@pytest.mark.unit
+def test_http_client_rotates_user_agent_per_attempt() -> None:
+    class DummyResponse:
+        def __init__(self, status_code: int, content: bytes = b"") -> None:
+            self.status_code = status_code
+            self.ok = 200 <= status_code < 300
+            self.content = content
+            self.headers: dict[str, str] = {}
+            self.url = "https://example.com/file.dll"
+
+        def iter_content(self, chunk_size: int = 8192) -> Iterator[bytes]:
+            yield self.content
+
+    class DummySession:
+        def __init__(self) -> None:
+            self.headers: dict[str, str] = {}
+            self.seen_agents: list[str] = []
+            self.calls = 0
+
+        def get(self, *args: Any, **kwargs: Any) -> HTTPResponseProtocol:
+            self.calls += 1
+            headers = cast(dict[str, str], kwargs["headers"])
+            self.seen_agents.append(headers["User-Agent"])
+            if self.calls == 1:
+                raise requests.RequestException("temporary")
+            return cast(HTTPResponseProtocol, DummyResponse(200, b"ok"))
+
+        def head(self, *args: Any, **kwargs: Any) -> HTTPResponseProtocol:
+            raise NotImplementedError
+
+        def post(self, *args: Any, **kwargs: Any) -> HTTPResponseProtocol:
+            raise NotImplementedError
+
+        def close(self) -> None:
+            pass
+
+    session = DummySession()
+    provider = SequenceUserAgentProvider(["ua-1", "ua-2"])
+    client = RequestsHTTPClient(
+        max_retries=2,
+        session_resource=_resource_with_session(cast(HTTPSessionProtocol, session)),
+        user_agent_provider=provider,
+    )
+
+    assert client.download("https://example.com/file.dll") == b"ok"
+    assert session.seen_agents == ["ua-1", "ua-2"]
+
+
+@pytest.mark.unit
+def test_random_user_agent_provider_rejects_empty_pool() -> None:
+    with pytest.raises(ValueError, match="at least one value"):
+        RandomUserAgentProvider(user_agents=())
+
+
+@pytest.mark.unit
+def test_random_user_agent_provider_exposes_pool_and_selects_from_it() -> None:
+    provider = RandomUserAgentProvider(
+        user_agents=("ua-a", "ua-b"),
+        rng=Random(0),
+    )
+
+    assert provider.pool == ("ua-a", "ua-b")
+    assert provider.next_user_agent() in provider.pool
+
+
+@pytest.mark.unit
+def test_request_header_builder_uses_rotating_user_agent_when_missing() -> None:
+    builder = RequestHeaderBuilder(SequenceUserAgentProvider(["ua-1"]))
+
+    headers = builder.build({"X-Test": "1"})
+
+    assert headers == {"X-Test": "1", "User-Agent": "ua-1"}
+
+
+@pytest.mark.unit
+def test_request_header_builder_keeps_explicit_user_agent() -> None:
+    builder = RequestHeaderBuilder(SequenceUserAgentProvider(["ua-1"]))
+
+    headers = builder.build({"User-Agent": "fixed"})
+
+    assert headers == {"User-Agent": "fixed"}
+
+
+@pytest.mark.unit
+def test_retry_policy_delay_includes_backoff_and_jitter() -> None:
+    policy = RetryPolicy(
+        max_attempts=5,
+        backoff_seconds=0.5,
+        jitter_seconds=0.1,
+        rng=Random(0),
+    )
+
+    assert policy.next_delay(2) >= 1.0
+
+
+@pytest.mark.unit
+def test_retry_policy_pause_uses_sleep_callback() -> None:
+    calls: list[float] = []
+    policy = RetryPolicy(
+        max_attempts=5,
+        backoff_seconds=0.5,
+        jitter_seconds=0.0,
+        sleep_fn=calls.append,
+    )
+
+    policy.pause_before_retry(2)
+
+    assert calls == [1.0]
+
+
+@pytest.mark.unit
+def test_retry_policy_rejects_negative_backoff() -> None:
+    with pytest.raises(ValueError, match="backoff_seconds cannot be negative"):
+        RetryPolicy(backoff_seconds=-0.1)
+
+
+@pytest.mark.unit
+def test_retry_policy_rejects_negative_jitter() -> None:
+    with pytest.raises(ValueError, match="jitter_seconds cannot be negative"):
+        RetryPolicy(jitter_seconds=-0.1)

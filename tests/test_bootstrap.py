@@ -173,3 +173,19 @@ def test_build_default_download_application_uses_default_runtime(tmp_path: Path)
     assert isinstance(application.http_client, RequestsHTTPClient)
     assert application.scanner is None
     assert application.use_case is not None
+
+
+@pytest.mark.unit
+def test_build_default_download_application_uses_configured_user_agent_pool(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        download_directory=str(tmp_path),
+        virustotal_api_key=None,
+        user_agent_pool=("AgentA", "AgentB"),
+    )
+
+    application = build_default_download_application(settings, output_dir=str(tmp_path))
+
+    assert isinstance(application.http_client, RequestsHTTPClient)
+    assert application.http_client.session.headers["User-Agent"] in {"AgentA", "AgentB"}
