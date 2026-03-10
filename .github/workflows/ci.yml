@@ -5,33 +5,10 @@ on:
   pull_request:
 
 jobs:
-  tests:
-    name: >-
-      ${{ matrix.platform }} / py${{ matrix.python-version }}
-    runs-on: ${{ matrix.runs-on }}
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.12", "3.13", "3.14"]
-        include:
-          - platform: linux-x64
-            arch: x64
-            runs-on: ubuntu-24.04
-          - platform: linux-arm64
-            arch: arm64
-            runs-on: ubuntu-24.04-arm
-          - platform: windows-x64
-            arch: x64
-            runs-on: windows-2025
-          - platform: windows-arm64
-            arch: arm64
-            runs-on: windows-11-arm
-          - platform: macos-intel
-            arch: x64
-            runs-on: macos-15-intel
-          - platform: macos-arm64
-            arch: arm64
-            runs-on: macos-15
+  quality:
+    name: Quality / py3.13
+    runs-on: ubuntu-24.04
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -41,7 +18,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.13"
           cache: "pip"
 
       - name: Install dependencies
@@ -56,8 +33,7 @@ jobs:
         run: mypy dll_downloader tests
 
       - name: Run tests with coverage
-        run: |
-          pytest --cov=dll_downloader --cov-report=xml --cov-report=term-missing
+        run: pytest --cov=dll_downloader --cov-report=xml --cov-report=term-missing
 
       - name: Enforce critical coverage thresholds
         run: python scripts/check_critical_coverage.py
@@ -78,3 +54,51 @@ jobs:
           fail_ci_if_error: true
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+  tests:
+    name: >-
+      ${{ matrix.target.platform }} / py${{ matrix.python-version }}
+    runs-on: ${{ matrix.target.runs-on }}
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13", "3.14"]
+        target:
+          - platform: linux-x64
+            arch: x64
+            runs-on: ubuntu-24.04
+          - platform: linux-arm64
+            arch: arm64
+            runs-on: ubuntu-24.04-arm
+          - platform: windows-x64
+            arch: x64
+            runs-on: windows-2025
+          - platform: windows-arm64
+            arch: arm64
+            runs-on: windows-11-arm
+          - platform: macos-intel
+            arch: x64
+            runs-on: macos-15-intel
+          - platform: macos-arm64
+            arch: arm64
+            runs-on: macos-15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .[dev]
+
+      - name: Run cross-platform test suite
+        run: pytest -q
