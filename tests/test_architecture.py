@@ -83,7 +83,7 @@ EXPECTED_PUBLIC_EXPORTS: dict[str, tuple[str, ...]] = {
     "dll_downloader/interfaces/__init__.py": ("main",),
 }
 REQUIRED_ARCHITECTURE_DOCS = (
-    "ARCHITECTURE.md",
+    "docs/ARCHITECTURE.md",
     "docs/GOVERNANCE.md",
     "docs/PUBLIC_API.md",
     "docs/STRUCTURED_OUTPUTS.md",

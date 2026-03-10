@@ -52,7 +52,7 @@ This document is the current source of truth for the runtime architecture.
 
 - `tests/test_architecture.py` checks layer boundaries, bootstrap purity, and the narrowed CLI public API.
 - Behavior-oriented tests should prefer `dll_downloader.api`, `dll_downloader.interfaces.cli`, and public domain contracts over internal modules.
-- Structural changes must update ADRs plus `ARCHITECTURE.md` and `docs/PUBLIC_API.md`.
+- Structural changes must update ADRs plus `docs/ARCHITECTURE.md` and `docs/PUBLIC_API.md`.
 - Structured CLI output changes must also update `docs/STRUCTURED_OUTPUTS.md`.
 - `mypy` runs on the package and the full test suite in CI.
 - `ruff` and `pytest` run in CI on every push and pull request.

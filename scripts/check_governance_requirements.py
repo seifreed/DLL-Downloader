@@ -9,7 +9,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 REQUIRED_FILES = {
-    "ARCHITECTURE.md": (
+    "docs/ARCHITECTURE.md": (
         "dll_downloader.api",
         "dll_downloader.interfaces.cli",
         "current source of truth",
@@ -23,13 +23,13 @@ REQUIRED_FILES = {
     ),
     "docs/GOVERNANCE.md": (
         "ADR",
-        "ARCHITECTURE.md",
+        "docs/ARCHITECTURE.md",
         "Public API",
         "docs/PUBLIC_API.md",
     ),
     ".github/pull_request_template.md": (
         "ADR",
-        "ARCHITECTURE.md",
+        "docs/ARCHITECTURE.md",
         "Public API",
         "docs/PUBLIC_API.md",
         "forbidden layer imports",

@@ -5,7 +5,7 @@ These rules keep the architecture from drifting.
 ## Required For Structural Changes
 
 - Add or update an ADR for changes to wiring, ports, boundaries, or public API.
-- Update `ARCHITECTURE.md` if the current runtime structure changes.
+- Update `docs/ARCHITECTURE.md` if the current runtime structure changes.
 - Update `docs/PUBLIC_API.md` when the supported symbol surface changes.
 - Update `docs/STRUCTURED_OUTPUTS.md` when JSON/SARIF contracts change.
 - Update architecture guardrails if a new boundary is introduced.

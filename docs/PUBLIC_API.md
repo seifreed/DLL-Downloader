@@ -45,5 +45,5 @@ Any replacement with a narrower public configuration surface must ship as a `2.0
 - Structured CLI output changes require `docs/STRUCTURED_OUTPUTS.md` review.
 - Any change to the stable module list or exported symbol list requires:
   - ADR update
-  - `ARCHITECTURE.md` update
+  - `docs/ARCHITECTURE.md` update
   - `docs/GOVERNANCE.md` review

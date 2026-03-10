@@ -23,7 +23,7 @@ STRUCTURAL_PATH_PREFIXES = (
     "dll_downloader/interfaces/__init__.py",
 )
 REQUIRED_DOC_PREFIXES = (
-    "ARCHITECTURE.md",
+    "docs/ARCHITECTURE.md",
     "docs/GOVERNANCE.md",
     "docs/PUBLIC_API.md",
     "docs/adr/",
