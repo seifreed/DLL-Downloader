@@ -1,6 +1,6 @@
 [project]
 name = "dll-downloader"
-version = "1.0.0"
+version = "1.0.1"
 description = "A Python script to automatically search and download DLL files"
 readme = "README.md"
 requires-python = ">=3.13,<3.15"
