@@ -55,19 +55,30 @@ def _build_pe_payload(
     architecture: Architecture,
     marker: bytes = b"",
 ) -> bytes:
-    """Create a minimal PE-like DLL payload with a real machine field."""
+    """Create a minimal PE DLL payload with a real machine field."""
     machine_by_architecture = {
         Architecture.X86: 0x014C,
         Architecture.X64: 0x8664,
     }
     machine = machine_by_architecture[architecture]
     pe_offset = 0x80
-    payload = bytearray(pe_offset + 24)
+    optional_header_size = 0xF0 if architecture == Architecture.X64 else 0xE0
+    optional_header_offset = pe_offset + 24
+    section_table_offset = optional_header_offset + optional_header_size
+    payload = bytearray(section_table_offset + 40)
     payload[0:2] = b"MZ"
     payload[0x3C:0x40] = pe_offset.to_bytes(4, "little")
     payload[pe_offset:pe_offset + 4] = b"PE\x00\x00"
     payload[pe_offset + 4:pe_offset + 6] = machine.to_bytes(2, "little")
+    payload[pe_offset + 6:pe_offset + 8] = (1).to_bytes(2, "little")
+    payload[pe_offset + 20:pe_offset + 22] = optional_header_size.to_bytes(2, "little")
     payload[pe_offset + 22:pe_offset + 24] = (0x2000).to_bytes(2, "little")
+    optional_magic = 0x20B if architecture == Architecture.X64 else 0x10B
+    payload[optional_header_offset:optional_header_offset + 2] = optional_magic.to_bytes(
+        2,
+        "little",
+    )
+    payload[section_table_offset:section_table_offset + 5] = b".text"
     return bytes(payload) + marker
 
 

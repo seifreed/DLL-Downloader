@@ -30,12 +30,25 @@ from ..errors import ArchiveExtractionError, DownloadExecutionError
 
 _PE_POINTER_OFFSET = 0x3C
 _PE_SIGNATURE = b"PE\x00\x00"
+_PE_COFF_HEADER_SIZE = 20
+_PE_NUMBER_OF_SECTIONS_OFFSET_FROM_MACHINE = 2
+_PE_SIZE_OF_OPTIONAL_HEADER_OFFSET_FROM_MACHINE = 16
 _PE_CHARACTERISTICS_OFFSET_FROM_MACHINE = 18
 _PE_DLL_CHARACTERISTIC = 0x2000
+_PE_OPTIONAL_HEADER_MAGIC_PE32 = 0x10B
+_PE_OPTIONAL_HEADER_MAGIC_PE32_PLUS = 0x20B
+_PE_SECTION_HEADER_SIZE = 40
+_PE_MAX_SECTIONS = 96
 _PE_MACHINE_ARCHITECTURES = {
     0x014C: Architecture.X86,
     0x8664: Architecture.X64,
 }
+_INVALID_PE_MESSAGE = "Downloaded content is not a valid DLL (missing PE signature)"
+_ZIP_MEMBER_READ_ERRORS = (
+    RuntimeError,
+    NotImplementedError,
+    zipfile.BadZipFile,
+)
 
 
 @dataclass
@@ -428,9 +441,14 @@ class DownloadDLLUseCase:
                 )
 
             validation_error: DownloadExecutionError | None = None
+            read_error: Exception | None = None
             empty_member_found = False
             for member in requested_members:
-                extracted_content = archive.read(member)
+                try:
+                    extracted_content = archive.read(member)
+                except _ZIP_MEMBER_READ_ERRORS as exc:
+                    read_error = exc
+                    continue
                 if not extracted_content:
                     empty_member_found = True
                     continue
@@ -446,6 +464,10 @@ class DownloadDLLUseCase:
 
             if validation_error is not None:
                 raise validation_error
+            if read_error is not None:
+                raise ArchiveExtractionError(
+                    "Downloaded archive is not a valid ZIP file"
+                ) from read_error
             if empty_member_found:
                 raise ArchiveExtractionError("Extracted DLL from ZIP archive is empty")
             raise ArchiveExtractionError(
@@ -456,14 +478,10 @@ class DownloadDLLUseCase:
     def _detect_pe_architecture(content: bytes) -> Architecture:
         """Return the PE machine architecture or reject invalid DLL content."""
         if not content.startswith(b"MZ"):
-            raise DownloadExecutionError(
-                "Downloaded content is not a valid DLL (missing PE signature)"
-            )
+            raise DownloadExecutionError(_INVALID_PE_MESSAGE)
 
         if len(content) < _PE_POINTER_OFFSET + 4:
-            raise DownloadExecutionError(
-                "Downloaded content is not a valid DLL (missing PE signature)"
-            )
+            raise DownloadExecutionError(_INVALID_PE_MESSAGE)
 
         pe_offset = int.from_bytes(
             content[_PE_POINTER_OFFSET:_PE_POINTER_OFFSET + 4],
@@ -472,12 +490,10 @@ class DownloadDLLUseCase:
         machine_offset = pe_offset + len(_PE_SIGNATURE)
         if (
             pe_offset < 0
-            or len(content) < machine_offset + 2
+            or len(content) < machine_offset + _PE_COFF_HEADER_SIZE
             or content[pe_offset:machine_offset] != _PE_SIGNATURE
         ):
-            raise DownloadExecutionError(
-                "Downloaded content is not a valid DLL (missing PE signature)"
-            )
+            raise DownloadExecutionError(_INVALID_PE_MESSAGE)
 
         machine = int.from_bytes(content[machine_offset:machine_offset + 2], "little")
         architecture = _PE_MACHINE_ARCHITECTURES.get(machine)
@@ -485,12 +501,16 @@ class DownloadDLLUseCase:
             raise DownloadExecutionError(
                 f"Downloaded DLL uses unsupported PE machine type 0x{machine:04x}"
             )
+        if not DownloadDLLUseCase._pe_image_layout_is_valid(
+            content,
+            machine_offset,
+            architecture,
+        ):
+            raise DownloadExecutionError(_INVALID_PE_MESSAGE)
 
         characteristics_offset = machine_offset + _PE_CHARACTERISTICS_OFFSET_FROM_MACHINE
         if len(content) < characteristics_offset + 2:
-            raise DownloadExecutionError(
-                "Downloaded content is not a valid DLL (missing PE signature)"
-            )
+            raise DownloadExecutionError(_INVALID_PE_MESSAGE)
         characteristics = int.from_bytes(
             content[characteristics_offset:characteristics_offset + 2],
             "little",
@@ -498,6 +518,54 @@ class DownloadDLLUseCase:
         if characteristics & _PE_DLL_CHARACTERISTIC == 0:
             raise DownloadExecutionError("Downloaded PE file is not a DLL")
         return architecture
+
+    @staticmethod
+    def _pe_image_layout_is_valid(
+        content: bytes,
+        machine_offset: int,
+        architecture: Architecture,
+    ) -> bool:
+        """Return True when the PE header has an image optional header and sections."""
+        section_count = int.from_bytes(
+            content[
+                machine_offset + _PE_NUMBER_OF_SECTIONS_OFFSET_FROM_MACHINE:
+                machine_offset + _PE_NUMBER_OF_SECTIONS_OFFSET_FROM_MACHINE + 2
+            ],
+            "little",
+        )
+        if section_count < 1 or section_count > _PE_MAX_SECTIONS:
+            return False
+
+        optional_header_size = int.from_bytes(
+            content[
+                machine_offset + _PE_SIZE_OF_OPTIONAL_HEADER_OFFSET_FROM_MACHINE:
+                machine_offset + _PE_SIZE_OF_OPTIONAL_HEADER_OFFSET_FROM_MACHINE + 2
+            ],
+            "little",
+        )
+        optional_header_offset = machine_offset + _PE_COFF_HEADER_SIZE
+        if optional_header_size < 2:
+            return False
+
+        section_table_offset = optional_header_offset + optional_header_size
+        if len(content) < section_table_offset:
+            return False
+
+        optional_magic = int.from_bytes(
+            content[optional_header_offset:optional_header_offset + 2],
+            "little",
+        )
+        if optional_magic != DownloadDLLUseCase._expected_optional_magic(architecture):
+            return False
+
+        section_table_size = section_count * _PE_SECTION_HEADER_SIZE
+        return len(content) >= section_table_offset + section_table_size
+
+    @staticmethod
+    def _expected_optional_magic(architecture: Architecture) -> int:
+        if architecture == Architecture.X64:
+            return _PE_OPTIONAL_HEADER_MAGIC_PE32_PLUS
+        return _PE_OPTIONAL_HEADER_MAGIC_PE32
 
     @classmethod
     def _validate_dll_architecture(

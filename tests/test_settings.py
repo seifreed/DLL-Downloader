@@ -413,6 +413,12 @@ def test_settings_loader_assign_helpers_accept_supported_float_and_tuple_values(
     )
 
     assert mapped["user_agent_pool"] == ("ua-1", "ua-2")
+    assert SettingsLoader._assign_string_tuple(
+        mapped,
+        "user_agent_pool",
+        None,
+    ) is True
+    assert mapped["user_agent_pool"] is None
 
 
 @pytest.mark.unit
@@ -512,6 +518,16 @@ def test_settings_from_json_rejects_non_string_sensitive_values(tmp_path: Path) 
 
     with pytest.raises(ValueError, match="Invalid value for virustotal_api_key"):
         SettingsLoader.from_json(str(config_path))
+
+
+@pytest.mark.unit
+def test_settings_from_json_accepts_null_user_agent_pool(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps({"user_agent_pool": None}))
+
+    settings = SettingsLoader.from_json(str(config_path))
+
+    assert settings.user_agent_pool is None
 
 
 @pytest.mark.unit

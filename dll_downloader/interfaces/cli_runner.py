@@ -35,6 +35,7 @@ from .cli_output import (
 )
 
 logger = logging.getLogger(__name__)
+_RUNTIME_CLOSE_ERROR_TYPES: tuple[type[Exception], ...] = (Exception,)
 
 
 class SupportsClose(Protocol):
@@ -193,7 +194,7 @@ def cleanup_runtime_resources(
 def _close_runtime_resource(resource: SupportsClose, label: str) -> None:
     try:
         resource.close()
-    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+    except _RUNTIME_CLOSE_ERROR_TYPES as exc:
         logger.warning("Failed to close %s: %s", label, exc)
 
 

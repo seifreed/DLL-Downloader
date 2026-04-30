@@ -79,20 +79,31 @@ def _build_pe_payload(
     *,
     is_dll: bool = True,
 ) -> bytes:
-    """Create a minimal PE-like DLL payload with a real machine field."""
+    """Create a minimal PE DLL payload with a real machine field."""
     machine_by_architecture = {
         Architecture.X86: 0x014C,
         Architecture.X64: 0x8664,
     }
     machine = machine_by_architecture[architecture]
     pe_offset = 0x80
-    payload = bytearray(pe_offset + 24)
+    optional_header_size = 0xF0 if architecture == Architecture.X64 else 0xE0
+    optional_header_offset = pe_offset + 24
+    section_table_offset = optional_header_offset + optional_header_size
+    payload = bytearray(section_table_offset + 40)
     payload[0:2] = b"MZ"
     payload[0x3C:0x40] = pe_offset.to_bytes(4, "little")
     payload[pe_offset:pe_offset + 4] = b"PE\x00\x00"
     payload[pe_offset + 4:pe_offset + 6] = machine.to_bytes(2, "little")
+    payload[pe_offset + 6:pe_offset + 8] = (1).to_bytes(2, "little")
+    payload[pe_offset + 20:pe_offset + 22] = optional_header_size.to_bytes(2, "little")
     characteristics = 0x2000 if is_dll else 0x0002
     payload[pe_offset + 22:pe_offset + 24] = characteristics.to_bytes(2, "little")
+    optional_magic = 0x20B if architecture == Architecture.X64 else 0x10B
+    payload[optional_header_offset:optional_header_offset + 2] = optional_magic.to_bytes(
+        2,
+        "little",
+    )
+    payload[section_table_offset:section_table_offset + 5] = b".text"
     return bytes(payload) + marker
 
 
@@ -104,6 +115,25 @@ def _build_pe_payload_with_machine(machine: int) -> bytes:
     payload[0x3C:0x40] = pe_offset.to_bytes(4, "little")
     payload[pe_offset:pe_offset + 4] = b"PE\x00\x00"
     payload[pe_offset + 4:pe_offset + 6] = machine.to_bytes(2, "little")
+    payload[pe_offset + 22:pe_offset + 24] = (0x2000).to_bytes(2, "little")
+    return bytes(payload)
+
+
+def _build_pe_header_stub(architecture: Architecture) -> bytes:
+    """Create a PE-looking stub without a loadable image layout."""
+    machine_by_architecture = {
+        Architecture.X86: 0x014C,
+        Architecture.X64: 0x8664,
+    }
+    machine = machine_by_architecture[architecture]
+    pe_offset = 0x80
+    payload = bytearray(pe_offset + 24)
+    payload[0:2] = b"MZ"
+    payload[0x3C:0x40] = pe_offset.to_bytes(4, "little")
+    payload[pe_offset:pe_offset + 4] = b"PE\x00\x00"
+    payload[pe_offset + 4:pe_offset + 6] = machine.to_bytes(2, "little")
+    payload[pe_offset + 6:pe_offset + 8] = (0).to_bytes(2, "little")
+    payload[pe_offset + 20:pe_offset + 22] = (0).to_bytes(2, "little")
     payload[pe_offset + 22:pe_offset + 24] = (0x2000).to_bytes(2, "little")
     return bytes(payload)
 
@@ -1209,6 +1239,14 @@ def test_download_dll_use_case_rejects_missing_pe_signature() -> None:
 
 
 @pytest.mark.unit
+def test_download_dll_use_case_rejects_pe_stub_without_image_layout() -> None:
+    with pytest.raises(DownloadExecutionError, match="missing PE signature"):
+        DownloadDLLUseCase._detect_pe_architecture(
+            _build_pe_header_stub(Architecture.X64)
+        )
+
+
+@pytest.mark.unit
 def test_download_dll_use_case_rejects_missing_pe_characteristics() -> None:
     payload = _build_pe_payload(Architecture.X64)[:-2]
 
@@ -1450,6 +1488,53 @@ def test_download_dll_use_case_fails_when_zip_member_is_encrypted() -> None:
         "Download failed: Downloaded archive is not a valid ZIP file"
     )
     assert repository.list_all() == []
+
+
+@pytest.mark.unit
+def test_download_dll_use_case_skips_unreadable_duplicate_zip_member() -> None:
+    repository = InMemoryRepository()
+    http_client = StubHTTPClient()
+
+    archive_buffer = io.BytesIO()
+    with zipfile.ZipFile(archive_buffer, "w") as archive:
+        archive.writestr(
+            "bad/test.dll",
+            _build_pe_payload(Architecture.X64, b"encrypted content"),
+        )
+        archive.writestr(
+            "good/test.dll",
+            _build_pe_payload(Architecture.X64, b"valid content"),
+        )
+    payload = bytearray(archive_buffer.getvalue())
+    local_header = payload.index(b"PK\x03\x04")
+    central_directory_header = payload.index(b"PK\x01\x02")
+    for flag_offset in (local_header + 6, central_directory_header + 8):
+        flags = int.from_bytes(payload[flag_offset:flag_offset + 2], "little")
+        payload[flag_offset:flag_offset + 2] = (flags | 0x01).to_bytes(2, "little")
+
+    http_client.add_response(
+        "https://dll.website/download/x64/test.dll",
+        bytes(payload),
+    )
+    use_case = DownloadDLLUseCase(
+        repository=repository,
+        http_client=http_client,
+        download_base_url="https://dll.website/download",
+    )
+
+    response = use_case.execute(
+        DownloadDLLRequest(
+            dll_name="test.dll",
+            architecture=Architecture.X64,
+            extract_archive=True,
+        )
+    )
+
+    assert response.success is True
+    dll_file = _require_dll_file(response.dll_file)
+    stored_content = repository.get_content(dll_file)
+    assert stored_content is not None
+    assert stored_content.endswith(b"valid content")
 
 
 @pytest.mark.unit

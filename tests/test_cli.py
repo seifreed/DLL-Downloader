@@ -117,12 +117,22 @@ def _temporary_env(values: dict[str, str]) -> Iterator[None]:
 
 def _build_cached_pe_payload(marker: bytes = b"") -> bytes:
     pe_offset = 0x80
-    payload = bytearray(pe_offset + 24)
+    optional_header_size = 0xF0
+    optional_header_offset = pe_offset + 24
+    section_table_offset = optional_header_offset + optional_header_size
+    payload = bytearray(section_table_offset + 40)
     payload[0:2] = b"MZ"
     payload[0x3C:0x40] = pe_offset.to_bytes(4, "little")
     payload[pe_offset:pe_offset + 4] = b"PE\x00\x00"
     payload[pe_offset + 4:pe_offset + 6] = (0x8664).to_bytes(2, "little")
+    payload[pe_offset + 6:pe_offset + 8] = (1).to_bytes(2, "little")
+    payload[pe_offset + 20:pe_offset + 22] = optional_header_size.to_bytes(2, "little")
     payload[pe_offset + 22:pe_offset + 24] = (0x2000).to_bytes(2, "little")
+    payload[optional_header_offset:optional_header_offset + 2] = (0x20B).to_bytes(
+        2,
+        "little",
+    )
+    payload[section_table_offset:section_table_offset + 5] = b".text"
     return bytes(payload) + marker
 
 

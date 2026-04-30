@@ -100,12 +100,15 @@ class RequestsHTTPClient:
         headers: Mapping[str, str] | None = None,
     ) -> HTTPResponse:
         response = self._transport.execute("GET", url, headers=headers)
-        return HTTPResponse(
-            status_code=response.status_code,
-            content=response.content,
-            headers=dict(response.headers),
-            url=response.url,
-        )
+        try:
+            return HTTPResponse(
+                status_code=response.status_code,
+                content=response.content,
+                headers=dict(response.headers),
+                url=response.url,
+            )
+        finally:
+            self._close_response(response)
 
     def get_text(
         self,

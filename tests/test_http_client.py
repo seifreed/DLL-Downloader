@@ -820,6 +820,53 @@ def test_http_client_head_closes_response() -> None:
 
 
 @pytest.mark.unit
+def test_http_client_get_closes_response() -> None:
+    """Verify GET response resources are released after content is copied."""
+    class DummyResponse:
+        status_code = 200
+        ok = True
+        content = b"body"
+        headers = {"content-type": "text/plain"}
+        url = "https://example.com/file.dll"
+
+        def __init__(self) -> None:
+            self.closed = False
+
+        def iter_content(self, chunk_size: int = 8192) -> Iterator[bytes]:
+            return iter((self.content,))
+
+        def close(self) -> None:
+            self.closed = True
+
+    class DummySession:
+        def __init__(self) -> None:
+            self.headers: dict[str, str] = {}
+            self.response = DummyResponse()
+
+        def get(self, *args: Any, **kwargs: Any) -> HTTPResponseProtocol:
+            return cast(HTTPResponseProtocol, self.response)
+
+        def head(self, *args: Any, **kwargs: Any) -> HTTPResponseProtocol:
+            raise NotImplementedError
+
+        def post(self, *args: Any, **kwargs: Any) -> HTTPResponseProtocol:
+            raise NotImplementedError
+
+        def close(self) -> None:
+            pass
+
+    session = DummySession()
+    client = RequestsHTTPClient(
+        session_resource=_resource_with_session(cast(HTTPSessionProtocol, session))
+    )
+
+    response = client.get("https://example.com/file.dll")
+
+    assert response.content == b"body"
+    assert session.response.closed is True
+
+
+@pytest.mark.unit
 def test_get_file_info_invalid_content_length() -> None:
     """
     Verify invalid content-length header is handled safely.

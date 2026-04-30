@@ -28,12 +28,25 @@ from ...domain.services import calculate_sha256
 logger = logging.getLogger(__name__)
 _PE_POINTER_OFFSET = 0x3C
 _PE_SIGNATURE = b"PE\x00\x00"
+_PE_COFF_HEADER_SIZE = 20
+_PE_NUMBER_OF_SECTIONS_OFFSET_FROM_MACHINE = 2
+_PE_SIZE_OF_OPTIONAL_HEADER_OFFSET_FROM_MACHINE = 16
 _PE_CHARACTERISTICS_OFFSET_FROM_MACHINE = 18
 _PE_DLL_CHARACTERISTIC = 0x2000
+_PE_OPTIONAL_HEADER_MAGIC_PE32 = 0x10B
+_PE_OPTIONAL_HEADER_MAGIC_PE32_PLUS = 0x20B
+_PE_SECTION_HEADER_SIZE = 40
+_PE_MAX_SECTIONS = 96
 _PE_MACHINE_ARCHITECTURES = {
     0x014C: Architecture.X86,
     0x8664: Architecture.X64,
 }
+_ZIP_MEMBER_READ_ERRORS = (
+    OSError,
+    RuntimeError,
+    NotImplementedError,
+    zipfile.BadZipFile,
+)
 
 
 class IndexEntry(TypedDict):
@@ -473,7 +486,10 @@ class FileSystemDLLRepository(IDLLRepository):
                     member_name = member.filename.rsplit("/", 1)[-1].lower()
                     if member_name != expected_name:
                         continue
-                    member_content = archive.read(member)
+                    try:
+                        member_content = archive.read(member)
+                    except _ZIP_MEMBER_READ_ERRORS:
+                        continue
                     if not member_content:
                         continue
                     architecture = cls._detect_pe_dll_architecture(member_content)
@@ -507,7 +523,7 @@ class FileSystemDLLRepository(IDLLRepository):
         )
         machine_offset = pe_offset + len(_PE_SIGNATURE)
         if (
-            len(content) < machine_offset + 2
+            len(content) < machine_offset + _PE_COFF_HEADER_SIZE
             or content[pe_offset:machine_offset] != _PE_SIGNATURE
         ):
             return None
@@ -515,6 +531,12 @@ class FileSystemDLLRepository(IDLLRepository):
         machine = int.from_bytes(content[machine_offset:machine_offset + 2], "little")
         architecture = _PE_MACHINE_ARCHITECTURES.get(machine)
         if architecture is None:
+            return None
+        if not FileSystemDLLRepository._pe_image_layout_is_valid(
+            content,
+            machine_offset,
+            architecture,
+        ):
             return None
 
         characteristics_offset = machine_offset + _PE_CHARACTERISTICS_OFFSET_FROM_MACHINE
@@ -527,6 +549,56 @@ class FileSystemDLLRepository(IDLLRepository):
         if characteristics & _PE_DLL_CHARACTERISTIC == 0:
             return None
         return architecture
+
+    @staticmethod
+    def _pe_image_layout_is_valid(
+        content: bytes,
+        machine_offset: int,
+        architecture: Architecture,
+    ) -> bool:
+        """Return True when the PE header has an image optional header and sections."""
+        section_count = int.from_bytes(
+            content[
+                machine_offset + _PE_NUMBER_OF_SECTIONS_OFFSET_FROM_MACHINE:
+                machine_offset + _PE_NUMBER_OF_SECTIONS_OFFSET_FROM_MACHINE + 2
+            ],
+            "little",
+        )
+        if section_count < 1 or section_count > _PE_MAX_SECTIONS:
+            return False
+
+        optional_header_size = int.from_bytes(
+            content[
+                machine_offset + _PE_SIZE_OF_OPTIONAL_HEADER_OFFSET_FROM_MACHINE:
+                machine_offset + _PE_SIZE_OF_OPTIONAL_HEADER_OFFSET_FROM_MACHINE + 2
+            ],
+            "little",
+        )
+        optional_header_offset = machine_offset + _PE_COFF_HEADER_SIZE
+        if optional_header_size < 2:
+            return False
+
+        section_table_offset = optional_header_offset + optional_header_size
+        if len(content) < section_table_offset:
+            return False
+
+        optional_magic = int.from_bytes(
+            content[optional_header_offset:optional_header_offset + 2],
+            "little",
+        )
+        if optional_magic != FileSystemDLLRepository._expected_optional_magic(
+            architecture
+        ):
+            return False
+
+        section_table_size = section_count * _PE_SECTION_HEADER_SIZE
+        return len(content) >= section_table_offset + section_table_size
+
+    @staticmethod
+    def _expected_optional_magic(architecture: Architecture) -> int:
+        if architecture == Architecture.X64:
+            return _PE_OPTIONAL_HEADER_MAGIC_PE32_PLUS
+        return _PE_OPTIONAL_HEADER_MAGIC_PE32
 
     @classmethod
     def _content_is_pe_dll(

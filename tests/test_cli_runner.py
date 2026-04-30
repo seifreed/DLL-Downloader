@@ -306,6 +306,22 @@ def test_cleanup_runtime_resources_closes_scanner_after_value_error() -> None:
 
 
 @pytest.mark.unit
+def test_cleanup_runtime_resources_closes_scanner_after_generic_exception() -> None:
+    class FailingHTTPClient(HTTPClientStub):
+        def close(self) -> None:
+            self.closed = True
+            raise Exception("http close failed")
+
+    http_client = FailingHTTPClient()
+    scanner = ScannerStub()
+
+    cleanup_runtime_resources(http_client, scanner)
+
+    assert http_client.closed is True
+    assert scanner.closed is True
+
+
+@pytest.mark.unit
 def test_cleanup_runtime_resources_suppresses_scanner_close_failure() -> None:
     class FailingScanner(ScannerStub):
         def close(self) -> None:

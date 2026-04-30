@@ -39,11 +39,36 @@ def _require_str(value: str | None) -> str:
 def _build_pe_payload(architecture: Architecture = Architecture.X64) -> bytes:
     machine = 0x014C if architecture == Architecture.X86 else 0x8664
     pe_offset = 0x80
+    optional_header_size = 0xF0 if architecture == Architecture.X64 else 0xE0
+    optional_header_offset = pe_offset + 24
+    section_table_offset = optional_header_offset + optional_header_size
+    payload = bytearray(section_table_offset + 40)
+    payload[0:2] = b"MZ"
+    payload[0x3C:0x40] = pe_offset.to_bytes(4, "little")
+    payload[pe_offset:pe_offset + 4] = b"PE\x00\x00"
+    payload[pe_offset + 4:pe_offset + 6] = machine.to_bytes(2, "little")
+    payload[pe_offset + 6:pe_offset + 8] = (1).to_bytes(2, "little")
+    payload[pe_offset + 20:pe_offset + 22] = optional_header_size.to_bytes(2, "little")
+    payload[pe_offset + 22:pe_offset + 24] = (0x2000).to_bytes(2, "little")
+    optional_magic = 0x20B if architecture == Architecture.X64 else 0x10B
+    payload[optional_header_offset:optional_header_offset + 2] = optional_magic.to_bytes(
+        2,
+        "little",
+    )
+    payload[section_table_offset:section_table_offset + 5] = b".text"
+    return bytes(payload)
+
+
+def _build_pe_header_stub(architecture: Architecture = Architecture.X64) -> bytes:
+    machine = 0x014C if architecture == Architecture.X86 else 0x8664
+    pe_offset = 0x80
     payload = bytearray(pe_offset + 24)
     payload[0:2] = b"MZ"
     payload[0x3C:0x40] = pe_offset.to_bytes(4, "little")
     payload[pe_offset:pe_offset + 4] = b"PE\x00\x00"
     payload[pe_offset + 4:pe_offset + 6] = machine.to_bytes(2, "little")
+    payload[pe_offset + 6:pe_offset + 8] = (0).to_bytes(2, "little")
+    payload[pe_offset + 20:pe_offset + 22] = (0).to_bytes(2, "little")
     payload[pe_offset + 22:pe_offset + 24] = (0x2000).to_bytes(2, "little")
     return bytes(payload)
 
@@ -382,6 +407,45 @@ class TestFileSystemDLLRepositorySave:
         assert expected_path.exists()
         assert expected_path.read_bytes() == content
         assert saved_dll.architecture == Architecture.X86
+
+    def test_save_rejects_pe_stub_without_image_layout(
+        self,
+        repository: FileSystemDLLRepository,
+    ) -> None:
+        with pytest.raises(RepositoryError, match="non-DLL payload"):
+            repository.save(
+                DLLFile(name="stub.dll", architecture=Architecture.X64),
+                _build_pe_header_stub(Architecture.X64),
+            )
+
+    def test_save_zip_skips_unreadable_duplicate_member(
+        self,
+        repository: FileSystemDLLRepository,
+    ) -> None:
+        archive_buffer = io.BytesIO()
+        with zipfile.ZipFile(archive_buffer, "w") as archive:
+            archive.writestr("bad/dupe.dll", _build_pe_payload(Architecture.X64))
+            archive.writestr(
+                "good/dupe.dll",
+                _build_pe_payload(Architecture.X64) + b"valid",
+            )
+        payload = bytearray(archive_buffer.getvalue())
+        local_header = payload.index(b"PK\x03\x04")
+        central_directory_header = payload.index(b"PK\x01\x02")
+        for flag_offset in (local_header + 6, central_directory_header + 8):
+            flags = int.from_bytes(payload[flag_offset:flag_offset + 2], "little")
+            payload[flag_offset:flag_offset + 2] = (flags | 0x01).to_bytes(
+                2,
+                "little",
+            )
+
+        saved = repository.save(
+            DLLFile(name="dupe.dll", architecture=Architecture.X64),
+            bytes(payload),
+        )
+
+        assert saved.name == "dupe.dll"
+        assert repository.find_by_name("dupe.dll", Architecture.X64) is not None
 
     def test_find_rejects_unsafe_name(
         self,
@@ -1132,6 +1196,17 @@ def test_find_by_name_ignores_fallback_payload_without_pe_signature(
 
     assert repository.find_by_name("fake.dll", Architecture.X64) is None
     assert repository.exists("fake.dll", Architecture.X64) is False
+
+
+def test_find_by_name_ignores_fallback_pe_stub_without_image_layout(
+    repository: FileSystemDLLRepository,
+    tmp_path: Path,
+) -> None:
+    dll_path = tmp_path / "x64" / "stub.dll"
+    dll_path.write_bytes(_build_pe_header_stub(Architecture.X64))
+
+    assert repository.find_by_name("stub.dll", Architecture.X64) is None
+    assert repository.exists("stub.dll", Architecture.X64) is False
 
 
 def test_find_by_name_ignores_fallback_payload_with_wrong_architecture(

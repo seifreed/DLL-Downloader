@@ -296,6 +296,9 @@ class SettingsLoader:
         attr_name: str,
         value: str | int | float | bool | tuple[str, ...] | None,
     ) -> bool:
+        if attr_name == "user_agent_pool" and value is None:
+            mapped["user_agent_pool"] = None
+            return True
         if not isinstance(value, tuple):
             return False
         if not all(isinstance(item, str) for item in value):
