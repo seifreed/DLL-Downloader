@@ -1088,6 +1088,21 @@ def test_settings_load_invalid_json_logs_warning(
 
 
 @pytest.mark.unit
+def test_settings_load_invalid_encoding_logs_warning(
+    tmp_download_dir: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    bad_config = tmp_download_dir / "bad_encoding.json"
+    bad_config.write_bytes(b"\xff\xfe\x00")
+
+    with caplog.at_level("WARNING"):
+        settings = SettingsLoader.load(config_path=str(bad_config))
+
+    assert "Failed to load config" in caplog.text
+    assert settings.download_directory == Settings().download_directory
+
+
+@pytest.mark.unit
 def test_settings_loader_finds_home_config_when_cwd_has_none() -> None:
     with tempfile.TemporaryDirectory() as temp_home, tempfile.TemporaryDirectory() as temp_cwd:
         home_config_dir = Path(temp_home) / ".dll_downloader"

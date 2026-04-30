@@ -116,6 +116,7 @@ def _temporary_env(values: dict[str, str]) -> Iterator[None]:
 
 
 def _build_cached_pe_payload(marker: bytes = b"") -> bytes:
+    raw_data = marker or b"\x00"
     pe_offset = 0x80
     optional_header_size = 0xF0
     optional_header_offset = pe_offset + 24
@@ -133,7 +134,20 @@ def _build_cached_pe_payload(marker: bytes = b"") -> bytes:
         "little",
     )
     payload[section_table_offset:section_table_offset + 5] = b".text"
-    return bytes(payload) + marker
+    payload[section_table_offset + 8:section_table_offset + 12] = len(
+        raw_data
+    ).to_bytes(4, "little")
+    payload[section_table_offset + 12:section_table_offset + 16] = (0x1000).to_bytes(
+        4,
+        "little",
+    )
+    payload[section_table_offset + 16:section_table_offset + 20] = len(
+        raw_data
+    ).to_bytes(4, "little")
+    payload[section_table_offset + 20:section_table_offset + 24] = len(
+        payload
+    ).to_bytes(4, "little")
+    return bytes(payload) + raw_data
 
 
 def _seed_cached_dll(repo_dir: Path, dll_names: list[str]) -> None:

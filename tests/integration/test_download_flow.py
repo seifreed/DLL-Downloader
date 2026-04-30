@@ -56,6 +56,7 @@ def _build_pe_payload(
     marker: bytes = b"",
 ) -> bytes:
     """Create a minimal PE DLL payload with a real machine field."""
+    raw_data = marker or b"\x00"
     machine_by_architecture = {
         Architecture.X86: 0x014C,
         Architecture.X64: 0x8664,
@@ -79,7 +80,20 @@ def _build_pe_payload(
         "little",
     )
     payload[section_table_offset:section_table_offset + 5] = b".text"
-    return bytes(payload) + marker
+    payload[section_table_offset + 8:section_table_offset + 12] = len(
+        raw_data
+    ).to_bytes(4, "little")
+    payload[section_table_offset + 12:section_table_offset + 16] = (0x1000).to_bytes(
+        4,
+        "little",
+    )
+    payload[section_table_offset + 16:section_table_offset + 20] = len(
+        raw_data
+    ).to_bytes(4, "little")
+    payload[section_table_offset + 20:section_table_offset + 24] = len(
+        payload
+    ).to_bytes(4, "little")
+    return bytes(payload) + raw_data
 
 
 class InMemoryHTTPClient(IHTTPClient):

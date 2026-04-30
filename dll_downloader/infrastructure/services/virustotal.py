@@ -192,6 +192,7 @@ class VirusTotalScanner(ISecurityScanner):
         except FileNotFoundError:
             pass
 
+        response: HTTPResponseProtocol | None = None
         try:
             files = {'file': (file_path.split('/')[-1], content)}
             response = self.session.post(
@@ -222,6 +223,9 @@ class VirusTotalScanner(ISecurityScanner):
         ) as e:
             logger.error(f"Failed to upload file to VirusTotal: {e}")
             raise VirusTotalError(f"File upload failed: {e}") from e
+        finally:
+            if response is not None:
+                self._close_response(response)
 
     def scan_hash(self, file_hash: str) -> ScanResult:
         """
@@ -244,6 +248,7 @@ class VirusTotalScanner(ISecurityScanner):
                 error_message=_API_KEY_MISSING
             )
 
+        response: HTTPResponseProtocol | None = None
         try:
             response = self.session.get(
                 f"{self.VT_API_URL}/files/{file_hash}",
@@ -261,6 +266,9 @@ class VirusTotalScanner(ISecurityScanner):
         except (requests.RequestException, RuntimeError, TypeError, ValueError) as e:
             logger.error(f"Failed to query VirusTotal: {e}")
             raise VirusTotalError(f"Hash lookup failed: {e}") from e
+        finally:
+            if response is not None:
+                self._close_response(response)
 
     def scan_dll(self, dll_file: DLLFile) -> DLLFile:
         """
@@ -313,6 +321,7 @@ class VirusTotalScanner(ISecurityScanner):
         if not self.is_available:
             raise VirusTotalError(_API_KEY_MISSING)
 
+        response: HTTPResponseProtocol | None = None
         try:
             url = f"{self.VT_API_URL}/files/{file_hash}"
             response = self.session.get(url, timeout=self._timeout)
@@ -327,6 +336,19 @@ class VirusTotalScanner(ISecurityScanner):
         except (requests.RequestException, RuntimeError, TypeError, ValueError) as e:
             logger.error(f"Failed to get detailed report: {e}")
             raise VirusTotalError(f"Report retrieval failed: {e}") from e
+        finally:
+            if response is not None:
+                self._close_response(response)
+
+    @staticmethod
+    def _close_response(response: HTTPResponseProtocol) -> None:
+        close_response = getattr(response, "close", None)
+        if not callable(close_response):
+            return
+        try:
+            close_response()
+        except (OSError, requests.RequestException, RuntimeError, TypeError, ValueError):
+            return
 
     def _determine_security_status(
         self, total_positives: int, total: int

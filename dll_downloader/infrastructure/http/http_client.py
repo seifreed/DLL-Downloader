@@ -17,6 +17,7 @@ from .transport import (
     HTTPClientError,
     HTTPResponse,
     RequestsTransport,
+    header_value,
 )
 from .user_agents import (
     FixedUserAgentProvider,
@@ -168,15 +169,16 @@ class RequestsHTTPClient:
 
     def get_file_info(self, url: str) -> HTTPFileInfo:
         headers = self.head(url)
-        content_length = headers.get("content-length")
+        content_length = header_value(headers, "content-length")
         try:
             length_value = int(content_length) if content_length else 0
         except ValueError:
             length_value = 0
+        accept_ranges = header_value(headers, "accept-ranges")
         return {
-            "content_type": headers.get("content-type"),
+            "content_type": header_value(headers, "content-type"),
             "content_length": length_value,
-            "last_modified": headers.get("last-modified"),
-            "etag": headers.get("etag"),
-            "accept_ranges": headers.get("accept-ranges") == "bytes",
+            "last_modified": header_value(headers, "last-modified"),
+            "etag": header_value(headers, "etag"),
+            "accept_ranges": accept_ranges is not None and accept_ranges.lower() == "bytes",
         }

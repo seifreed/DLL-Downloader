@@ -871,21 +871,26 @@ def test_scan_file_upload_success(
         def __init__(self, status_code: int, payload: dict[str, object]) -> None:
             self.status_code = status_code
             self._payload = payload
+            self.closed = False
 
         def json(self) -> dict[str, object]:
             return self._payload
+
+        def close(self) -> None:
+            self.closed = True
 
     class DummySession:
         def __init__(self) -> None:
             self.headers: dict[str, str] = {}
             self.post_timeout: float | None = None
+            self.post_response = DummyResponse(200, {"data": {"id": "abc"}})
 
         def get(self, *args: Any, **kwargs: Any) -> Any:
             raise NotImplementedError
 
         def post(self, url: str, files: Any = None, **kwargs: Any) -> DummyResponse:
             self.post_timeout = cast(float, kwargs.get("timeout"))
-            return DummyResponse(200, {"data": {"id": "abc"}})
+            return self.post_response
 
         def head(self, *args: Any, **kwargs: Any) -> Any:
             raise NotImplementedError
@@ -907,6 +912,7 @@ def test_scan_file_upload_success(
     assert result.status == SecurityStatus.UNKNOWN
     assert "Results pending" in (result.error_message or "")
     assert session.post_timeout == 9.5
+    assert session.post_response.closed is True
 
 
 @pytest.mark.unit
@@ -1100,6 +1106,59 @@ def test_scan_hash_passes_configured_timeout() -> None:
 
 
 @pytest.mark.unit
+def test_scan_hash_closes_response() -> None:
+    class DummyResponse:
+        status_code = 200
+
+        def __init__(self) -> None:
+            self.closed = False
+
+        def json(self) -> dict[str, object]:
+            return {
+                "data": {
+                    "attributes": {
+                        "last_analysis_stats": {
+                            "harmless": 1,
+                            "malicious": 0,
+                            "suspicious": 0,
+                        },
+                        "last_analysis_date": 1,
+                    }
+                }
+            }
+
+        def close(self) -> None:
+            self.closed = True
+
+    class DummySession:
+        def __init__(self) -> None:
+            self.headers: dict[str, str] = {}
+            self.response = DummyResponse()
+
+        def get(self, url: str, **kwargs: Any) -> DummyResponse:
+            return self.response
+
+        def head(self, *args: Any, **kwargs: Any) -> Any:
+            raise NotImplementedError
+
+        def post(self, *args: Any, **kwargs: Any) -> Any:
+            raise NotImplementedError
+
+        def close(self) -> None:
+            pass
+
+    session = DummySession()
+    scanner = VirusTotalScanner(
+        api_key="key",
+        session_resource=_resource_with_session(cast(HTTPSessionProtocol, session)),
+    )
+
+    scanner.scan_hash("a" * 64)
+
+    assert session.response.closed is True
+
+
+@pytest.mark.unit
 def test_scan_hash_non_200_raises() -> None:
     """
     Verify scan_hash raises VirusTotalError on non-200.
@@ -1259,6 +1318,47 @@ def test_get_detailed_report_success() -> None:
 
     assert scanner.get_detailed_report("hash") == {"ok": True}
     assert session.get_timeout == 8.75
+
+
+@pytest.mark.unit
+def test_get_detailed_report_closes_response() -> None:
+    class DummyResponse:
+        status_code = 200
+
+        def __init__(self) -> None:
+            self.closed = False
+
+        def json(self) -> dict[str, object]:
+            return {"ok": True}
+
+        def close(self) -> None:
+            self.closed = True
+
+    class DummySession:
+        def __init__(self) -> None:
+            self.headers: dict[str, str] = {}
+            self.response = DummyResponse()
+
+        def get(self, url: str, **kwargs: Any) -> DummyResponse:
+            return self.response
+
+        def head(self, *args: Any, **kwargs: Any) -> Any:
+            raise NotImplementedError
+
+        def post(self, *args: Any, **kwargs: Any) -> Any:
+            raise NotImplementedError
+
+        def close(self) -> None:
+            pass
+
+    session = DummySession()
+    scanner = VirusTotalScanner(
+        api_key="key",
+        session_resource=_resource_with_session(cast(HTTPSessionProtocol, session)),
+    )
+
+    assert scanner.get_detailed_report("hash") == {"ok": True}
+    assert session.response.closed is True
 
 
 @pytest.mark.unit

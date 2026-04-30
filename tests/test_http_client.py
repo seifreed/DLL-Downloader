@@ -155,6 +155,18 @@ def test_http_response_content_length_property() -> None:
 
 
 @pytest.mark.unit
+def test_http_response_content_length_is_case_insensitive() -> None:
+    response = HTTPResponse(
+        status_code=200,
+        content=b"",
+        headers={"Content-Length": "1024"},
+        url="https://example.com",
+    )
+
+    assert response.content_length == 1024
+
+
+@pytest.mark.unit
 def test_http_response_content_length_returns_none_for_invalid_header() -> None:
     response = HTTPResponse(
         status_code=200,
@@ -878,6 +890,31 @@ def test_get_file_info_invalid_content_length() -> None:
     client = InvalidHeadClient()
     info = client.get_file_info("https://example.com/file.dll")
     assert info["content_length"] == 0
+
+
+@pytest.mark.unit
+def test_get_file_info_uses_case_insensitive_headers() -> None:
+    class UppercaseHeadClient(RequestsHTTPClient):
+        def head(self, url: str) -> dict[str, str]:
+            return {
+                "Content-Type": "application/zip",
+                "Content-Length": "123",
+                "Accept-Ranges": "bytes",
+                "Last-Modified": "Thu, 30 Apr 2026 12:00:00 GMT",
+                "ETag": '"abc"',
+            }
+
+    client = UppercaseHeadClient()
+
+    info = client.get_file_info("https://example.com/file.dll")
+
+    assert info == {
+        "content_type": "application/zip",
+        "content_length": 123,
+        "last_modified": "Thu, 30 Apr 2026 12:00:00 GMT",
+        "etag": '"abc"',
+        "accept_ranges": True,
+    }
 
 
 @pytest.mark.unit

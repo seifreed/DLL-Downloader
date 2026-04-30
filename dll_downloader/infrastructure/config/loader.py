@@ -172,7 +172,7 @@ class SettingsLoader:
                     config_values,
                     allow_none_overrides=True,
                 )
-            except (OSError, json.JSONDecodeError) as exc:
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
                 logging.warning(
                     "Failed to load config from %s: %s",
                     resolved_config_path,

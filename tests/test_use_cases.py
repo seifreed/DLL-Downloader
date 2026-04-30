@@ -80,6 +80,7 @@ def _build_pe_payload(
     is_dll: bool = True,
 ) -> bytes:
     """Create a minimal PE DLL payload with a real machine field."""
+    raw_data = marker or b"\x00"
     machine_by_architecture = {
         Architecture.X86: 0x014C,
         Architecture.X64: 0x8664,
@@ -104,7 +105,20 @@ def _build_pe_payload(
         "little",
     )
     payload[section_table_offset:section_table_offset + 5] = b".text"
-    return bytes(payload) + marker
+    payload[section_table_offset + 8:section_table_offset + 12] = len(
+        raw_data
+    ).to_bytes(4, "little")
+    payload[section_table_offset + 12:section_table_offset + 16] = (0x1000).to_bytes(
+        4,
+        "little",
+    )
+    payload[section_table_offset + 16:section_table_offset + 20] = len(
+        raw_data
+    ).to_bytes(4, "little")
+    payload[section_table_offset + 20:section_table_offset + 24] = len(
+        payload
+    ).to_bytes(4, "little")
+    return bytes(payload) + raw_data
 
 
 def _build_pe_payload_with_machine(machine: int) -> bytes:
@@ -135,6 +149,33 @@ def _build_pe_header_stub(architecture: Architecture) -> bytes:
     payload[pe_offset + 6:pe_offset + 8] = (0).to_bytes(2, "little")
     payload[pe_offset + 20:pe_offset + 22] = (0).to_bytes(2, "little")
     payload[pe_offset + 22:pe_offset + 24] = (0x2000).to_bytes(2, "little")
+    return bytes(payload)
+
+
+def _build_pe_payload_with_blank_section(architecture: Architecture) -> bytes:
+    """Create a PE-looking DLL whose declared section table is empty."""
+    machine_by_architecture = {
+        Architecture.X86: 0x014C,
+        Architecture.X64: 0x8664,
+    }
+    machine = machine_by_architecture[architecture]
+    pe_offset = 0x80
+    optional_header_size = 0xF0 if architecture == Architecture.X64 else 0xE0
+    optional_header_offset = pe_offset + 24
+    section_table_offset = optional_header_offset + optional_header_size
+    payload = bytearray(section_table_offset + 40)
+    payload[0:2] = b"MZ"
+    payload[0x3C:0x40] = pe_offset.to_bytes(4, "little")
+    payload[pe_offset:pe_offset + 4] = b"PE\x00\x00"
+    payload[pe_offset + 4:pe_offset + 6] = machine.to_bytes(2, "little")
+    payload[pe_offset + 6:pe_offset + 8] = (1).to_bytes(2, "little")
+    payload[pe_offset + 20:pe_offset + 22] = optional_header_size.to_bytes(2, "little")
+    payload[pe_offset + 22:pe_offset + 24] = (0x2000).to_bytes(2, "little")
+    optional_magic = 0x20B if architecture == Architecture.X64 else 0x10B
+    payload[optional_header_offset:optional_header_offset + 2] = optional_magic.to_bytes(
+        2,
+        "little",
+    )
     return bytes(payload)
 
 
@@ -1244,6 +1285,46 @@ def test_download_dll_use_case_rejects_pe_stub_without_image_layout() -> None:
         DownloadDLLUseCase._detect_pe_architecture(
             _build_pe_header_stub(Architecture.X64)
         )
+
+
+@pytest.mark.unit
+def test_download_dll_use_case_rejects_blank_pe_section_table() -> None:
+    with pytest.raises(DownloadExecutionError, match="missing PE signature"):
+        DownloadDLLUseCase._detect_pe_architecture(
+            _build_pe_payload_with_blank_section(Architecture.X64)
+        )
+
+
+@pytest.mark.unit
+def test_download_dll_use_case_rejects_zip_member_with_blank_pe_section_table() -> None:
+    repository = InMemoryRepository()
+    http_client = StubHTTPClient()
+    http_client.add_response(
+        "https://dll.website/download/x64/fake.dll",
+        _build_zip_payload(
+            "fake.dll",
+            _build_pe_payload_with_blank_section(Architecture.X64),
+        ),
+    )
+    use_case = DownloadDLLUseCase(
+        repository=repository,
+        http_client=http_client,
+        download_base_url="https://dll.website/download",
+    )
+
+    response = use_case.execute(
+        DownloadDLLRequest(
+            dll_name="fake.dll",
+            architecture=Architecture.X64,
+            extract_archive=True,
+        )
+    )
+
+    assert response.success is False
+    assert response.error_message == (
+        "Download failed: Downloaded content is not a valid DLL (missing PE signature)"
+    )
+    assert repository.list_all() == []
 
 
 @pytest.mark.unit

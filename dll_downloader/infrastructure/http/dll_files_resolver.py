@@ -83,12 +83,14 @@ class DllFilesResolver:
         if architecture not in _SUPPORTED_DOWNLOAD_ARCHITECTURES:
             return None
 
-        for href, _ in candidates:
-            if self._href_matches_architecture(href, architecture):
+        for href, context in candidates:
+            if self._context_matches_architecture(context, architecture):
                 return href
 
         for href, context in candidates:
-            if self._context_matches_architecture(context, architecture):
+            if self._context_architecture(context) is not None:
+                continue
+            if self._href_matches_architecture(href, architecture):
                 return href
 
         has_architecture_hints = any(
@@ -119,12 +121,27 @@ class DllFilesResolver:
         context: str,
         architecture: Architecture,
     ) -> bool:
-        bits = "64" if architecture == Architecture.X64 else "32"
-        opposite_bits = "32" if architecture == Architecture.X64 else "64"
-        return self._context_has_bits_hint(
-            context,
-            bits,
-        ) and not self._context_has_bits_hint(context, opposite_bits)
+        return self._context_architecture(context) == architecture
+
+    def _context_architecture(self, context: str) -> Architecture | None:
+        explicit_architectures = self._explicit_context_architectures(context)
+        if len(explicit_architectures) == 1:
+            return explicit_architectures.pop()
+        if len(explicit_architectures) > 1:
+            return None
+
+        has_x64 = self._context_has_bits_hint(context, "64")
+        has_x86 = self._context_has_bits_hint(context, "32")
+        if has_x64 == has_x86:
+            return None
+        return Architecture.X64 if has_x64 else Architecture.X86
+
+    def _explicit_context_architectures(self, context: str) -> set[Architecture]:
+        text = self._html_text(context)
+        architectures: set[Architecture] = set()
+        for match in re.finditer(r"\barchitecture\s*:?\s*(32|64)\s*[- ]?bit\b", text):
+            architectures.add(Architecture.X64 if match.group(1) == "64" else Architecture.X86)
+        return architectures
 
     def _href_matches_architecture(
         self,

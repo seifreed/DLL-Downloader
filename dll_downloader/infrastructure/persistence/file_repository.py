@@ -36,6 +36,11 @@ _PE_DLL_CHARACTERISTIC = 0x2000
 _PE_OPTIONAL_HEADER_MAGIC_PE32 = 0x10B
 _PE_OPTIONAL_HEADER_MAGIC_PE32_PLUS = 0x20B
 _PE_SECTION_HEADER_SIZE = 40
+_PE_SECTION_NAME_SIZE = 8
+_PE_SECTION_VIRTUAL_SIZE_OFFSET = 8
+_PE_SECTION_VIRTUAL_ADDRESS_OFFSET = 12
+_PE_SECTION_RAW_SIZE_OFFSET = 16
+_PE_SECTION_RAW_POINTER_OFFSET = 20
 _PE_MAX_SECTIONS = 96
 _PE_MACHINE_ARCHITECTURES = {
     0x014C: Architecture.X86,
@@ -592,7 +597,70 @@ class FileSystemDLLRepository(IDLLRepository):
             return False
 
         section_table_size = section_count * _PE_SECTION_HEADER_SIZE
-        return len(content) >= section_table_offset + section_table_size
+        if len(content) < section_table_offset + section_table_size:
+            return False
+
+        return FileSystemDLLRepository._has_loadable_section(
+            content,
+            section_table_offset,
+            section_count,
+        )
+
+    @staticmethod
+    def _has_loadable_section(
+        content: bytes,
+        section_table_offset: int,
+        section_count: int,
+    ) -> bool:
+        minimum_raw_pointer = section_table_offset + (
+            section_count * _PE_SECTION_HEADER_SIZE
+        )
+        for index in range(section_count):
+            section_offset = section_table_offset + (index * _PE_SECTION_HEADER_SIZE)
+            section_header = content[
+                section_offset:section_offset + _PE_SECTION_HEADER_SIZE
+            ]
+            section_name = section_header[:_PE_SECTION_NAME_SIZE].rstrip(b"\x00")
+            if not section_name:
+                continue
+
+            virtual_size = int.from_bytes(
+                section_header[
+                    _PE_SECTION_VIRTUAL_SIZE_OFFSET:
+                    _PE_SECTION_VIRTUAL_SIZE_OFFSET + 4
+                ],
+                "little",
+            )
+            virtual_address = int.from_bytes(
+                section_header[
+                    _PE_SECTION_VIRTUAL_ADDRESS_OFFSET:
+                    _PE_SECTION_VIRTUAL_ADDRESS_OFFSET + 4
+                ],
+                "little",
+            )
+            raw_size = int.from_bytes(
+                section_header[
+                    _PE_SECTION_RAW_SIZE_OFFSET:_PE_SECTION_RAW_SIZE_OFFSET + 4
+                ],
+                "little",
+            )
+            raw_pointer = int.from_bytes(
+                section_header[
+                    _PE_SECTION_RAW_POINTER_OFFSET:_PE_SECTION_RAW_POINTER_OFFSET + 4
+                ],
+                "little",
+            )
+            if virtual_address == 0 or (virtual_size == 0 and raw_size == 0):
+                continue
+            if raw_size == 0:
+                return True
+            if (
+                raw_pointer < minimum_raw_pointer
+                or raw_pointer + raw_size > len(content)
+            ):
+                continue
+            return True
+        return False
 
     @staticmethod
     def _expected_optional_magic(architecture: Architecture) -> int:

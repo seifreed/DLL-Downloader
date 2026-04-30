@@ -37,6 +37,7 @@ def _require_str(value: str | None) -> str:
 
 
 def _build_pe_payload(architecture: Architecture = Architecture.X64) -> bytes:
+    raw_data = b"\x00"
     machine = 0x014C if architecture == Architecture.X86 else 0x8664
     pe_offset = 0x80
     optional_header_size = 0xF0 if architecture == Architecture.X64 else 0xE0
@@ -56,7 +57,20 @@ def _build_pe_payload(architecture: Architecture = Architecture.X64) -> bytes:
         "little",
     )
     payload[section_table_offset:section_table_offset + 5] = b".text"
-    return bytes(payload)
+    payload[section_table_offset + 8:section_table_offset + 12] = len(
+        raw_data
+    ).to_bytes(4, "little")
+    payload[section_table_offset + 12:section_table_offset + 16] = (0x1000).to_bytes(
+        4,
+        "little",
+    )
+    payload[section_table_offset + 16:section_table_offset + 20] = len(
+        raw_data
+    ).to_bytes(4, "little")
+    payload[section_table_offset + 20:section_table_offset + 24] = len(
+        payload
+    ).to_bytes(4, "little")
+    return bytes(payload) + raw_data
 
 
 def _build_pe_header_stub(architecture: Architecture = Architecture.X64) -> bytes:
@@ -70,6 +84,30 @@ def _build_pe_header_stub(architecture: Architecture = Architecture.X64) -> byte
     payload[pe_offset + 6:pe_offset + 8] = (0).to_bytes(2, "little")
     payload[pe_offset + 20:pe_offset + 22] = (0).to_bytes(2, "little")
     payload[pe_offset + 22:pe_offset + 24] = (0x2000).to_bytes(2, "little")
+    return bytes(payload)
+
+
+def _build_pe_payload_with_blank_section(
+    architecture: Architecture = Architecture.X64,
+) -> bytes:
+    machine = 0x014C if architecture == Architecture.X86 else 0x8664
+    pe_offset = 0x80
+    optional_header_size = 0xF0 if architecture == Architecture.X64 else 0xE0
+    optional_header_offset = pe_offset + 24
+    section_table_offset = optional_header_offset + optional_header_size
+    payload = bytearray(section_table_offset + 40)
+    payload[0:2] = b"MZ"
+    payload[0x3C:0x40] = pe_offset.to_bytes(4, "little")
+    payload[pe_offset:pe_offset + 4] = b"PE\x00\x00"
+    payload[pe_offset + 4:pe_offset + 6] = machine.to_bytes(2, "little")
+    payload[pe_offset + 6:pe_offset + 8] = (1).to_bytes(2, "little")
+    payload[pe_offset + 20:pe_offset + 22] = optional_header_size.to_bytes(2, "little")
+    payload[pe_offset + 22:pe_offset + 24] = (0x2000).to_bytes(2, "little")
+    optional_magic = 0x20B if architecture == Architecture.X64 else 0x10B
+    payload[optional_header_offset:optional_header_offset + 2] = optional_magic.to_bytes(
+        2,
+        "little",
+    )
     return bytes(payload)
 
 
@@ -416,6 +454,16 @@ class TestFileSystemDLLRepositorySave:
             repository.save(
                 DLLFile(name="stub.dll", architecture=Architecture.X64),
                 _build_pe_header_stub(Architecture.X64),
+            )
+
+    def test_save_rejects_pe_payload_with_blank_section_table(
+        self,
+        repository: FileSystemDLLRepository,
+    ) -> None:
+        with pytest.raises(RepositoryError, match="non-DLL payload"):
+            repository.save(
+                DLLFile(name="blank.dll", architecture=Architecture.X64),
+                _build_pe_payload_with_blank_section(Architecture.X64),
             )
 
     def test_save_zip_skips_unreadable_duplicate_member(
@@ -1207,6 +1255,17 @@ def test_find_by_name_ignores_fallback_pe_stub_without_image_layout(
 
     assert repository.find_by_name("stub.dll", Architecture.X64) is None
     assert repository.exists("stub.dll", Architecture.X64) is False
+
+
+def test_find_by_name_ignores_fallback_pe_payload_with_blank_section_table(
+    repository: FileSystemDLLRepository,
+    tmp_path: Path,
+) -> None:
+    dll_path = tmp_path / "x64" / "blank.dll"
+    dll_path.write_bytes(_build_pe_payload_with_blank_section(Architecture.X64))
+
+    assert repository.find_by_name("blank.dll", Architecture.X64) is None
+    assert repository.exists("blank.dll", Architecture.X64) is False
 
 
 def test_find_by_name_ignores_fallback_payload_with_wrong_architecture(

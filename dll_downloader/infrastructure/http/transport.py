@@ -20,6 +20,19 @@ from .retry_policy import RetryPolicy
 logger = logging.getLogger(__name__)
 
 
+def header_value(headers: Mapping[str, str], name: str) -> str | None:
+    """Return an HTTP header value using case-insensitive field names."""
+    direct_value = headers.get(name)
+    if direct_value is not None:
+        return direct_value
+
+    normalized_name = name.lower()
+    for header_name, header_value_text in headers.items():
+        if header_name.lower() == normalized_name:
+            return header_value_text
+    return None
+
+
 @dataclass(frozen=True)
 class HTTPResponse:
     """Normalized HTTP response returned by infrastructure adapters."""
@@ -35,7 +48,7 @@ class HTTPResponse:
 
     @property
     def content_length(self) -> int | None:
-        length = self.headers.get("content-length")
+        length = header_value(self.headers, "content-length")
         if not length:
             return None
         try:
