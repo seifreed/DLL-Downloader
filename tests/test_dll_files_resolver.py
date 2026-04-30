@@ -455,6 +455,32 @@ def test_extract_direct_link_fallback_zip_with_query_string() -> None:
 
 
 @pytest.mark.unit
+def test_extract_direct_link_accepts_uppercase_official_zip_extension() -> None:
+    resolver = DllFilesResolver(
+        http_client=StubTextHTTPClient({}),
+        base_url="https://es.dll-files.com",
+    )
+    html = '<a href="https://download.zip.dll-files.com/file.ZIP?token=1">zip</a>'
+
+    assert resolver._extract_direct_link(html) == (
+        "https://download.zip.dll-files.com/file.ZIP?token=1"
+    )
+
+
+@pytest.mark.unit
+def test_extract_direct_link_accepts_uppercase_base_zip_extension() -> None:
+    resolver = DllFilesResolver(
+        http_client=StubTextHTTPClient({}),
+        base_url="https://mirror.example.com",
+    )
+    html = '<a href="https://mirror.example.com/file.ZIP?token=abc">zip</a>'
+
+    assert resolver._extract_direct_link(html) == (
+        "https://mirror.example.com/file.ZIP?token=abc"
+    )
+
+
+@pytest.mark.unit
 def test_extract_direct_link_rejects_external_zip_with_official_host_in_query() -> None:
     resolver = DllFilesResolver(
         http_client=StubTextHTTPClient({}),

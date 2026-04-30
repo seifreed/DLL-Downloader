@@ -826,6 +826,17 @@ def test_settings_load_logs_warning_for_unreadable_config(
 
 
 @pytest.mark.unit
+def test_settings_load_default_search_skips_non_regular_candidate(tmp_path: Path) -> None:
+    (tmp_path / ".config.json").mkdir()
+    (tmp_path / "config.json").write_text(json.dumps({"http_timeout": 123}))
+
+    with _temporary_env({"HOME": str(tmp_path)}), _temporary_cwd(tmp_path):
+        settings = SettingsLoader.load(config_path=None)
+
+    assert settings.http_timeout == 123
+
+
+@pytest.mark.unit
 def test_settings_load_fifo_config_does_not_block(tmp_path: Path) -> None:
     if not hasattr(os, "mkfifo"):
         pytest.skip("FIFO files are not supported on this platform")

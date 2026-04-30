@@ -410,12 +410,16 @@ class FileSystemDLLRepository(IDLLRepository):
         content: bytes,
     ) -> bool:
         """Return True for direct DLL bytes or a ZIP carrying the requested DLL."""
-        detected_architecture = cls._detect_payload_architecture(dll_name, content)
-        if detected_architecture is None:
-            return False
-        return (
-            expected_architecture == Architecture.UNKNOWN
-            or detected_architecture == expected_architecture
+        detected_architecture = cls._detect_pe_dll_architecture(content)
+        if detected_architecture is not None:
+            return (
+                expected_architecture == Architecture.UNKNOWN
+                or detected_architecture == expected_architecture
+            )
+        return cls._zip_payload_contains_valid_dll(
+            dll_name,
+            expected_architecture,
+            content,
         )
 
     @classmethod
@@ -438,13 +442,13 @@ class FileSystemDLLRepository(IDLLRepository):
         content: bytes,
     ) -> bool:
         """Return True when ZIP content contains the requested PE DLL member."""
-        detected_architecture = cls._detect_zip_payload_architecture(dll_name, content)
         return (
-            detected_architecture is not None
-            and (
-                expected_architecture == Architecture.UNKNOWN
-                or detected_architecture == expected_architecture
+            cls._detect_zip_payload_architecture(
+                dll_name,
+                content,
+                expected_architecture=expected_architecture,
             )
+            is not None
         )
 
     @classmethod
@@ -452,6 +456,8 @@ class FileSystemDLLRepository(IDLLRepository):
         cls,
         dll_name: str,
         content: bytes,
+        *,
+        expected_architecture: Architecture = Architecture.UNKNOWN,
     ) -> Architecture | None:
         """Return the architecture of the requested DLL member in a ZIP payload."""
         archive_buffer = BytesIO(content)
@@ -469,8 +475,15 @@ class FileSystemDLLRepository(IDLLRepository):
                         continue
                     member_content = archive.read(member)
                     if not member_content:
-                        return None
-                    return cls._detect_pe_dll_architecture(member_content)
+                        continue
+                    architecture = cls._detect_pe_dll_architecture(member_content)
+                    if architecture is None:
+                        continue
+                    if (
+                        expected_architecture == Architecture.UNKNOWN
+                        or architecture == expected_architecture
+                    ):
+                        return architecture
         except (
             OSError,
             RuntimeError,

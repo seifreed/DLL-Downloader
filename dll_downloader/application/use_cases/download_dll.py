@@ -418,24 +418,39 @@ class DownloadDLLUseCase:
                 )
 
             expected_name = request.dll_name.lower()
-            preferred_member = next(
-                (
-                    member for member in matching_members
-                    if member.filename.rsplit("/", 1)[-1].lower() == expected_name
-                ),
-                None,
-            )
-            if preferred_member is None:
+            requested_members = [
+                member for member in matching_members
+                if member.filename.rsplit("/", 1)[-1].lower() == expected_name
+            ]
+            if not requested_members:
                 raise ArchiveExtractionError(
                     f"ZIP archive does not contain requested DLL {request.dll_name}"
                 )
 
-            extracted_content = archive.read(preferred_member)
-            if not extracted_content:
-                raise ArchiveExtractionError("Extracted DLL from ZIP archive is empty")
+            validation_error: DownloadExecutionError | None = None
+            empty_member_found = False
+            for member in requested_members:
+                extracted_content = archive.read(member)
+                if not extracted_content:
+                    empty_member_found = True
+                    continue
+                try:
+                    self._validate_dll_architecture(
+                        extracted_content,
+                        request.architecture,
+                    )
+                except DownloadExecutionError as exc:
+                    validation_error = exc
+                    continue
+                return extracted_content
 
-            self._validate_dll_architecture(extracted_content, request.architecture)
-            return extracted_content
+            if validation_error is not None:
+                raise validation_error
+            if empty_member_found:
+                raise ArchiveExtractionError("Extracted DLL from ZIP archive is empty")
+            raise ArchiveExtractionError(
+                f"ZIP archive does not contain a valid requested DLL {request.dll_name}"
+            )
 
     @staticmethod
     def _detect_pe_architecture(content: bytes) -> Architecture:

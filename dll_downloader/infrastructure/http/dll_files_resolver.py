@@ -192,12 +192,12 @@ class DllFilesResolver:
         return (
             parsed_href.scheme in {"", "https"}
             and parsed_href.hostname == "download.zip.dll-files.com"
-            and parsed_href.path.endswith(".zip")
+            and parsed_href.path.lower().endswith(".zip")
         )
 
     def _is_base_zip_link(self, href: str) -> bool:
         parsed_href = urlparse(href)
-        return parsed_href.path.endswith(".zip") and self._is_base_url_link(href)
+        return parsed_href.path.lower().endswith(".zip") and self._is_base_url_link(href)
 
     def _html_text(self, html: str) -> str:
         return unescape(re.sub(r"<[^>]+>", " ", html)).lower()

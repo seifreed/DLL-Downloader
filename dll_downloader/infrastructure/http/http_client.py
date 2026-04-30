@@ -158,7 +158,10 @@ class RequestsHTTPClient:
 
     def head(self, url: str) -> dict[str, str]:
         response = self._transport.execute("HEAD", url, allow_redirects=True)
-        return dict(response.headers)
+        try:
+            return dict(response.headers)
+        finally:
+            self._close_response(response)
 
     def get_file_info(self, url: str) -> HTTPFileInfo:
         headers = self.head(url)

@@ -807,6 +807,43 @@ def test_download_dll_use_case_fails_when_extracted_dll_is_empty() -> None:
 
 
 @pytest.mark.unit
+def test_download_dll_use_case_selects_matching_architecture_duplicate_zip_member() -> None:
+    repository = InMemoryRepository()
+    http_client = StubHTTPClient()
+    x64_payload = _build_pe_payload(Architecture.X64, b"x64 payload")
+
+    archive_buffer = io.BytesIO()
+    with zipfile.ZipFile(archive_buffer, "w") as archive:
+        archive.writestr(
+            "x86/requested.dll",
+            _build_pe_payload(Architecture.X86, b"x86 payload"),
+        )
+        archive.writestr("x64/requested.dll", x64_payload)
+    http_client.add_response(
+        "https://dll.website/download/x64/requested.dll",
+        archive_buffer.getvalue(),
+    )
+
+    use_case = DownloadDLLUseCase(
+        repository=repository,
+        http_client=http_client,
+        download_base_url="https://dll.website/download",
+    )
+
+    response = use_case.execute(
+        DownloadDLLRequest(
+            dll_name="requested.dll",
+            architecture=Architecture.X64,
+            extract_archive=True,
+        )
+    )
+
+    assert response.success is True
+    dll_file = _require_dll_file(response.dll_file)
+    assert repository.get_content(dll_file) == x64_payload
+
+
+@pytest.mark.unit
 def test_download_dll_use_case_fails_when_zip_reader_is_invalid() -> None:
     repository = InMemoryRepository()
     http_client = StubHTTPClient()

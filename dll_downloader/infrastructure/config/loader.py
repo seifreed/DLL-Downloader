@@ -384,7 +384,7 @@ class SettingsLoader:
     @classmethod
     def _find_config_path(cls) -> str | None:
         for candidate in map(os.path.expanduser, cls.DEFAULT_CONFIG_PATHS):
-            if os.path.exists(candidate):
+            if os.path.isfile(candidate):
                 return candidate
         return None
 
