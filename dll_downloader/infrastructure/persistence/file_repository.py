@@ -154,7 +154,7 @@ class FileSystemDLLRepository(IDLLRepository):
     def _get_file_path(self, name: str, architecture: Architecture) -> Path:
         """Get the filesystem path for a DLL file."""
         arch_value = architecture.value if architecture != Architecture.UNKNOWN else "x64"
-        return self._base_path / arch_value / name
+        return self._base_path / arch_value / name.lower()
 
     def _path_is_within_repository(self, file_path: Path) -> bool:
         """Return True when a filesystem path is owned by this repository."""
@@ -175,11 +175,11 @@ class FileSystemDLLRepository(IDLLRepository):
     def _path_locations_match(self, left: Path, right: Path) -> bool:
         """Return True when two paths identify the same repository entry location."""
         try:
-            left_location = left.parent.resolve(strict=True) / left.name
-            right_location = right.parent.resolve(strict=True) / right.name
+            left_parent = left.parent.resolve(strict=True)
+            right_parent = right.parent.resolve(strict=True)
         except OSError:
             return False
-        return left_location == right_location
+        return left_parent == right_parent and left.name.lower() == right.name.lower()
 
     def _validate_repository_write_path(self, file_path: Path) -> None:
         """Reject writes through symlinks or paths escaping the repository root."""
@@ -243,12 +243,13 @@ class FileSystemDLLRepository(IDLLRepository):
             # Write content to disk
             self._atomic_write_bytes(file_path, content)
 
-            # Update entity with file path (use replace since DLLFile is frozen)
-            dll_file = replace(dll_file, file_path=str(file_path))
-
-            # Calculate hash if not present
-            if not dll_file.file_hash:
-                dll_file = replace(dll_file, file_hash=calculate_sha256(content))
+            # Persist canonical metadata matching the bytes actually written.
+            dll_file = replace(
+                dll_file,
+                file_path=str(file_path),
+                file_hash=calculate_sha256(content),
+                file_size=len(content),
+            )
 
             # Update index
             index = self._load_index()
@@ -344,23 +345,28 @@ class FileSystemDLLRepository(IDLLRepository):
             return None
         if not file_path.is_file():
             return None
-        if not self._fallback_payload_is_valid_pe_dll(file_path, architecture):
-            logger.warning("Skipping fallback payload that is not a PE DLL: %s", file_path)
+        if not self._fallback_payload_is_valid(file_path, file_path.name, architecture):
+            logger.warning(
+                "Skipping fallback payload that is not a valid DLL payload: %s",
+                file_path,
+            )
             return None
         return file_path
 
-    @staticmethod
-    def _fallback_payload_is_valid_pe_dll(
+    @classmethod
+    def _fallback_payload_is_valid(
+        cls,
         file_path: Path,
+        dll_name: str,
         architecture: Architecture,
     ) -> bool:
-        """Return True when an orphaned disk payload is a PE DLL."""
+        """Return True when an orphaned disk payload is a DLL or DLL ZIP."""
         try:
             content = file_path.read_bytes()
         except OSError as exc:
             logger.warning("Skipping unreadable fallback DLL payload: %s", exc)
             return False
-        return FileSystemDLLRepository._content_is_pe_dll(content, architecture)
+        return cls._content_matches_dll_payload(dll_name, architecture, content)
 
     @classmethod
     def _validate_payload_content(cls, dll_file: DLLFile, content: bytes) -> None:

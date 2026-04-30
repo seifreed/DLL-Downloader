@@ -289,17 +289,17 @@ class TestFileSystemDLLRepositorySave:
         expected_hash = hashlib.sha256(sample_dll_content).hexdigest()
         assert saved_dll.file_hash == expected_hash
 
-    def test_save_preserves_existing_hash(
+    def test_save_canonicalizes_hash_and_size(
         self,
         repository: FileSystemDLLRepository,
         sample_dll_content: bytes,
     ) -> None:
         """
-        Verify that save() preserves pre-existing hash values.
+        Verify that save() persists metadata matching the actual payload bytes.
 
         Expected Behavior:
-            - Existing hash value is not overwritten
-            - Returned entity maintains the original hash
+            - Existing stale hash/size values are overwritten
+            - Returned entity can be found by name
         """
         predefined_hash = "abc123def456"
         dll = DLLFile(
@@ -307,11 +307,14 @@ class TestFileSystemDLLRepositorySave:
             version="10.0.19041.1",
             architecture=Architecture.X64,
             file_hash=predefined_hash,
+            file_size=1,
         )
 
         saved_dll = repository.save(dll, sample_dll_content)
 
-        assert saved_dll.file_hash == predefined_hash
+        assert saved_dll.file_hash == hashlib.sha256(sample_dll_content).hexdigest()
+        assert saved_dll.file_size == len(sample_dll_content)
+        assert repository.find_by_name("kernel32.dll", Architecture.X64) is not None
 
     def test_save_updates_index(
         self,
@@ -614,6 +617,21 @@ class TestFileSystemDLLRepositorySave:
         saved_path = Path(_require_str(saved.file_path))
         assert saved_path == tmp_path / "x64" / "zipped.dll"
         assert saved_path.read_bytes() == zip_payload
+
+    def test_save_uses_case_insensitive_storage_name(
+        self,
+        repository: FileSystemDLLRepository,
+        tmp_path: Path,
+    ) -> None:
+        saved = repository.save(
+            DLLFile(name="Case.DLL", architecture=Architecture.X64),
+            _build_pe_payload(Architecture.X64),
+        )
+
+        saved_path = Path(_require_str(saved.file_path))
+        assert saved_path == tmp_path / "x64" / "case.dll"
+        assert repository.find_by_name("case.dll", Architecture.X64) is not None
+        assert repository.find_by_name("Case.DLL", Architecture.X64) is not None
 
     def test_save_rejects_non_dll_payload(
         self,
@@ -1181,6 +1199,27 @@ def test_find_by_name_rejects_indexed_payload_that_is_not_a_dll(
     assert repository.find_by_name("bad.dll", Architecture.X64) is None
     assert repository.find_by_hash(hashlib.sha256(payload).hexdigest()) is None
     assert repository.list_all() == []
+
+
+def test_find_by_name_uses_zip_fallback_when_index_is_missing(
+    repository: FileSystemDLLRepository,
+    tmp_path: Path,
+) -> None:
+    zip_payload = _build_zip_payload(
+        "cached.dll",
+        _build_pe_payload(Architecture.X64),
+    )
+    repository.save(
+        DLLFile(name="cached.dll", architecture=Architecture.X64),
+        zip_payload,
+    )
+    (tmp_path / ".dll_index.json").unlink()
+
+    found = repository.find_by_name("cached.dll", Architecture.X64)
+
+    assert found is not None
+    assert found.file_hash == hashlib.sha256(zip_payload).hexdigest()
+    assert found.file_size == len(zip_payload)
 
 
 def test_find_by_name_rejects_mismatched_index_metadata(

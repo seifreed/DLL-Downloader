@@ -52,7 +52,11 @@ class _JSONSettingsSource:
             config_data = json.load(file_handle)
         if not isinstance(config_data, Mapping):
             raise ValueError("Configuration file must contain a JSON object")
-        return SettingsLoader._mapped_kwargs(config_data, SettingsLoader.JSON_MAPPING)
+        return SettingsLoader._mapped_kwargs(
+            config_data,
+            SettingsLoader.JSON_MAPPING,
+            strict=True,
+        )
 
 
 class _EnvironmentSettingsSource:
@@ -158,7 +162,7 @@ class SettingsLoader:
         if resolved_config_path and os.path.exists(resolved_config_path):
             try:
                 settings = cls._merge(settings, _JSONSettingsSource.load(resolved_config_path))
-            except (OSError, json.JSONDecodeError, ValueError) as exc:
+            except (OSError, json.JSONDecodeError) as exc:
                 logging.warning(
                     "Failed to load config from %s: %s",
                     resolved_config_path,
@@ -179,17 +183,21 @@ class SettingsLoader:
         cls,
         source: RawSettingsMap,
         mapping: dict[str, str],
+        *,
+        strict: bool = False,
     ) -> SettingsInitKwargs:
         mapped: SettingsInitKwargs = {}
         for source_name, attr_name in mapping.items():
             if source_name not in source:
                 continue
             value = source[source_name]
+            assigned = False
             if value is None or isinstance(value, (str, int, float, bool, tuple)):
-                cls._assign_mapped_value(mapped, attr_name, value)
-                continue
-            if isinstance(value, list) and all(isinstance(item, str) for item in value):
-                cls._assign_mapped_value(mapped, attr_name, tuple(value))
+                assigned = cls._assign_mapped_value(mapped, attr_name, value)
+            elif isinstance(value, list) and all(isinstance(item, str) for item in value):
+                assigned = cls._assign_mapped_value(mapped, attr_name, tuple(value))
+            if strict and not assigned:
+                raise ValueError(f"Invalid value for {source_name}")
         return mapped
 
     @classmethod
@@ -241,18 +249,18 @@ class SettingsLoader:
         mapped: SettingsInitKwargs,
         attr_name: str,
         value: str | int | float | bool | tuple[str, ...] | None,
-    ) -> None:
+    ) -> bool:
         if SettingsLoader._assign_optional_string(mapped, attr_name, value):
-            return
+            return True
         if SettingsLoader._assign_string(mapped, attr_name, value):
-            return
+            return True
         if SettingsLoader._assign_int(mapped, attr_name, value):
-            return
+            return True
         if SettingsLoader._assign_float(mapped, attr_name, value):
-            return
+            return True
         if SettingsLoader._assign_string_tuple(mapped, attr_name, value):
-            return
-        SettingsLoader._assign_bool(mapped, attr_name, value)
+            return True
+        return SettingsLoader._assign_bool(mapped, attr_name, value)
 
     @staticmethod
     def _assign_optional_string(

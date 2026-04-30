@@ -485,7 +485,7 @@ def test_settings_from_json_all_fields() -> None:
 
 
 @pytest.mark.unit
-def test_settings_from_json_ignores_non_string_sensitive_values(tmp_path: Path) -> None:
+def test_settings_from_json_rejects_non_string_sensitive_values(tmp_path: Path) -> None:
     config_path = tmp_path / "config.json"
     config_path.write_text(
         json.dumps(
@@ -496,10 +496,33 @@ def test_settings_from_json_ignores_non_string_sensitive_values(tmp_path: Path) 
         )
     )
 
-    settings = SettingsLoader.from_json(str(config_path))
+    with pytest.raises(ValueError, match="Invalid value for virustotal_api_key"):
+        SettingsLoader.from_json(str(config_path))
 
-    assert settings.virustotal_api_key is None
-    assert settings.user_agent is None
+
+@pytest.mark.unit
+def test_settings_from_json_rejects_fractional_integer_values(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "http_max_retries": 1.5,
+                "malicious_threshold": 5.5,
+            }
+        )
+    )
+
+    with pytest.raises(ValueError, match="Invalid value for http_max_retries"):
+        SettingsLoader.from_json(str(config_path))
+
+
+@pytest.mark.unit
+def test_settings_load_rejects_fractional_integer_values(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps({"http_max_retries": 1.5}))
+
+    with pytest.raises(ValueError, match="Invalid value for http_max_retries"):
+        SettingsLoader.load(config_path=str(config_path))
 
 
 @pytest.mark.unit
