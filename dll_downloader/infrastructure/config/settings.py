@@ -54,6 +54,8 @@ def _validate_bool(value: object, field_name: str) -> None:
 def _validate_string(value: object, field_name: str) -> None:
     if not isinstance(value, str):
         raise ValueError(f"{field_name} must be a string")
+    if not value.strip():
+        raise ValueError(f"{field_name} must be a non-empty string")
 
 
 def _validate_log_level(value: object) -> None:
@@ -65,8 +67,12 @@ def _validate_log_level(value: object) -> None:
 
 
 def _validate_optional_string(value: object, field_name: str) -> None:
-    if value is not None and not isinstance(value, str):
+    if value is None:
+        return
+    if not isinstance(value, str):
         raise ValueError(f"{field_name} must be a string or null")
+    if not value.strip():
+        raise ValueError(f"{field_name} must be a non-empty string or null")
 
 
 def _validate_user_agent_pool(value: object) -> None:

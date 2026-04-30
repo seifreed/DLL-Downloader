@@ -16,6 +16,7 @@ from .html_link_extractor import extract_links, extract_links_with_positions
 
 _SECTION_END = "</section>"
 _SUPPORTED_DOWNLOAD_ARCHITECTURES = {Architecture.X86, Architecture.X64}
+DownloadLinkCandidate = tuple[str, str, str]
 
 
 class DllFilesResolverError(DownloadResolutionError):
@@ -69,11 +70,7 @@ class DllFilesResolver:
         return None
 
     def _extract_download_link(self, html: str, architecture: Architecture) -> str | None:
-        candidates = [
-            (href, self._extract_link_context_at(html, position, text))
-            for href, text, position in self._iter_links_with_positions(html)
-            if self._is_valid_download_link(href)
-        ]
+        candidates = self._download_link_candidates(html)
         if not candidates:
             return None
 
@@ -83,24 +80,79 @@ class DllFilesResolver:
         if architecture not in _SUPPORTED_DOWNLOAD_ARCHITECTURES:
             return None
 
-        for href, context in candidates:
-            if self._context_matches_architecture(context, architecture):
-                return href
+        matched_link = self._candidate_link_text_match(candidates, architecture)
+        if matched_link:
+            return matched_link
 
-        for href, context in candidates:
-            if self._context_architecture(context) is not None:
-                continue
-            if self._href_matches_architecture(href, architecture):
-                return href
+        matched_context = self._candidate_context_match(candidates, architecture)
+        if matched_context:
+            return matched_context
 
-        has_architecture_hints = any(
-            self._context_has_architecture_hint(context)
-            for _, context in candidates
-        )
-        if architecture == Architecture.X64 and not has_architecture_hints:
+        matched_href = self._candidate_href_match(candidates, architecture)
+        if matched_href:
+            return matched_href
+
+        if architecture == Architecture.X64 and not self._candidates_have_architecture_hints(
+            candidates
+        ):
             return candidates[0][0]
 
         return None
+
+    def _download_link_candidates(self, html: str) -> list[DownloadLinkCandidate]:
+        return [
+            (href, text, self._extract_link_context_at(html, position, text))
+            for href, text, position in self._iter_links_with_positions(html)
+            if self._is_valid_download_link(href)
+        ]
+
+    def _candidate_link_text_match(
+        self,
+        candidates: list[DownloadLinkCandidate],
+        architecture: Architecture,
+    ) -> str | None:
+        for href, link_text, _context in candidates:
+            if self._context_matches_architecture(link_text, architecture):
+                return href
+        return None
+
+    def _candidate_context_match(
+        self,
+        candidates: list[DownloadLinkCandidate],
+        architecture: Architecture,
+    ) -> str | None:
+        for href, _link_text, context in candidates:
+            if self._context_matches_architecture(context, architecture):
+                return href
+        return None
+
+    def _candidate_href_match(
+        self,
+        candidates: list[DownloadLinkCandidate],
+        architecture: Architecture,
+    ) -> str | None:
+        for href, link_text, context in candidates:
+            if self._candidate_has_architecture(link_text, context):
+                continue
+            if self._href_matches_architecture(href, architecture):
+                return href
+        return None
+
+    def _candidate_has_architecture(self, link_text: str, context: str) -> bool:
+        return (
+            self._context_architecture(link_text) is not None
+            or self._context_architecture(context) is not None
+        )
+
+    def _candidates_have_architecture_hints(
+        self,
+        candidates: list[DownloadLinkCandidate],
+    ) -> bool:
+        return any(
+            self._context_has_architecture_hint(link_text)
+            or self._context_has_architecture_hint(context)
+            for _, link_text, context in candidates
+        )
 
     def _extract_link_context(self, html: str, href: str, link_text: str) -> str:
         position = html.find(href)

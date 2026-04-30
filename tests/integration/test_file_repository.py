@@ -1232,6 +1232,22 @@ def test_find_file_on_disk_without_index_entry(
     assert found.file_hash == hashlib.sha256(content).hexdigest()
 
 
+def test_list_all_includes_valid_fallback_payload_without_index(
+    repository: FileSystemDLLRepository,
+    tmp_path: Path,
+) -> None:
+    dll_path = tmp_path / "x64" / "orphaned.dll"
+    content = _build_pe_payload()
+    dll_path.write_bytes(content)
+
+    all_dlls = repository.list_all()
+
+    assert len(all_dlls) == 1
+    assert all_dlls[0].name == "orphaned.dll"
+    assert all_dlls[0].architecture == Architecture.X64
+    assert all_dlls[0].file_hash == hashlib.sha256(content).hexdigest()
+
+
 def test_find_by_name_ignores_fallback_payload_without_mz_signature(
     repository: FileSystemDLLRepository,
     tmp_path: Path,
@@ -1689,7 +1705,8 @@ def test_list_all_rejects_mismatched_index_payload_path(
     del index_data["files"]["x64/other.dll"]
     index_path.write_text(json.dumps(index_data))
 
-    assert repository.list_all() == []
+    listed_names = [dll.name for dll in repository.list_all()]
+    assert listed_names == ["other.dll"]
 
 
 def test_list_all_rejects_payload_that_disappears_during_validation(
@@ -1800,7 +1817,9 @@ def test_index_symlink_is_not_loaded(
         assert found is not None
         assert found.download_url is None
         assert repository.find_by_hash(file_hash) is None
-        assert repository.list_all() == []
+        listed = repository.list_all()
+        assert [dll.name for dll in listed] == ["external-index.dll"]
+        assert listed[0].download_url is None
     finally:
         index_path.unlink(missing_ok=True)
         external_index.unlink(missing_ok=True)

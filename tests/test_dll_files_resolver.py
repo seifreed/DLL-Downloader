@@ -306,6 +306,27 @@ def test_extract_download_link_uses_section_context_for_architecture() -> None:
 
 
 @pytest.mark.unit
+def test_extract_download_link_uses_link_text_for_sibling_architecture_links() -> None:
+    resolver = DllFilesResolver(
+        http_client=StubTextHTTPClient({}),
+        base_url="http://example.com",
+    )
+    html = """
+    <section>
+      <a href="/download/aaa/file.dll.html">Download 64-bit</a>
+      <a href="/download/bbb/file.dll.html">Download 32-bit</a>
+    </section>
+    """
+
+    assert resolver._extract_download_link(html, Architecture.X64) == (
+        "/download/aaa/file.dll.html"
+    )
+    assert resolver._extract_download_link(html, Architecture.X86) == (
+        "/download/bbb/file.dll.html"
+    )
+
+
+@pytest.mark.unit
 def test_extract_download_link_does_not_use_compatibility_text_as_architecture() -> None:
     resolver = DllFilesResolver(
         http_client=StubTextHTTPClient({}),

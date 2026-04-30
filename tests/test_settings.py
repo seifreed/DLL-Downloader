@@ -1215,6 +1215,63 @@ def test_settings_validate_empty_user_agent_pool_raises_error() -> None:
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize(
+    ("settings", "field_name"),
+    [
+        (Settings(download_directory=""), "download_directory"),
+        (Settings(download_directory="   "), "download_directory"),
+        (Settings(download_base_url=""), "download_base_url"),
+        (Settings(download_base_url="   "), "download_base_url"),
+    ],
+)
+def test_settings_validate_rejects_blank_required_strings(
+    settings: Settings,
+    field_name: str,
+) -> None:
+    with pytest.raises(ValueError, match=f"{field_name} must be a non-empty string"):
+        settings.validate()
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("settings", "field_name"),
+    [
+        (Settings(virustotal_api_key=""), "virustotal_api_key"),
+        (Settings(virustotal_api_key="   "), "virustotal_api_key"),
+        (Settings(user_agent=""), "user_agent"),
+        (Settings(user_agent="   "), "user_agent"),
+    ],
+)
+def test_settings_validate_rejects_blank_optional_strings(
+    settings: Settings,
+    field_name: str,
+) -> None:
+    with pytest.raises(ValueError, match=f"{field_name} must be a non-empty string"):
+        settings.validate()
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "field_name",
+    [
+        "download_directory",
+        "download_base_url",
+        "virustotal_api_key",
+        "user_agent",
+    ],
+)
+def test_settings_from_json_rejects_blank_string_values(
+    tmp_path: Path,
+    field_name: str,
+) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps({field_name: ""}))
+
+    with pytest.raises(ValueError, match=f"{field_name} must be a non-empty string"):
+        SettingsLoader.from_json(str(config_path))
+
+
+@pytest.mark.unit
 def test_settings_validate_rejects_unknown_log_level() -> None:
     settings = Settings(log_level="DEBIG")
 

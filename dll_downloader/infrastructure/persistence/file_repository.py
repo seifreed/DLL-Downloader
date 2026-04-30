@@ -768,11 +768,63 @@ class FileSystemDLLRepository(IDLLRepository):
         """
         index = self._load_index()
         dll_files: list[DLLFile] = []
+        indexed_keys = {
+            *self._load_raw_index_keys(),
+            *(key.lower() for key in index["files"]),
+        }
+        returned_keys: set[str] = set()
         for data in index["files"].values():
             indexed_dll = self._try_deserialize_dll(data)
             if indexed_dll and self._indexed_payload_is_valid(indexed_dll):
                 dll_files.append(indexed_dll)
+                returned_keys.add(
+                    self._get_file_key(indexed_dll.name, indexed_dll.architecture)
+                )
+        dll_files.extend(self._list_fallback_payloads(indexed_keys | returned_keys))
         return dll_files
+
+    def _list_fallback_payloads(self, blocked_keys: set[str]) -> list[DLLFile]:
+        """List valid orphaned disk payloads that are not represented in the index."""
+        dll_files: list[DLLFile] = []
+        for arch in self._iter_architectures(None):
+            arch_dir = self._base_path / arch.value
+            if arch_dir.is_symlink() or not arch_dir.is_dir():
+                continue
+            for file_path in arch_dir.iterdir():
+                if file_path.suffix.lower() != ".dll":
+                    continue
+                key = self._get_file_key(file_path.name, arch)
+                if key in blocked_keys:
+                    continue
+                fallback_path = self._validated_fallback_payload_path(file_path, arch)
+                if fallback_path is None:
+                    continue
+                dll_files.append(
+                    self._create_dll_from_file(fallback_path, file_path.name, arch)
+                )
+                blocked_keys.add(key)
+        return dll_files
+
+    def _load_raw_index_keys(self) -> set[str]:
+        """Return raw index keys so corrupt metadata still blocks disk fallback."""
+        if (
+            self._index_path.is_symlink()
+            or not self._index_path.exists()
+            or not self._index_path.is_file()
+        ):
+            return set()
+
+        try:
+            with open(self._index_path) as f:
+                raw_data = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            return set()
+        if not isinstance(raw_data, dict):
+            return set()
+        raw_files = raw_data.get("files", {})
+        if not isinstance(raw_files, dict):
+            return set()
+        return {str(key).lower() for key in raw_files}
 
     def delete(self, dll_file: DLLFile) -> bool:
         """

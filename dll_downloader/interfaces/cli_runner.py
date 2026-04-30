@@ -227,7 +227,10 @@ class CLIApplicationService:
             scan_enabled=(
                 not getattr(args, "no_scan", False)
                 and settings.scan_before_save
-                and settings.virustotal_api_key is not None
+                and bool(
+                    settings.virustotal_api_key
+                    and settings.virustotal_api_key.strip()
+                )
             ),
             force_download=getattr(args, "force", False),
             extract_archive=getattr(args, "extract", False),
