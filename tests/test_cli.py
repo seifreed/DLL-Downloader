@@ -11,10 +11,12 @@ execution and temporary files.
 """
 
 import argparse
+import io
 import json
 import os
 import sys
 import tempfile
+import zipfile
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -33,6 +35,7 @@ from dll_downloader.domain.entities.dll_file import (
     SecurityStatus,
     normalize_dll_name,
 )
+from dll_downloader.domain.services import calculate_sha256
 from dll_downloader.interfaces.cli import (
     format_response,
     get_architecture,
@@ -150,19 +153,26 @@ def _build_cached_pe_payload(marker: bytes = b"") -> bytes:
     return bytes(payload) + raw_data
 
 
+def _build_cached_zip_payload(dll_name: str, marker: bytes = b"") -> bytes:
+    archive_buffer = io.BytesIO()
+    with zipfile.ZipFile(archive_buffer, "w") as archive:
+        archive.writestr(dll_name, _build_cached_pe_payload(marker))
+    return archive_buffer.getvalue()
+
+
 def _seed_cached_dll(repo_dir: Path, dll_names: list[str]) -> None:
     (repo_dir / "x64").mkdir(parents=True, exist_ok=True)
     index_data: dict[str, dict[str, object]] = {}
     for dll_name in dll_names:
         normalized_name = normalize_dll_name(dll_name)
         file_path = repo_dir / "x64" / normalized_name
-        content = _build_cached_pe_payload(normalized_name.encode())
+        content = _build_cached_zip_payload(normalized_name, normalized_name.encode())
         file_path.write_bytes(content)
         index_data[f"x64/{normalized_name.lower()}"] = {
             "name": normalized_name,
             "version": None,
             "architecture": "x64",
-            "file_hash": None,
+            "file_hash": calculate_sha256(content),
             "file_path": str(file_path),
             "download_url": None,
             "file_size": len(content),
@@ -1567,6 +1577,7 @@ def test_main_json_ignores_unreadable_config_and_keeps_contract(
             "test.dll",
             "--output-dir",
             str(repo_dir),
+            "--no-scan",
             "--json",
         ]
     ):
@@ -1718,7 +1729,11 @@ def test_main_loads_settings_when_none(tmp_path: Path) -> None:
     repo_dir = tmp_path / "downloads"
     config_path = tmp_path / ".config.json"
     _seed_cached_dll(repo_dir, ["test.dll"])
-    config_path.write_text(json.dumps({"download_directory": str(repo_dir)}))
+    config_path.write_text(
+        json.dumps({"download_directory": str(repo_dir), "scan_before_save": False})
+    )
 
-    with _temporary_cwd(tmp_path), _temporary_argv(["dll-downloader.py", "test.dll"]):
+    with _temporary_cwd(tmp_path), _temporary_argv(
+        ["dll-downloader.py", "test.dll", "--no-scan"]
+    ):
         assert main(None) == 0

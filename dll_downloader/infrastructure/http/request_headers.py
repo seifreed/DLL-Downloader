@@ -20,6 +20,6 @@ class RequestHeaderBuilder:
     def build(self, headers: Mapping[str, str] | None = None) -> dict[str, str] | None:
         """Merge caller headers with a selected User-Agent."""
         request_headers = dict(headers) if headers else {}
-        if "User-Agent" not in request_headers:
+        if not any(header.lower() == "user-agent" for header in request_headers):
             request_headers["User-Agent"] = self._user_agent_provider.next_user_agent()
         return request_headers or None

@@ -1524,6 +1524,15 @@ def test_request_header_builder_keeps_explicit_user_agent() -> None:
 
 
 @pytest.mark.unit
+def test_request_header_builder_keeps_case_variant_user_agent() -> None:
+    builder = RequestHeaderBuilder(SequenceUserAgentProvider(["ua-1"]))
+
+    headers = builder.build({"user-agent": "fixed"})
+
+    assert headers == {"user-agent": "fixed"}
+
+
+@pytest.mark.unit
 def test_retry_policy_delay_includes_backoff_and_jitter() -> None:
     policy = RetryPolicy(
         max_attempts=5,

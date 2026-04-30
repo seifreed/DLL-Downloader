@@ -40,6 +40,7 @@ from dll_downloader.domain.errors import (
     SecurityServiceError,
 )
 from dll_downloader.domain.repositories.dll_repository import IDLLRepository
+from dll_downloader.domain.services import calculate_sha256
 from dll_downloader.domain.services.http_client import HTTPFileInfo, IHTTPClient
 from dll_downloader.domain.services.security_scanner import (
     ISecurityScanner,
@@ -1016,6 +1017,46 @@ def test_download_dll_use_case_extract_request_bypasses_cached_zip() -> None:
 
 
 @pytest.mark.unit
+def test_download_dll_use_case_non_extract_request_bypasses_extracted_cache(
+    tmp_path: Path,
+) -> None:
+    repository = InMemoryRepository()
+    http_client = StubHTTPClient()
+    extracted_path = tmp_path / "test.dll"
+    extracted_path.write_bytes(_build_pe_payload(Architecture.X64, b"extracted"))
+    repository._storage[repository._make_key("test.dll", Architecture.X64)] = DLLFile(
+        name="test.dll",
+        architecture=Architecture.X64,
+        file_path=str(extracted_path),
+    )
+    zip_bytes = _build_zip_payload(
+        "test.dll",
+        _build_pe_payload(Architecture.X64, b"zip-cache-contract"),
+    )
+    http_client.add_response("https://dll.website/download/x64/test.dll", zip_bytes)
+
+    use_case = DownloadDLLUseCase(
+        repository=repository,
+        http_client=http_client,
+        download_base_url="https://dll.website/download",
+    )
+
+    response = use_case.execute(
+        DownloadDLLRequest(
+            dll_name="test.dll",
+            architecture=Architecture.X64,
+            scan_before_save=False,
+            extract_archive=False,
+        )
+    )
+
+    assert response.success is True
+    assert response.was_cached is False
+    dll_file = _require_dll_file(response.dll_file)
+    assert repository.get_content(dll_file) == zip_bytes
+
+
+@pytest.mark.unit
 def test_download_dll_use_case_redownloads_invalid_file_backed_cache(
     tmp_path: Path,
 ) -> None:
@@ -1695,9 +1736,10 @@ def test_download_dll_use_case_returns_cached_file(tmp_path: Path) -> None:
         - Response indicates file was cached
     """
     repository = InMemoryRepository()
-    http_client = StubHTTPClient()
     cache_path = tmp_path / "cached.dll"
-    cache_path.write_bytes(_build_pe_payload(Architecture.X64))
+    cache_path.write_bytes(
+        _build_zip_payload("cached.dll", _build_pe_payload(Architecture.X64))
+    )
 
     # Pre-populate repository
     existing_dll = DLLFile(
@@ -1710,7 +1752,7 @@ def test_download_dll_use_case_returns_cached_file(tmp_path: Path) -> None:
 
     use_case = DownloadDLLUseCase(
         repository=repository,
-        http_client=http_client,
+        http_client=NoDownloadHTTPClient(),
         download_base_url="https://dll.website/download"
     )
 
@@ -1725,6 +1767,130 @@ def test_download_dll_use_case_returns_cached_file(tmp_path: Path) -> None:
     assert response.success is True
     assert response.was_cached is True
     assert _require_dll_file(response.dll_file).file_hash == "abc123"
+
+
+@pytest.mark.unit
+def test_download_dll_use_case_warns_for_cached_malicious_dll(
+    tmp_path: Path,
+) -> None:
+    repository = InMemoryRepository()
+    cache_path = tmp_path / "bad.dll"
+    cache_payload = _build_zip_payload("bad.dll", _build_pe_payload(Architecture.X64))
+    cache_path.write_bytes(cache_payload)
+    repository._storage[repository._make_key("bad.dll", Architecture.X64)] = DLLFile(
+        name="bad.dll",
+        architecture=Architecture.X64,
+        file_hash=calculate_sha256(cache_payload),
+        file_path=str(cache_path),
+        security_status=SecurityStatus.MALICIOUS,
+        vt_detection_ratio="7/70",
+    )
+
+    use_case = DownloadDLLUseCase(
+        repository=repository,
+        http_client=NoDownloadHTTPClient(),
+        download_base_url="https://dll.website/download",
+    )
+
+    response = use_case.execute(
+        DownloadDLLRequest(
+            dll_name="bad.dll",
+            architecture=Architecture.X64,
+            scan_before_save=True,
+        )
+    )
+
+    assert response.success is True
+    assert response.was_cached is True
+    assert response.security_warning is not None
+    assert "WARNING" in response.security_warning
+    assert "7/70" in response.security_warning
+
+
+@pytest.mark.unit
+def test_download_dll_use_case_scans_cached_dll_when_requested(
+    tmp_path: Path,
+) -> None:
+    repository = InMemoryRepository()
+    scanner = StubSecurityScanner()
+    cache_path = tmp_path / "cachedscan.dll"
+    cache_payload = _build_zip_payload(
+        "cachedscan.dll",
+        _build_pe_payload(Architecture.X64),
+    )
+    cache_path.write_bytes(cache_payload)
+    file_hash = calculate_sha256(cache_payload)
+    scanner.configure_result(file_hash, SecurityStatus.SUSPICIOUS, "3/72")
+    repository._storage[
+        repository._make_key("cachedscan.dll", Architecture.X64)
+    ] = DLLFile(
+        name="cachedscan.dll",
+        architecture=Architecture.X64,
+        file_hash=file_hash,
+        file_path=str(cache_path),
+        security_status=SecurityStatus.NOT_SCANNED,
+    )
+
+    use_case = DownloadDLLUseCase(
+        repository=repository,
+        http_client=NoDownloadHTTPClient(),
+        download_base_url="https://dll.website/download",
+        scanner=scanner,
+    )
+
+    response = use_case.execute(
+        DownloadDLLRequest(
+            dll_name="cachedscan.dll",
+            architecture=Architecture.X64,
+            scan_before_save=True,
+        )
+    )
+
+    assert response.success is True
+    assert response.was_cached is True
+    dll_file = _require_dll_file(response.dll_file)
+    assert dll_file.security_status == SecurityStatus.SUSPICIOUS
+    assert response.security_warning is not None
+    assert "CAUTION" in response.security_warning
+
+
+@pytest.mark.unit
+def test_download_dll_use_case_cached_scan_error_returns_failure(
+    tmp_path: Path,
+) -> None:
+    repository = InMemoryRepository()
+    cache_path = tmp_path / "scannerfail.dll"
+    cache_payload = _build_zip_payload(
+        "scannerfail.dll",
+        _build_pe_payload(Architecture.X64),
+    )
+    cache_path.write_bytes(cache_payload)
+    repository._storage[
+        repository._make_key("scannerfail.dll", Architecture.X64)
+    ] = DLLFile(
+        name="scannerfail.dll",
+        architecture=Architecture.X64,
+        file_hash=calculate_sha256(cache_payload),
+        file_path=str(cache_path),
+    )
+
+    use_case = DownloadDLLUseCase(
+        repository=repository,
+        http_client=NoDownloadHTTPClient(),
+        download_base_url="https://dll.website/download",
+        scanner=FailingSecurityScanner(),
+    )
+
+    response = use_case.execute(
+        DownloadDLLRequest(
+            dll_name="scannerfail.dll",
+            architecture=Architecture.X64,
+            scan_before_save=True,
+        )
+    )
+
+    assert response.success is False
+    assert response.error_message == "Download failed: scanner down"
 
 
 @pytest.mark.unit

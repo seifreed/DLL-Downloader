@@ -218,12 +218,35 @@ class DownloadDLLUseCase:
             if existing:
                 if not self._cached_payload_satisfies_request(existing, request):
                     return None
-                return DownloadDLLResponse(
-                    success=True,
-                    dll_file=existing,
-                    was_cached=True
-            )
+                return self._build_cached_response(existing, request)
         return None
+
+    def _build_cached_response(
+        self,
+        dll_file: DLLFile,
+        request: DownloadDLLRequest,
+    ) -> DownloadDLLResponse:
+        """Build a cache-hit response without bypassing security state."""
+        scanned_dll, security_warning = self._scan_cached_dll(
+            dll_file,
+            request.scan_before_save,
+        )
+        return DownloadDLLResponse(
+            success=True,
+            dll_file=scanned_dll,
+            was_cached=True,
+            security_warning=security_warning,
+        )
+
+    def _scan_cached_dll(
+        self,
+        dll_file: DLLFile,
+        should_scan: bool,
+    ) -> tuple[DLLFile, str | None]:
+        """Scan a cache hit when requested, otherwise preserve known warnings."""
+        if should_scan and self._scanner and self._scanner.is_available:
+            return self._scan_for_malware(dll_file, should_scan)
+        return dll_file, self._security_warning_for_status(dll_file)
 
     @classmethod
     def _cached_payload_satisfies_extract(
@@ -285,11 +308,7 @@ class DownloadDLLUseCase:
                 return False
             return True
 
-        try:
-            self._validate_dll_architecture(content, request.architecture)
-        except DownloadExecutionError:
-            return False
-        return True
+        return False
 
     def _normalize_request(self, request: DownloadDLLRequest) -> DownloadDLLRequest:
         """Normalize user-provided request values before touching dependencies."""
@@ -328,17 +347,22 @@ class DownloadDLLUseCase:
         }:
             raise DownloadExecutionError("Security scan did not complete")
 
-        if scanned_dll.security_status == SecurityStatus.MALICIOUS:
-            return scanned_dll, (
-                f"WARNING: VirusTotal detection ratio: {scanned_dll.vt_detection_ratio}. "
+        return scanned_dll, self._security_warning_for_status(scanned_dll)
+
+    @staticmethod
+    def _security_warning_for_status(dll_file: DLLFile) -> str | None:
+        """Return the user-facing warning for known risky scan statuses."""
+        if dll_file.security_status == SecurityStatus.MALICIOUS:
+            return (
+                f"WARNING: VirusTotal detection ratio: {dll_file.vt_detection_ratio}. "
                 "This file may be malicious!"
             )
-        elif scanned_dll.security_status == SecurityStatus.SUSPICIOUS:
-            return scanned_dll, (
-                f"CAUTION: VirusTotal detection ratio: {scanned_dll.vt_detection_ratio}. "
+        if dll_file.security_status == SecurityStatus.SUSPICIOUS:
+            return (
+                f"CAUTION: VirusTotal detection ratio: {dll_file.vt_detection_ratio}. "
                 "Some engines flagged this file."
             )
-        return scanned_dll, None
+        return None
 
     def _build_download_url(self, dll_name: str, architecture: Architecture) -> str:
         """
