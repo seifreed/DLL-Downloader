@@ -485,6 +485,16 @@ def test_apply_logging_settings_keeps_debug_override() -> None:
         logging.getLogger().setLevel(original_level)
 
 
+@pytest.mark.unit
+def test_apply_logging_settings_rejects_unknown_level() -> None:
+    original_level = logging.getLogger().level
+    try:
+        with pytest.raises(ValueError, match="Unsupported log level: DEBIG"):
+            apply_logging_settings(Settings(log_level="DEBIG"), debug_enabled=False)
+    finally:
+        logging.getLogger().setLevel(original_level)
+
+
 # ============================================================================
 # DLL List File Reading Tests
 # ============================================================================

@@ -361,6 +361,76 @@ def test_extract_download_link_context_overrides_incidental_href_architecture() 
 
 
 @pytest.mark.unit
+def test_extract_download_link_uses_actual_anchor_when_href_is_repeated() -> None:
+    resolver = DllFilesResolver(
+        http_client=StubTextHTTPClient({}),
+        base_url="http://example.com",
+    )
+    html = """
+    <section>
+      <p>Cached path: /download/x86/file.dll.html</p>
+      <p>Architecture: 64-bit</p>
+    </section>
+    <section>
+      <p>Architecture: 32-bit</p>
+      <a href="/download/x86/file.dll.html">Download 32-bit</a>
+    </section>
+    <section>
+      <p>Architecture: 64-bit</p>
+      <a href="/download/x64/file.dll.html">Download 64-bit</a>
+    </section>
+    """
+
+    assert resolver._extract_download_link(html, Architecture.X86) == (
+        "/download/x86/file.dll.html"
+    )
+    assert resolver._extract_download_link(html, Architecture.X64) == (
+        "/download/x64/file.dll.html"
+    )
+
+
+@pytest.mark.unit
+def test_extract_download_link_falls_back_to_x86_href_when_context_is_ambiguous() -> None:
+    resolver = DllFilesResolver(
+        http_client=StubTextHTTPClient({}),
+        base_url="http://example.com",
+    )
+    html = '<a href="/download/x86/file.dll.html">Download</a>'
+
+    assert resolver._extract_download_link(html, Architecture.X86) == (
+        "/download/x86/file.dll.html"
+    )
+
+
+@pytest.mark.unit
+def test_context_architecture_rejects_conflicting_explicit_architectures() -> None:
+    resolver = DllFilesResolver(
+        http_client=StubTextHTTPClient({}),
+        base_url="http://example.com",
+    )
+    context = "<p>Architecture: 64-bit</p><p>Architecture: 32-bit</p>"
+
+    assert resolver._context_architecture(context) is None
+
+
+@pytest.mark.unit
+def test_href_matches_architecture_handles_x86_and_unknown_values() -> None:
+    resolver = DllFilesResolver(
+        http_client=StubTextHTTPClient({}),
+        base_url="http://example.com",
+    )
+
+    assert resolver._href_matches_architecture(
+        "/download/x86/file.dll.html",
+        Architecture.X86,
+    )
+    assert not resolver._href_matches_architecture(
+        "/download/arm/file.dll.html",
+        Architecture.ARM,
+    )
+
+
+@pytest.mark.unit
 def test_extract_download_link_does_not_fallback_to_x64_for_x86_request() -> None:
     resolver = DllFilesResolver(
         http_client=StubTextHTTPClient({}),

@@ -12,7 +12,7 @@ from urllib.parse import urljoin, urlparse
 from ...domain.entities.dll_file import Architecture, normalize_dll_name
 from ...domain.errors import DownloadResolutionError, HTTPServiceError
 from ...domain.services.http_client import ITextHTTPClient
-from .html_link_extractor import extract_links
+from .html_link_extractor import extract_links, extract_links_with_positions
 
 _SECTION_END = "</section>"
 _SUPPORTED_DOWNLOAD_ARCHITECTURES = {Architecture.X86, Architecture.X64}
@@ -70,8 +70,8 @@ class DllFilesResolver:
 
     def _extract_download_link(self, html: str, architecture: Architecture) -> str | None:
         candidates = [
-            (href, self._extract_link_context(html, href, text))
-            for href, text in self._iter_links(html)
+            (href, self._extract_link_context_at(html, position, text))
+            for href, text, position in self._iter_links_with_positions(html)
             if self._is_valid_download_link(href)
         ]
         if not candidates:
@@ -104,6 +104,14 @@ class DllFilesResolver:
 
     def _extract_link_context(self, html: str, href: str, link_text: str) -> str:
         position = html.find(href)
+        return self._extract_link_context_at(html, position, link_text)
+
+    def _extract_link_context_at(
+        self,
+        html: str,
+        position: int,
+        link_text: str,
+    ) -> str:
         if position == -1:
             return link_text
 
@@ -221,3 +229,6 @@ class DllFilesResolver:
 
     def _iter_links(self, html: str) -> list[tuple[str, str]]:
         return extract_links(html)
+
+    def _iter_links_with_positions(self, html: str) -> list[tuple[str, str, int]]:
+        return extract_links_with_positions(html)

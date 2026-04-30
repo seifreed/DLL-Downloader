@@ -6,6 +6,10 @@ from dataclasses import dataclass, field
 from math import isfinite
 from pathlib import Path
 
+_VALID_LOG_LEVELS = frozenset(
+    {"CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG", "NOTSET"}
+)
+
 
 def _validate_number(value: object, field_name: str) -> int | float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -50,6 +54,14 @@ def _validate_bool(value: object, field_name: str) -> None:
 def _validate_string(value: object, field_name: str) -> None:
     if not isinstance(value, str):
         raise ValueError(f"{field_name} must be a string")
+
+
+def _validate_log_level(value: object) -> None:
+    if not isinstance(value, str):
+        raise ValueError("log_level must be a string")
+    if value.upper() not in _VALID_LOG_LEVELS:
+        allowed = ", ".join(sorted(_VALID_LOG_LEVELS))
+        raise ValueError(f"log_level must be one of: {allowed}")
 
 
 def _validate_optional_string(value: object, field_name: str) -> None:
@@ -99,7 +111,7 @@ class Settings:
         _validate_user_agent_pool(self.user_agent_pool)
         _validate_bool(self.verify_ssl, "verify_ssl")
         _validate_bool(self.scan_before_save, "scan_before_save")
-        _validate_string(self.log_level, "log_level")
+        _validate_log_level(self.log_level)
 
         _validate_positive_integer(self.http_timeout, "http_timeout")
         _validate_positive_number(self.virustotal_timeout, "virustotal_timeout")

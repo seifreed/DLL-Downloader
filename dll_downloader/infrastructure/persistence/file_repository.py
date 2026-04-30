@@ -52,6 +52,17 @@ _ZIP_MEMBER_READ_ERRORS = (
     NotImplementedError,
     zipfile.BadZipFile,
 )
+_SHA256_HEX_LENGTH = 64
+_HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
+
+
+def _is_sha256_hash(value: object) -> bool:
+    """Return True when a value is a SHA-256 hex digest."""
+    return (
+        isinstance(value, str)
+        and len(value) == _SHA256_HEX_LENGTH
+        and all(character in _HEX_DIGITS for character in value)
+    )
 
 
 class IndexEntry(TypedDict):
@@ -711,16 +722,41 @@ class FileSystemDLLRepository(IDLLRepository):
         Returns:
             DLLFile if found, None otherwise
         """
+        if not _is_sha256_hash(file_hash):
+            return None
+
+        normalized_hash = file_hash.lower()
         index = self._load_index()
         for data in index["files"].values():
-            if data.get("file_hash") != file_hash:
+            if data.get("file_hash") != normalized_hash:
                 continue
             indexed_dll = self._try_deserialize_dll(data)
             if indexed_dll and self._indexed_payload_is_valid(
                 indexed_dll,
-                expected_hash=file_hash,
+                expected_hash=normalized_hash,
             ):
                 return indexed_dll
+        return self._find_fallback_by_hash(normalized_hash)
+
+    def _find_fallback_by_hash(self, file_hash: str) -> DLLFile | None:
+        """Find a valid orphaned repository payload by its actual content hash."""
+        for arch in self._iter_architectures(None):
+            arch_dir = self._base_path / arch.value
+            if arch_dir.is_symlink() or not arch_dir.is_dir():
+                continue
+            for file_path in arch_dir.iterdir():
+                if file_path.suffix.lower() != ".dll":
+                    continue
+                fallback_path = self._validated_fallback_payload_path(file_path, arch)
+                if fallback_path is None:
+                    continue
+                dll_file = self._create_dll_from_file(
+                    fallback_path,
+                    fallback_path.name,
+                    arch,
+                )
+                if dll_file.file_hash == file_hash:
+                    return dll_file
         return None
 
     def list_all(self) -> list[DLLFile]:
@@ -1060,7 +1096,11 @@ class FileSystemDLLRepository(IDLLRepository):
             logger.warning("Skipping DLL index entry with unreadable payload: %s", exc)
             return False
         actual_hash = calculate_sha256(content)
-        if dll_file.file_hash is not None and dll_file.file_hash != actual_hash:
+        indexed_hash = dll_file.file_hash
+        if not isinstance(indexed_hash, str) or not _is_sha256_hash(indexed_hash):
+            logger.warning("Skipping DLL index entry without valid hash: %s", file_path)
+            return False
+        if indexed_hash.lower() != actual_hash:
             logger.warning("Skipping DLL index entry with mismatched hash: %s", file_path)
             return False
         if expected_hash is not None and expected_hash != actual_hash:
@@ -1107,6 +1147,7 @@ class FileSystemDLLRepository(IDLLRepository):
         name = raw_entry.get("name")
         architecture = raw_entry.get("architecture", "unknown")
         security_status = raw_entry.get("security_status", "not_scanned")
+        file_hash = raw_entry.get("file_hash")
         file_size = raw_entry.get("file_size")
 
         if not isinstance(name, str):
@@ -1115,6 +1156,8 @@ class FileSystemDLLRepository(IDLLRepository):
             raise ValueError("Index entry 'architecture' must be a string")
         if not isinstance(security_status, str):
             raise ValueError("Index entry 'security_status' must be a string")
+        if not _is_sha256_hash(file_hash):
+            raise ValueError("Index entry 'file_hash' must be a SHA256 hex string")
         if file_size is not None and not isinstance(file_size, int):
             raise ValueError("Index entry 'file_size' must be an integer or null")
 
@@ -1124,9 +1167,7 @@ class FileSystemDLLRepository(IDLLRepository):
             if isinstance(raw_entry.get("version"), str)
             else None,
             "architecture": architecture,
-            "file_hash": raw_entry.get("file_hash")
-            if isinstance(raw_entry.get("file_hash"), str)
-            else None,
+            "file_hash": file_hash.lower() if isinstance(file_hash, str) else None,
             "file_path": raw_entry.get("file_path")
             if isinstance(raw_entry.get("file_path"), str)
             else None,

@@ -1250,6 +1250,68 @@ def test_cached_extract_payload_check_rejects_non_regular_path(
 
 
 @pytest.mark.unit
+def test_persist_cached_scan_result_without_path_returns_scanned_metadata() -> None:
+    use_case = DownloadDLLUseCase(
+        repository=InMemoryRepository(),
+        http_client=NoDownloadHTTPClient(),
+        download_base_url="https://dll.website/download",
+    )
+    cached_dll = DLLFile(name="cached.dll", architecture=Architecture.X64)
+    scanned_dll = replace(cached_dll, security_status=SecurityStatus.CLEAN)
+
+    assert use_case._persist_cached_scan_result(cached_dll, scanned_dll) is scanned_dll
+
+
+@pytest.mark.unit
+def test_persist_cached_scan_result_rejects_missing_payload(
+    tmp_path: Path,
+) -> None:
+    use_case = DownloadDLLUseCase(
+        repository=InMemoryRepository(),
+        http_client=NoDownloadHTTPClient(),
+        download_base_url="https://dll.website/download",
+    )
+    cached_dll = DLLFile(
+        name="missing.dll",
+        architecture=Architecture.X64,
+        file_path=str(tmp_path / "missing.dll"),
+    )
+    scanned_dll = replace(cached_dll, security_status=SecurityStatus.CLEAN)
+
+    with pytest.raises(DownloadExecutionError, match="Failed to read cached DLL"):
+        use_case._persist_cached_scan_result(cached_dll, scanned_dll)
+
+
+@pytest.mark.unit
+def test_cached_payload_request_rejects_missing_path_and_invalid_zip(
+    tmp_path: Path,
+) -> None:
+    use_case = DownloadDLLUseCase(
+        repository=InMemoryRepository(),
+        http_client=NoDownloadHTTPClient(),
+        download_base_url="https://dll.website/download",
+    )
+    request = DownloadDLLRequest(
+        "cached.dll",
+        Architecture.X64,
+        extract_archive=False,
+    )
+    no_path = DLLFile(name="cached.dll", architecture=Architecture.X64)
+    wrong_zip_path = tmp_path / "cached.dll"
+    wrong_zip_path.write_bytes(
+        _build_zip_payload("other.dll", _build_pe_payload(Architecture.X64))
+    )
+    wrong_zip = DLLFile(
+        name="cached.dll",
+        architecture=Architecture.X64,
+        file_path=str(wrong_zip_path),
+    )
+
+    assert not use_case._cached_payload_satisfies_request(no_path, request)
+    assert not use_case._cached_payload_satisfies_request(wrong_zip, request)
+
+
+@pytest.mark.unit
 def test_download_dll_use_case_rejects_zip_without_requested_dll_before_saving() -> None:
     repository = InMemoryRepository()
     http_client = StubHTTPClient()
@@ -1414,6 +1476,99 @@ def test_download_dll_use_case_rejects_pe_without_dll_characteristic() -> None:
     assert response.success is False
     assert response.error_message == "Download failed: Downloaded PE file is not a DLL"
     assert repository.list_all() == []
+
+
+@pytest.mark.unit
+def test_download_dll_use_case_rejects_empty_requested_zip_member() -> None:
+    archive_buffer = io.BytesIO()
+    with zipfile.ZipFile(archive_buffer, "w") as archive:
+        archive.writestr("empty.dll", b"")
+    use_case = DownloadDLLUseCase(
+        repository=InMemoryRepository(),
+        http_client=NoDownloadHTTPClient(),
+        download_base_url="https://dll.website/download",
+    )
+
+    with pytest.raises(DownloadExecutionError, match="Extracted DLL from ZIP archive is empty"):
+        use_case._extract_valid_dll_from_zip(
+            archive_buffer.getvalue(),
+            DownloadDLLRequest("empty.dll", Architecture.X64, extract_archive=True),
+        )
+
+
+@pytest.mark.unit
+def test_download_dll_use_case_pe_layout_rejects_invalid_boundaries() -> None:
+    def build_layout_probe(
+        *,
+        section_count: int = 1,
+        optional_header_size: int = 0xF0,
+        optional_magic: int = 0x20B,
+        total_size: int | None = None,
+    ) -> bytes:
+        section_table_offset = 20 + optional_header_size
+        payload_size = (
+            section_table_offset + 40
+            if total_size is None
+            else total_size
+        )
+        payload = bytearray(max(payload_size, 22))
+        payload[2:4] = section_count.to_bytes(2, "little")
+        payload[16:18] = optional_header_size.to_bytes(2, "little")
+        payload[20:22] = optional_magic.to_bytes(2, "little")
+        return bytes(payload[:payload_size])
+
+    assert not DownloadDLLUseCase._pe_image_layout_is_valid(
+        build_layout_probe(optional_header_size=0),
+        0,
+        Architecture.X64,
+    )
+    assert not DownloadDLLUseCase._pe_image_layout_is_valid(
+        build_layout_probe(total_size=40),
+        0,
+        Architecture.X64,
+    )
+    assert not DownloadDLLUseCase._pe_image_layout_is_valid(
+        build_layout_probe(optional_magic=0x10B),
+        0,
+        Architecture.X64,
+    )
+    assert not DownloadDLLUseCase._pe_image_layout_is_valid(
+        build_layout_probe(optional_header_size=2, total_size=22),
+        0,
+        Architecture.X64,
+    )
+
+
+@pytest.mark.unit
+def test_download_dll_use_case_loadable_section_edges() -> None:
+    section_table_offset = 0
+    blank_section = bytearray(40)
+    virtual_only_section = bytearray(40)
+    virtual_only_section[:5] = b".text"
+    virtual_only_section[8:12] = (1).to_bytes(4, "little")
+    virtual_only_section[12:16] = (0x1000).to_bytes(4, "little")
+    invalid_raw_section = bytearray(40)
+    invalid_raw_section[:5] = b".text"
+    invalid_raw_section[8:12] = (1).to_bytes(4, "little")
+    invalid_raw_section[12:16] = (0x1000).to_bytes(4, "little")
+    invalid_raw_section[16:20] = (4).to_bytes(4, "little")
+    invalid_raw_section[20:24] = (1).to_bytes(4, "little")
+
+    assert not DownloadDLLUseCase._has_loadable_section(
+        bytes(blank_section),
+        section_table_offset,
+        1,
+    )
+    assert DownloadDLLUseCase._has_loadable_section(
+        bytes(virtual_only_section),
+        section_table_offset,
+        1,
+    )
+    assert not DownloadDLLUseCase._has_loadable_section(
+        bytes(invalid_raw_section),
+        section_table_offset,
+        1,
+    )
 
 
 @pytest.mark.unit

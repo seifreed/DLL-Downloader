@@ -61,9 +61,10 @@ def apply_logging_settings(settings: Settings, debug_enabled: bool) -> None:
     if debug_enabled:
         logging.getLogger().setLevel(logging.DEBUG)
         return
-    logging.getLogger().setLevel(
-        _LOG_LEVELS.get(settings.log_level.upper(), logging.INFO)
-    )
+    level_name = settings.log_level.upper()
+    if level_name not in _LOG_LEVELS:
+        raise ValueError(f"Unsupported log level: {settings.log_level}")
+    logging.getLogger().setLevel(_LOG_LEVELS[level_name])
 
 
 def read_dll_list_from_file(file_path: str) -> list[str]:

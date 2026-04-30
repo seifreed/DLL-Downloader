@@ -111,6 +111,13 @@ def _build_pe_payload_with_blank_section(
     return bytes(payload)
 
 
+def _build_pe_payload_without_dll_flag() -> bytes:
+    payload = bytearray(_build_pe_payload(Architecture.X64))
+    pe_offset = int.from_bytes(payload[0x3C:0x40], "little")
+    payload[pe_offset + 22:pe_offset + 24] = (0).to_bytes(2, "little")
+    return bytes(payload)
+
+
 @pytest.fixture
 def repository(tmp_path: Path) -> FileSystemDLLRepository:
     """
@@ -1397,6 +1404,215 @@ def test_find_by_name_rejects_indexed_payload_that_is_not_a_dll(
     assert repository.find_by_name("bad.dll", Architecture.X64) is None
     assert repository.find_by_hash(hashlib.sha256(payload).hexdigest()) is None
     assert repository.list_all() == []
+
+
+def test_find_by_name_rebuilds_metadata_when_index_hash_is_invalid(
+    repository: FileSystemDLLRepository,
+    sample_dll_content: bytes,
+    tmp_path: Path,
+) -> None:
+    repository.save(
+        DLLFile(name="legacy.dll", architecture=Architecture.X64),
+        sample_dll_content,
+    )
+    index_path = tmp_path / ".dll_index.json"
+    index_data = json.loads(index_path.read_text())
+    entry = index_data["files"]["x64/legacy.dll"]
+    entry["file_hash"] = 123
+    entry["security_status"] = "clean"
+    entry["vt_detection_ratio"] = "0/72"
+    index_path.write_text(json.dumps(index_data))
+
+    found = repository.find_by_name("legacy.dll", Architecture.X64)
+
+    assert found is not None
+    assert found.file_hash == hashlib.sha256(sample_dll_content).hexdigest()
+    assert found.security_status == SecurityStatus.NOT_SCANNED
+    assert found.vt_detection_ratio is None
+
+
+def test_find_by_hash_uses_disk_fallback_when_index_hash_is_invalid(
+    repository: FileSystemDLLRepository,
+    sample_dll_content: bytes,
+    tmp_path: Path,
+) -> None:
+    repository.save(
+        DLLFile(name="legacy-hash.dll", architecture=Architecture.X64),
+        sample_dll_content,
+    )
+    expected_hash = hashlib.sha256(sample_dll_content).hexdigest()
+    index_path = tmp_path / ".dll_index.json"
+    index_data = json.loads(index_path.read_text())
+    index_data["files"]["x64/legacy-hash.dll"]["file_hash"] = None
+    index_path.write_text(json.dumps(index_data))
+    (tmp_path / "x64" / "note.txt").write_text("not a DLL")
+    (tmp_path / "x64" / "bad.dll").write_bytes(b"not a PE DLL")
+    outside_arch = tmp_path / "outside-x86"
+    outside_arch.mkdir()
+    x86_dir = tmp_path / "x86"
+    x86_dir.rmdir()
+    x86_dir.symlink_to(outside_arch, target_is_directory=True)
+
+    found = repository.find_by_hash(expected_hash)
+
+    assert found is not None
+    assert found.name == "legacy-hash.dll"
+    assert found.file_hash == expected_hash
+
+
+def test_find_by_hash_checks_next_index_entry_when_hash_differs(
+    repository: FileSystemDLLRepository,
+    sample_dll_content: bytes,
+) -> None:
+    repository.save(
+        DLLFile(name="first.dll", architecture=Architecture.X64),
+        sample_dll_content,
+    )
+    second = repository.save(
+        DLLFile(name="second.dll", architecture=Architecture.X64),
+        sample_dll_content + b"second",
+    )
+
+    found = repository.find_by_hash(_require_str(second.file_hash).upper())
+
+    assert found is not None
+    assert found.name == "second.dll"
+
+
+def test_indexed_payload_validation_rejects_expected_hash_mismatch_after_content_match(
+    repository: FileSystemDLLRepository,
+    sample_dll_content: bytes,
+) -> None:
+    saved = repository.save(
+        DLLFile(name="hash-mismatch.dll", architecture=Architecture.X64),
+        sample_dll_content,
+    )
+
+    assert not repository._indexed_payload_is_valid(
+        saved,
+        expected_hash="a" * 64,
+    )
+
+
+def test_invalid_index_file_size_is_skipped(
+    repository: FileSystemDLLRepository,
+    sample_dll_content: bytes,
+    tmp_path: Path,
+) -> None:
+    repository.save(
+        DLLFile(name="bad-size.dll", architecture=Architecture.X64),
+        sample_dll_content,
+    )
+    index_path = tmp_path / ".dll_index.json"
+    index_data = json.loads(index_path.read_text())
+    index_data["files"]["x64/bad-size.dll"]["file_size"] = "large"
+    index_path.write_text(json.dumps(index_data))
+
+    assert repository.list_all() == []
+
+
+def test_unknown_architecture_save_rejects_payload_without_detectable_architecture(
+    repository: FileSystemDLLRepository,
+) -> None:
+    with pytest.raises(RepositoryError, match="unknown-architecture payload"):
+        repository.save(
+            DLLFile(name="unknown.dll", architecture=Architecture.UNKNOWN),
+            b"not a DLL",
+        )
+
+
+def test_detect_zip_payload_architecture_skips_invalid_members() -> None:
+    archive_buffer = io.BytesIO()
+    with zipfile.ZipFile(archive_buffer, "w") as archive:
+        archive.writestr("folder/", "")
+        archive.writestr("other.dll", _build_pe_payload(Architecture.X64))
+        archive.writestr("target.dll", b"")
+        archive.writestr("nested/target.dll", b"not a PE DLL")
+        archive.writestr("x86/target.dll", _build_pe_payload(Architecture.X86))
+
+    assert FileSystemDLLRepository._detect_zip_payload_architecture(
+        "target.dll",
+        archive_buffer.getvalue(),
+        expected_architecture=Architecture.X64,
+    ) is None
+
+
+def test_detect_pe_dll_architecture_rejects_invalid_header_variants() -> None:
+    pe_offset = 0x80
+    unsupported_machine = bytearray(pe_offset + 24)
+    unsupported_machine[0:2] = b"MZ"
+    unsupported_machine[0x3C:0x40] = pe_offset.to_bytes(4, "little")
+    unsupported_machine[pe_offset:pe_offset + 4] = b"PE\x00\x00"
+    unsupported_machine[pe_offset + 4:pe_offset + 6] = (0x1234).to_bytes(2, "little")
+
+    assert FileSystemDLLRepository._detect_pe_dll_architecture(b"MZ" + b"\0" * 62) is None
+    assert FileSystemDLLRepository._detect_pe_dll_architecture(
+        bytes(unsupported_machine)
+    ) is None
+    assert FileSystemDLLRepository._detect_pe_dll_architecture(
+        _build_pe_header_stub(Architecture.X64)
+    ) is None
+    assert FileSystemDLLRepository._detect_pe_dll_architecture(
+        _build_pe_payload_without_dll_flag()
+    ) is None
+
+
+def test_pe_image_layout_rejects_invalid_boundaries() -> None:
+    def build_layout_probe(
+        *,
+        section_count: int = 1,
+        optional_header_size: int = 0xF0,
+        optional_magic: int = 0x20B,
+        total_size: int | None = None,
+    ) -> bytes:
+        section_table_offset = 20 + optional_header_size
+        payload_size = (
+            section_table_offset + 40
+            if total_size is None
+            else total_size
+        )
+        payload = bytearray(max(payload_size, 22))
+        payload[2:4] = section_count.to_bytes(2, "little")
+        payload[16:18] = optional_header_size.to_bytes(2, "little")
+        payload[20:22] = optional_magic.to_bytes(2, "little")
+        return bytes(payload[:payload_size])
+
+    assert not FileSystemDLLRepository._pe_image_layout_is_valid(
+        build_layout_probe(section_count=0),
+        0,
+        Architecture.X64,
+    )
+    assert not FileSystemDLLRepository._pe_image_layout_is_valid(
+        build_layout_probe(optional_header_size=0),
+        0,
+        Architecture.X64,
+    )
+    assert not FileSystemDLLRepository._pe_image_layout_is_valid(
+        build_layout_probe(total_size=40),
+        0,
+        Architecture.X64,
+    )
+    assert not FileSystemDLLRepository._pe_image_layout_is_valid(
+        build_layout_probe(optional_magic=0x10B),
+        0,
+        Architecture.X64,
+    )
+    assert not FileSystemDLLRepository._pe_image_layout_is_valid(
+        build_layout_probe(optional_header_size=2, total_size=22),
+        0,
+        Architecture.X64,
+    )
+
+
+def test_content_is_pe_dll_rejects_invalid_content_and_accepts_unknown_architecture() -> None:
+    assert not FileSystemDLLRepository._content_is_pe_dll(
+        b"not a PE DLL",
+        Architecture.X64,
+    )
+    assert FileSystemDLLRepository._content_is_pe_dll(
+        _build_pe_payload(Architecture.X64),
+        Architecture.UNKNOWN,
+    )
 
 
 def test_find_by_name_uses_zip_fallback_when_index_is_missing(

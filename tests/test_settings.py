@@ -1215,6 +1215,24 @@ def test_settings_validate_empty_user_agent_pool_raises_error() -> None:
 
 
 @pytest.mark.unit
+def test_settings_validate_rejects_unknown_log_level() -> None:
+    settings = Settings(log_level="DEBIG")
+
+    with pytest.raises(ValueError, match="log_level must be one of"):
+        settings.validate()
+
+
+@pytest.mark.unit
+def test_settings_loader_rejects_unknown_json_log_level() -> None:
+    with tempfile.TemporaryDirectory() as temp_dir:
+        config_path = Path(temp_dir) / "config.json"
+        config_path.write_text(json.dumps({"log_level": "DEBIG"}))
+
+        with pytest.raises(ValueError, match="log_level must be one of"):
+            SettingsLoader.from_json(str(config_path))
+
+
+@pytest.mark.unit
 def test_settings_validate_rejects_string_boolean_fields() -> None:
     verify_ssl_settings = Settings(verify_ssl=cast(bool, "false"))
     scan_settings = Settings(scan_before_save=cast(bool, "false"))
