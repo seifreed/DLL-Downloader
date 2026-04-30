@@ -233,6 +233,8 @@ class FileSystemDLLRepository(IDLLRepository):
             RepositoryError: If the save operation fails
         """
         try:
+            storage_architecture = self._storage_architecture_for_save(dll_file, content)
+            dll_file = replace(dll_file, architecture=storage_architecture)
             # Determine file path
             file_path = self._get_file_path(dll_file.name, dll_file.architecture)
             self._validate_payload_content(dll_file, content)
@@ -383,6 +385,24 @@ class FileSystemDLLRepository(IDLLRepository):
         )
 
     @classmethod
+    def _storage_architecture_for_save(
+        cls,
+        dll_file: DLLFile,
+        content: bytes,
+    ) -> Architecture:
+        """Return the concrete architecture used for repository storage."""
+        if dll_file.architecture != Architecture.UNKNOWN:
+            return dll_file.architecture
+
+        detected_architecture = cls._detect_payload_architecture(dll_file.name, content)
+        if detected_architecture is None:
+            raise RepositoryError(
+                "Refusing to save unknown-architecture payload without a valid "
+                "x86 or x64 DLL"
+            )
+        return detected_architecture
+
+    @classmethod
     def _content_matches_dll_payload(
         cls,
         dll_name: str,
@@ -390,13 +410,25 @@ class FileSystemDLLRepository(IDLLRepository):
         content: bytes,
     ) -> bool:
         """Return True for direct DLL bytes or a ZIP carrying the requested DLL."""
-        if cls._content_is_pe_dll(content, expected_architecture):
-            return True
-        return cls._zip_payload_contains_valid_dll(
-            dll_name,
-            expected_architecture,
-            content,
+        detected_architecture = cls._detect_payload_architecture(dll_name, content)
+        if detected_architecture is None:
+            return False
+        return (
+            expected_architecture == Architecture.UNKNOWN
+            or detected_architecture == expected_architecture
         )
+
+    @classmethod
+    def _detect_payload_architecture(
+        cls,
+        dll_name: str,
+        content: bytes,
+    ) -> Architecture | None:
+        """Detect the concrete architecture for direct DLL bytes or a DLL ZIP."""
+        direct_architecture = cls._detect_pe_dll_architecture(content)
+        if direct_architecture is not None:
+            return direct_architecture
+        return cls._detect_zip_payload_architecture(dll_name, content)
 
     @classmethod
     def _zip_payload_contains_valid_dll(
@@ -406,9 +438,25 @@ class FileSystemDLLRepository(IDLLRepository):
         content: bytes,
     ) -> bool:
         """Return True when ZIP content contains the requested PE DLL member."""
+        detected_architecture = cls._detect_zip_payload_architecture(dll_name, content)
+        return (
+            detected_architecture is not None
+            and (
+                expected_architecture == Architecture.UNKNOWN
+                or detected_architecture == expected_architecture
+            )
+        )
+
+    @classmethod
+    def _detect_zip_payload_architecture(
+        cls,
+        dll_name: str,
+        content: bytes,
+    ) -> Architecture | None:
+        """Return the architecture of the requested DLL member in a ZIP payload."""
         archive_buffer = BytesIO(content)
         if not zipfile.is_zipfile(archive_buffer):
-            return False
+            return None
 
         expected_name = dll_name.lower()
         try:
@@ -420,28 +468,25 @@ class FileSystemDLLRepository(IDLLRepository):
                     if member_name != expected_name:
                         continue
                     member_content = archive.read(member)
-                    return bool(member_content) and cls._content_is_pe_dll(
-                        member_content,
-                        expected_architecture,
-                    )
+                    if not member_content:
+                        return None
+                    return cls._detect_pe_dll_architecture(member_content)
         except (
             OSError,
             RuntimeError,
             NotImplementedError,
             zipfile.BadZipFile,
         ):
-            return False
-        return False
+            return None
+        return None
 
     @staticmethod
-    def _content_is_pe_dll(
-        content: bytes,
-        expected_architecture: Architecture,
-    ) -> bool:
+    def _detect_pe_dll_architecture(content: bytes) -> Architecture | None:
+        """Return the concrete architecture when content is a PE DLL."""
         if not content.startswith(b"MZ"):
-            return False
+            return None
         if len(content) < _PE_POINTER_OFFSET + 4:
-            return False
+            return None
 
         pe_offset = int.from_bytes(
             content[_PE_POINTER_OFFSET:_PE_POINTER_OFFSET + 4],
@@ -452,34 +497,56 @@ class FileSystemDLLRepository(IDLLRepository):
             len(content) < machine_offset + 2
             or content[pe_offset:machine_offset] != _PE_SIGNATURE
         ):
-            return False
+            return None
 
         machine = int.from_bytes(content[machine_offset:machine_offset + 2], "little")
         architecture = _PE_MACHINE_ARCHITECTURES.get(machine)
         if architecture is None:
-            return False
-        if (
-            expected_architecture != Architecture.UNKNOWN
-            and architecture != expected_architecture
-        ):
-            return False
+            return None
 
         characteristics_offset = machine_offset + _PE_CHARACTERISTICS_OFFSET_FROM_MACHINE
         if len(content) < characteristics_offset + 2:
-            return False
+            return None
         characteristics = int.from_bytes(
             content[characteristics_offset:characteristics_offset + 2],
             "little",
         )
-        return bool(characteristics & _PE_DLL_CHARACTERISTIC)
+        if characteristics & _PE_DLL_CHARACTERISTIC == 0:
+            return None
+        return architecture
+
+    @classmethod
+    def _content_is_pe_dll(
+        cls,
+        content: bytes,
+        expected_architecture: Architecture,
+    ) -> bool:
+        architecture = cls._detect_pe_dll_architecture(content)
+        if architecture is None:
+            return False
+        return (
+            expected_architecture == Architecture.UNKNOWN
+            or architecture == expected_architecture
+        )
 
     @staticmethod
     def _iter_architectures(
         architecture: Architecture | None
     ) -> list[Architecture]:
-        if architecture:
-            return [architecture]
-        return [arch for arch in Architecture if arch != Architecture.UNKNOWN]
+        concrete_architectures: list[Architecture] = [
+            arch for arch in Architecture if arch != Architecture.UNKNOWN
+        ]
+        if architecture is None:
+            return concrete_architectures
+        if architecture == Architecture.UNKNOWN:
+            return [
+                Architecture.X64,
+                *[
+                    arch for arch in concrete_architectures
+                    if arch != Architecture.X64
+                ],
+            ]
+        return [architecture]
 
     def find_by_hash(self, file_hash: str) -> DLLFile | None:
         """
@@ -529,7 +596,11 @@ class FileSystemDLLRepository(IDLLRepository):
             True if deletion was successful, False otherwise
         """
         try:
-            file_path = self._resolve_delete_file_path(dll_file)
+            delete_target = self._resolve_delete_target(dll_file)
+            if delete_target is None:
+                return False
+
+            file_path = self._resolve_delete_file_path(delete_target)
             if file_path is None:
                 return False
 
@@ -542,7 +613,7 @@ class FileSystemDLLRepository(IDLLRepository):
                 return False
 
             original_index, index_was_updated = self._remove_index_entry_for_delete(
-                dll_file
+                delete_target
             )
             self._unlink_payload_for_delete(
                 file_path,
@@ -550,12 +621,48 @@ class FileSystemDLLRepository(IDLLRepository):
                 original_index=original_index,
             )
 
-            logger.info(f"Deleted DLL: {dll_file.name}")
+            logger.info(f"Deleted DLL: {delete_target.name}")
             return True
 
         except (OSError, RepositoryError) as e:
             logger.error(f"Failed to delete DLL {dll_file.name}: {e}")
             return False
+
+    def _resolve_delete_target(self, dll_file: DLLFile) -> DLLFile | None:
+        """Return a concrete-architecture entity for delete operations."""
+        if dll_file.architecture != Architecture.UNKNOWN:
+            return dll_file
+
+        if dll_file.file_path:
+            architecture = self._architecture_from_repository_path(
+                Path(dll_file.file_path)
+            )
+            if architecture is not None:
+                return replace(dll_file, architecture=architecture)
+            return dll_file
+
+        existing = self.find_by_name(dll_file.name, Architecture.UNKNOWN)
+        if existing is not None:
+            return existing
+        return replace(dll_file, architecture=Architecture.X64)
+
+    def _architecture_from_repository_path(self, file_path: Path) -> Architecture | None:
+        """Infer architecture from a path located inside a repository arch dir."""
+        try:
+            relative_parent = file_path.parent.resolve(strict=True).relative_to(
+                self._base_path.resolve()
+            )
+        except (OSError, ValueError):
+            return None
+        if not relative_parent.parts:
+            return None
+        try:
+            architecture = Architecture(relative_parent.parts[0])
+        except ValueError:
+            return None
+        if architecture == Architecture.UNKNOWN:
+            return None
+        return architecture
 
     def _resolve_delete_file_path(self, dll_file: DLLFile) -> Path | None:
         """Resolve and validate the repository location targeted by delete()."""

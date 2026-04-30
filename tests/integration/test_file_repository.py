@@ -730,15 +730,40 @@ def test_find_without_architecture_no_match_hits_unknown(
 
 def test_find_with_unknown_architecture_finds_x64(tmp_download_dir: Path) -> None:
     """
-    Verify UNKNOWN architecture falls back to x64 path.
+    Verify UNKNOWN architecture lookup returns the indexed x64 entity.
     """
     repository = FileSystemDLLRepository(tmp_download_dir)
-    dll = DLLFile(name="unknown.dll", architecture=Architecture.X64)
+    dll = DLLFile(
+        name="unknown.dll",
+        architecture=Architecture.X64,
+        download_url="https://example.test/unknown.zip",
+        security_status=SecurityStatus.CLEAN,
+    )
     repository.save(dll, _build_pe_payload())
 
     found = repository.find_by_name("unknown.dll", Architecture.UNKNOWN)
     assert found is not None
-    assert found.architecture == Architecture.UNKNOWN
+    assert found.architecture == Architecture.X64
+    assert found.download_url == "https://example.test/unknown.zip"
+    assert found.security_status == SecurityStatus.CLEAN
+
+
+def test_save_with_unknown_architecture_detects_payload_architecture(
+    tmp_download_dir: Path,
+) -> None:
+    repository = FileSystemDLLRepository(tmp_download_dir)
+
+    saved = repository.save(
+        DLLFile(name="x86unknown.dll"),
+        _build_pe_payload(Architecture.X86),
+    )
+
+    assert saved.architecture == Architecture.X86
+    assert Path(_require_str(saved.file_path)).parent.name == "x86"
+    assert repository.exists("x86unknown.dll") is True
+    found = repository.find_by_name("x86unknown.dll")
+    assert found is not None
+    assert found.architecture == Architecture.X86
 
 
 def test_save_index_raises_repository_error(
@@ -852,6 +877,25 @@ def test_delete_without_file_path_removes_expected_payload(
     assert repository.delete(DLLFile(name="victim.dll", architecture=Architecture.X64))
     assert not saved_path.exists()
     assert repository.find_by_name("victim.dll", Architecture.X64) is None
+
+
+def test_delete_with_unknown_architecture_removes_payload_and_index(
+    tmp_download_dir: Path,
+) -> None:
+    repository = FileSystemDLLRepository(tmp_download_dir)
+    saved = repository.save(
+        DLLFile(name="unknown-delete.dll", architecture=Architecture.X64),
+        _build_pe_payload(Architecture.X64),
+    )
+    saved_path = Path(_require_str(saved.file_path))
+
+    assert repository.delete(DLLFile(name="unknown-delete.dll")) is True
+
+    assert not saved_path.exists()
+    assert repository.find_by_name("unknown-delete.dll", Architecture.X64) is None
+    with (tmp_download_dir / ".dll_index.json").open() as index_file:
+        index_data = json.load(index_file)
+    assert "x64/unknown-delete.dll" not in index_data["files"]
 
 
 def test_delete_rejects_mismatched_internal_file_path(

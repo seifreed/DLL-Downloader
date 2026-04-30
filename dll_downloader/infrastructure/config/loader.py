@@ -82,7 +82,7 @@ class _VTTomlSettingsSource:
 
         try:
             contents = vt_path.read_text()
-        except OSError:
+        except (OSError, UnicodeDecodeError):
             return None
 
         for line in contents.splitlines():
@@ -151,6 +151,7 @@ class SettingsLoader:
     def load(cls, config_path: str | None = None) -> Settings:
         """Load settings with precedence env > config > ~/.vt.toml > defaults."""
         settings = Settings()
+        config_disables_vt_fallback = False
         resolved_config_path: str | None
         if config_path is not None:
             resolved_config_path = os.path.expanduser(config_path)
@@ -161,7 +162,16 @@ class SettingsLoader:
 
         if resolved_config_path and os.path.exists(resolved_config_path):
             try:
-                settings = cls._merge(settings, _JSONSettingsSource.load(resolved_config_path))
+                config_values = _JSONSettingsSource.load(resolved_config_path)
+                config_disables_vt_fallback = (
+                    "virustotal_api_key" in config_values
+                    and config_values["virustotal_api_key"] is None
+                )
+                settings = cls._merge(
+                    settings,
+                    config_values,
+                    allow_none_overrides=True,
+                )
             except (OSError, json.JSONDecodeError) as exc:
                 logging.warning(
                     "Failed to load config from %s: %s",
@@ -169,7 +179,7 @@ class SettingsLoader:
                     exc,
                 )
 
-        if settings.virustotal_api_key is None:
+        if settings.virustotal_api_key is None and not config_disables_vt_fallback:
             vt_key = _VTTomlSettingsSource.load(os.environ.get("HOME"))
             if vt_key:
                 settings = cls._merge(settings, {"virustotal_api_key": vt_key})
@@ -379,11 +389,16 @@ class SettingsLoader:
         return None
 
     @staticmethod
-    def _merge(base: Settings, override: SettingsInitKwargs) -> Settings:
+    def _merge(
+        base: Settings,
+        override: SettingsInitKwargs,
+        *,
+        allow_none_overrides: bool = False,
+    ) -> Settings:
         overrides = {
             field_name: value
             for field_name, value in override.items()
-            if value is not None
+            if allow_none_overrides or value is not None
         }
         return replace(base, **cast(dict[str, Any], overrides))
 

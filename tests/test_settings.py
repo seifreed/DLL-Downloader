@@ -299,6 +299,20 @@ def test_settings_loader_load_reads_vt_toml_when_api_key_missing(tmp_path: Path)
 
 
 @pytest.mark.unit
+def test_settings_loader_json_null_api_key_disables_vt_toml_fallback(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps({"virustotal_api_key": None}))
+    (tmp_path / ".vt.toml").write_text("apikey = 'vt-test-key'")
+
+    with _temporary_env({"HOME": str(tmp_path)}), _temporary_cwd(tmp_path):
+        settings = SettingsLoader.load(config_path=str(config_path))
+
+    assert settings.virustotal_api_key is None
+
+
+@pytest.mark.unit
 def test_settings_loader_from_json_rejects_non_object_payload(tmp_path: Path) -> None:
     config_path = tmp_path / "config.json"
     config_path.write_text('["not", "an", "object"]')
@@ -936,6 +950,16 @@ def test_load_vt_toml_key_invalid_contents() -> None:
     ):
         vt_path = Path(temp_dir) / ".vt.toml"
         vt_path.write_text("not_a_key=true")
+        assert _VTTomlSettingsSource.load(temp_dir) is None
+
+
+@pytest.mark.unit
+def test_load_vt_toml_key_invalid_encoding_returns_none() -> None:
+    with tempfile.TemporaryDirectory() as temp_dir, _temporary_env(
+        {"HOME": temp_dir, "USERPROFILE": temp_dir}
+    ):
+        vt_path = Path(temp_dir) / ".vt.toml"
+        vt_path.write_bytes(b"\xff\xfe\x00")
         assert _VTTomlSettingsSource.load(temp_dir) is None
 
 
