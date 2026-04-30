@@ -1248,6 +1248,26 @@ def test_list_all_includes_valid_fallback_payload_without_index(
     assert all_dlls[0].file_hash == hashlib.sha256(content).hexdigest()
 
 
+def test_fallback_enumeration_skips_unreadable_architecture_directory(
+    repository: FileSystemDLLRepository,
+    tmp_path: Path,
+) -> None:
+    arch_dir = tmp_path / "x64"
+    arch_dir.chmod(0)
+    try:
+        try:
+            list(arch_dir.iterdir())
+        except OSError:
+            pass
+        else:
+            pytest.skip("filesystem permits reading chmod 0 directories")
+
+        assert repository.list_all() == []
+        assert repository.find_by_hash("a" * 64) is None
+    finally:
+        arch_dir.chmod(0o700)
+
+
 def test_find_by_name_ignores_fallback_payload_without_mz_signature(
     repository: FileSystemDLLRepository,
     tmp_path: Path,

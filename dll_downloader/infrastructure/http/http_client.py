@@ -102,12 +102,19 @@ class RequestsHTTPClient:
     ) -> HTTPResponse:
         response = self._transport.execute("GET", url, headers=headers)
         try:
+            content = response.content
             return HTTPResponse(
                 status_code=response.status_code,
-                content=response.content,
+                content=content,
                 headers=dict(response.headers),
                 url=response.url,
             )
+        except HTTP_STREAM_ERROR_TYPES as exc:
+            raise HTTPClientError(
+                f"GET response read failed: {exc}",
+                status_code=response.status_code,
+                url=response.url or url,
+            ) from exc
         finally:
             self._close_response(response)
 

@@ -306,6 +306,31 @@ def test_extract_download_link_uses_section_context_for_architecture() -> None:
 
 
 @pytest.mark.unit
+def test_extract_download_link_uses_case_insensitive_section_context() -> None:
+    resolver = DllFilesResolver(
+        http_client=StubTextHTTPClient({}),
+        base_url="http://example.com",
+    )
+    html = """
+    <SECTION>
+      <p>Architecture: 64-bit</p>
+      <div class="download-link"><a href="/download/aaa/file.dll.html">Download</a></div>
+    </SECTION>
+    <SECTION>
+      <p>Architecture: 32-bit</p>
+      <div class="download-link"><a href="/download/bbb/file.dll.html">Download</a></div>
+    </SECTION>
+    """
+
+    assert resolver._extract_download_link(html, Architecture.X64) == (
+        "/download/aaa/file.dll.html"
+    )
+    assert resolver._extract_download_link(html, Architecture.X86) == (
+        "/download/bbb/file.dll.html"
+    )
+
+
+@pytest.mark.unit
 def test_extract_download_link_uses_link_text_for_sibling_architecture_links() -> None:
     resolver = DllFilesResolver(
         http_client=StubTextHTTPClient({}),

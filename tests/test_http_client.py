@@ -930,6 +930,57 @@ def test_http_client_get_closes_response() -> None:
 
 
 @pytest.mark.unit
+def test_http_client_get_wraps_body_read_failures_and_closes_response() -> None:
+    """Verify GET body read failures are normalized and resources are released."""
+    class BrokenResponse:
+        status_code = 200
+        ok = True
+        headers: dict[str, str] = {"content-type": "text/plain"}
+        url = "https://example.com/file.dll"
+
+        def __init__(self) -> None:
+            self.closed = False
+
+        @property
+        def content(self) -> bytes:
+            raise requests.ConnectionError("body read failed")
+
+        def iter_content(self, chunk_size: int = 8192) -> Iterator[bytes]:
+            return iter(())
+
+        def close(self) -> None:
+            self.closed = True
+
+    class DummySession:
+        def __init__(self) -> None:
+            self.headers: dict[str, str] = {}
+            self.response = BrokenResponse()
+
+        def get(self, *args: Any, **kwargs: Any) -> HTTPResponseProtocol:
+            return cast(HTTPResponseProtocol, self.response)
+
+        def head(self, *args: Any, **kwargs: Any) -> HTTPResponseProtocol:
+            raise NotImplementedError
+
+        def post(self, *args: Any, **kwargs: Any) -> HTTPResponseProtocol:
+            raise NotImplementedError
+
+        def close(self) -> None:
+            pass
+
+    session = DummySession()
+    client = RequestsHTTPClient(
+        session_resource=_resource_with_session(cast(HTTPSessionProtocol, session))
+    )
+
+    with pytest.raises(HTTPClientError, match="GET response read failed") as exc_info:
+        client.get_text("https://example.com/file.dll")
+
+    assert exc_info.value.status_code == 200
+    assert session.response.closed is True
+
+
+@pytest.mark.unit
 def test_get_file_info_invalid_content_length() -> None:
     """
     Verify invalid content-length header is handled safely.

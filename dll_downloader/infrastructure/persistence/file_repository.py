@@ -744,7 +744,7 @@ class FileSystemDLLRepository(IDLLRepository):
             arch_dir = self._base_path / arch.value
             if arch_dir.is_symlink() or not arch_dir.is_dir():
                 continue
-            for file_path in arch_dir.iterdir():
+            for file_path in self._iter_repository_directory(arch_dir):
                 if file_path.suffix.lower() != ".dll":
                     continue
                 fallback_path = self._validated_fallback_payload_path(file_path, arch)
@@ -790,7 +790,7 @@ class FileSystemDLLRepository(IDLLRepository):
             arch_dir = self._base_path / arch.value
             if arch_dir.is_symlink() or not arch_dir.is_dir():
                 continue
-            for file_path in arch_dir.iterdir():
+            for file_path in self._iter_repository_directory(arch_dir):
                 if file_path.suffix.lower() != ".dll":
                     continue
                 key = self._get_file_key(file_path.name, arch)
@@ -804,6 +804,18 @@ class FileSystemDLLRepository(IDLLRepository):
                 )
                 blocked_keys.add(key)
         return dll_files
+
+    def _iter_repository_directory(self, directory: Path) -> list[Path]:
+        """Return directory entries, skipping unreadable repository directories."""
+        try:
+            return list(directory.iterdir())
+        except OSError as exc:
+            logger.warning(
+                "Skipping unreadable repository directory %s: %s",
+                directory,
+                exc,
+            )
+            return []
 
     def _load_raw_index_keys(self) -> set[str]:
         """Return raw index keys so corrupt metadata still blocks disk fallback."""

@@ -14,6 +14,7 @@ from ...domain.errors import DownloadResolutionError, HTTPServiceError
 from ...domain.services.http_client import ITextHTTPClient
 from .html_link_extractor import extract_links, extract_links_with_positions
 
+_SECTION_START = "<section"
 _SECTION_END = "</section>"
 _SUPPORTED_DOWNLOAD_ARCHITECTURES = {Architecture.X86, Architecture.X64}
 DownloadLinkCandidate = tuple[str, str, str]
@@ -167,11 +168,12 @@ class DllFilesResolver:
         if position == -1:
             return link_text
 
-        start = html.rfind("<section", 0, position)
+        lower_html = html.lower()
+        start = lower_html.rfind(_SECTION_START, 0, position)
         if start == -1:
             return link_text
 
-        end = html.find(_SECTION_END, position)
+        end = lower_html.find(_SECTION_END, position)
         if end == -1:
             return html[start:]
         return html[start:end + len(_SECTION_END)]
