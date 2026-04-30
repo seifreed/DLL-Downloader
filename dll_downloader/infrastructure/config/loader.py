@@ -147,7 +147,13 @@ class SettingsLoader:
     def load(cls, config_path: str | None = None) -> Settings:
         """Load settings with precedence env > config > ~/.vt.toml > defaults."""
         settings = Settings()
-        resolved_config_path = config_path or cls._find_config_path()
+        resolved_config_path: str | None
+        if config_path is not None:
+            resolved_config_path = os.path.expanduser(config_path)
+            if not os.path.exists(resolved_config_path):
+                raise ValueError(f"Configuration file not found: {config_path}")
+        else:
+            resolved_config_path = cls._find_config_path()
 
         if resolved_config_path and os.path.exists(resolved_config_path):
             try:

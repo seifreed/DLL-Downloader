@@ -933,6 +933,51 @@ def test_http_client_download_ignores_final_response_close_failure() -> None:
 
 
 @pytest.mark.unit
+def test_http_client_download_ignores_final_response_runtime_close_failure() -> None:
+    class DummyResponse:
+        ok = True
+        status_code = 200
+        content = b""
+        headers: dict[str, str] = {}
+        url = "https://example.com/file.dll"
+
+        def __init__(self) -> None:
+            self.close_attempted = False
+
+        def iter_content(self, chunk_size: int = 8192) -> Iterator[bytes]:
+            yield b"ok"
+
+        def close(self) -> None:
+            self.close_attempted = True
+            raise RuntimeError("close failed")
+
+    class DummySession:
+        def __init__(self) -> None:
+            self.headers: dict[str, str] = {}
+            self.response = DummyResponse()
+
+        def get(self, *args: Any, **kwargs: Any) -> DummyResponse:
+            return self.response
+
+        def head(self, *args: Any, **kwargs: Any) -> Any:
+            raise NotImplementedError
+
+        def post(self, *args: Any, **kwargs: Any) -> Any:
+            raise NotImplementedError
+
+        def close(self) -> None:
+            pass
+
+    session = DummySession()
+    client = RequestsHTTPClient(
+        session_resource=_resource_with_session(cast(HTTPSessionProtocol, session))
+    )
+
+    assert client.download("https://example.com/file.dll") == b"ok"
+    assert session.response.close_attempted is True
+
+
+@pytest.mark.unit
 def test_http_client_download_retries_retryable_status() -> None:
     class DummyResponse:
         def __init__(self, status_code: int, content: bytes = b"") -> None:
@@ -1000,6 +1045,58 @@ def test_http_client_download_retries_when_retry_response_close_fails() -> None:
         def close(self) -> None:
             self.close_attempted = True
             raise OSError("close failed")
+
+    class DummySession:
+        def __init__(self) -> None:
+            self.headers: dict[str, str] = {}
+            self.calls = 0
+            self.retry_response: DummyResponse | None = None
+
+        def get(self, *args: Any, **kwargs: Any) -> HTTPResponseProtocol:
+            self.calls += 1
+            if self.calls == 1:
+                self.retry_response = DummyResponse(503)
+                return cast(HTTPResponseProtocol, self.retry_response)
+            return cast(HTTPResponseProtocol, DummyResponse(200, b"ok"))
+
+        def head(self, *args: Any, **kwargs: Any) -> HTTPResponseProtocol:
+            raise NotImplementedError
+
+        def post(self, *args: Any, **kwargs: Any) -> HTTPResponseProtocol:
+            raise NotImplementedError
+
+        def close(self) -> None:
+            pass
+
+    session = DummySession()
+    client = RequestsHTTPClient(
+        max_retries=2,
+        session_resource=_resource_with_session(cast(HTTPSessionProtocol, session)),
+    )
+
+    assert client.download("https://example.com/file.dll") == b"ok"
+    assert session.calls == 2
+    assert session.retry_response is not None
+    assert session.retry_response.close_attempted is True
+
+
+@pytest.mark.unit
+def test_http_client_download_retries_when_retry_response_runtime_close_fails() -> None:
+    class DummyResponse:
+        def __init__(self, status_code: int, content: bytes = b"") -> None:
+            self.status_code = status_code
+            self.ok = 200 <= status_code < 300
+            self.content = content
+            self.headers: dict[str, str] = {}
+            self.url = "https://example.com/file.dll"
+            self.close_attempted = False
+
+        def iter_content(self, chunk_size: int = 8192) -> Iterator[bytes]:
+            yield self.content
+
+        def close(self) -> None:
+            self.close_attempted = True
+            raise RuntimeError("close failed")
 
     class DummySession:
         def __init__(self) -> None:

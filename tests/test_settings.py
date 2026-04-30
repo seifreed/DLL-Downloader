@@ -292,8 +292,8 @@ def test_settings_loader_load_reads_vt_toml_when_api_key_missing(tmp_path: Path)
     vt_file = tmp_path / ".vt.toml"
     vt_file.write_text("apikey = 'vt-test-key'")
 
-    with _temporary_env({"HOME": str(tmp_path)}):
-        settings = SettingsLoader.load(config_path=str(tmp_path / "missing.json"))
+    with _temporary_env({"HOME": str(tmp_path)}), _temporary_cwd(tmp_path):
+        settings = SettingsLoader.load(config_path=None)
 
     assert settings.virustotal_api_key == "vt-test-key"
 
@@ -718,6 +718,32 @@ def test_settings_load_validates_final_merged_settings(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
+def test_settings_from_json_rejects_non_finite_float_values(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps({"virustotal_timeout": float("nan")}))
+
+    with pytest.raises(ValueError, match="virustotal_timeout must be finite"):
+        SettingsLoader.from_json(str(config_path))
+
+
+@pytest.mark.unit
+def test_settings_from_env_rejects_non_finite_float_values() -> None:
+    with _temporary_env({"DLL_VIRUSTOTAL_TIMEOUT": "nan"}), pytest.raises(
+        ValueError,
+        match="virustotal_timeout must be finite",
+    ):
+        SettingsLoader.from_env()
+
+
+@pytest.mark.unit
+def test_settings_validate_rejects_infinite_retry_backoff() -> None:
+    settings = Settings(http_retry_backoff_seconds=float("inf"))
+
+    with pytest.raises(ValueError, match="http_retry_backoff_seconds must be finite"):
+        settings.validate()
+
+
+@pytest.mark.unit
 def test_settings_load_validates_threshold_relationship(tmp_path: Path) -> None:
     config_path = tmp_path / "config.json"
     config_path.write_text(
@@ -788,7 +814,7 @@ def test_settings_load_fifo_config_does_not_block(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
-def test_settings_load_with_no_config_file() -> None:
+def test_settings_load_with_no_discovered_config_file() -> None:
     """
     Test loading with no config file specified.
 
@@ -798,11 +824,20 @@ def test_settings_load_with_no_config_file() -> None:
     Expected Behavior:
         Returns Settings with default values.
     """
-    settings = SettingsLoader.load(config_path="/nonexistent/config.json")
+    with tempfile.TemporaryDirectory() as temp_dir, _temporary_env(
+        {"HOME": temp_dir, "USERPROFILE": temp_dir}
+    ), _temporary_cwd(Path(temp_dir)):
+        settings = SettingsLoader.load(config_path=None)
 
     # Should have default values (no file, no env)
     assert settings.http_timeout == 60
     assert settings.verify_ssl is True
+
+
+@pytest.mark.unit
+def test_settings_load_explicit_missing_config_raises_error() -> None:
+    with pytest.raises(ValueError, match="Configuration file not found"):
+        SettingsLoader.load(config_path="/nonexistent/config.json")
 
 
 @pytest.mark.unit
@@ -821,7 +856,8 @@ def test_settings_load_vt_toml_key() -> None:
             vt_path = Path(temp_dir) / ".vt.toml"
             vt_path.write_text('apikey="vt_file_key"')
 
-            settings = SettingsLoader.load(config_path="/nonexistent/config.json")
+            with _temporary_cwd(Path(temp_dir)):
+                settings = SettingsLoader.load(config_path=None)
 
         assert settings.virustotal_api_key == "vt_file_key"
 
@@ -842,24 +878,24 @@ def test_settings_load_env_over_vt_toml() -> None:
             vt_path = Path(temp_dir) / ".vt.toml"
             vt_path.write_text('apikey="vt_file_key"')
 
-            settings = SettingsLoader.load(config_path="/nonexistent/config.json")
+            with _temporary_cwd(Path(temp_dir)):
+                settings = SettingsLoader.load(config_path=None)
 
         assert settings.virustotal_api_key == "env_key"
 
 
 @pytest.mark.unit
 def test_settings_load_without_vt_toml() -> None:
-    with tempfile.TemporaryDirectory() as temp_dir:
-        with _temporary_env(
-            {
-                "HOME": temp_dir,
-                "USERPROFILE": temp_dir,
-                "DLL_VIRUSTOTAL_API_KEY": None,
-            }
-        ):
-            settings = SettingsLoader.load(config_path="/nonexistent/config.json")
+    with tempfile.TemporaryDirectory() as temp_dir, _temporary_env(
+        {
+            "HOME": temp_dir,
+            "USERPROFILE": temp_dir,
+            "DLL_VIRUSTOTAL_API_KEY": None,
+        }
+    ), _temporary_cwd(Path(temp_dir)):
+        settings = SettingsLoader.load(config_path=None)
 
-        assert settings.virustotal_api_key is None
+    assert settings.virustotal_api_key is None
 
 
 @pytest.mark.unit
@@ -1086,6 +1122,36 @@ def test_settings_validate_empty_user_agent_pool_raises_error() -> None:
     settings = Settings(user_agent_pool=())
 
     with pytest.raises(ValueError, match="user_agent_pool must contain at least one value"):
+        settings.validate()
+
+
+@pytest.mark.unit
+def test_settings_validate_rejects_string_boolean_fields() -> None:
+    verify_ssl_settings = Settings(verify_ssl=cast(bool, "false"))
+    scan_settings = Settings(scan_before_save=cast(bool, "false"))
+
+    with pytest.raises(ValueError, match="verify_ssl must be a boolean"):
+        verify_ssl_settings.validate()
+    with pytest.raises(ValueError, match="scan_before_save must be a boolean"):
+        scan_settings.validate()
+
+
+@pytest.mark.unit
+def test_settings_validate_rejects_non_empty_user_agent_pool_with_empty_item() -> None:
+    settings = Settings(user_agent_pool=("",))
+
+    with pytest.raises(
+        ValueError,
+        match="user_agent_pool must contain non-empty string values",
+    ):
+        settings.validate()
+
+
+@pytest.mark.unit
+def test_settings_validate_rejects_boolean_numeric_fields() -> None:
+    settings = Settings(http_timeout=cast(int, True))
+
+    with pytest.raises(ValueError, match="http_timeout must be a number"):
         settings.validate()
 
 

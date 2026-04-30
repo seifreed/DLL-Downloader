@@ -83,6 +83,10 @@ class DllFilesResolver:
         if architecture not in _SUPPORTED_DOWNLOAD_ARCHITECTURES:
             return None
 
+        for href, _ in candidates:
+            if self._href_matches_architecture(href, architecture):
+                return href
+
         for href, context in candidates:
             if self._context_matches_architecture(context, architecture):
                 return href
@@ -116,7 +120,29 @@ class DllFilesResolver:
         architecture: Architecture,
     ) -> bool:
         bits = "64" if architecture == Architecture.X64 else "32"
-        return self._context_has_bits_hint(context, bits)
+        opposite_bits = "32" if architecture == Architecture.X64 else "64"
+        return self._context_has_bits_hint(
+            context,
+            bits,
+        ) and not self._context_has_bits_hint(context, opposite_bits)
+
+    def _href_matches_architecture(
+        self,
+        href: str,
+        architecture: Architecture,
+    ) -> bool:
+        path = urlparse(href).path.lower()
+        if architecture == Architecture.X64:
+            return bool(
+                re.search(r"(^|[/_.-])x64([/_.-]|$)", path)
+                or re.search(r"(^|[/_.-])64([/_.-]|$)", path)
+            )
+        if architecture == Architecture.X86:
+            return bool(
+                re.search(r"(^|[/_.-])x86([/_.-]|$)", path)
+                or re.search(r"(^|[/_.-])32([/_.-]|$)", path)
+            )
+        return False
 
     def _context_has_architecture_hint(self, context: str) -> bool:
         return self._context_has_bits_hint(context, "32") or self._context_has_bits_hint(

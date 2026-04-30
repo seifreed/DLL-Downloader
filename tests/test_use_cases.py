@@ -11,6 +11,7 @@ real behavior.
 """
 
 import io
+import os
 import zipfile
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
@@ -331,6 +332,11 @@ class StubSecurityScanner(ISecurityScanner):
 class FailingSecurityScanner(StubSecurityScanner):
     def scan_dll(self, _dll_file: DLLFile) -> DLLFile:
         raise SecurityServiceError("scanner down")
+
+
+class UnknownSecurityScanner(StubSecurityScanner):
+    def scan_dll(self, dll_file: DLLFile) -> DLLFile:
+        return replace(dll_file, security_status=SecurityStatus.UNKNOWN)
 
 
 def _require_dll_file(response_dll_file: DLLFile | None) -> DLLFile:
@@ -973,6 +979,46 @@ def test_download_dll_use_case_accepts_valid_file_backed_zip_cache(
 
 
 @pytest.mark.unit
+def test_download_dll_use_case_redownloads_missing_file_backed_cache(
+    tmp_path: Path,
+) -> None:
+    repository = InMemoryRepository()
+    http_client = StubHTTPClient()
+    repository._storage[repository._make_key("ghost.dll", Architecture.X64)] = DLLFile(
+        name="ghost.dll",
+        architecture=Architecture.X64,
+        file_path=str(tmp_path / "missing.dll"),
+        file_hash="0" * 64,
+    )
+    replacement_zip = _build_zip_payload(
+        "ghost.dll",
+        _build_pe_payload(Architecture.X64, b"replacement"),
+    )
+    http_client.add_response(
+        "https://dll.website/download/x64/ghost.dll",
+        replacement_zip,
+    )
+
+    use_case = DownloadDLLUseCase(
+        repository=repository,
+        http_client=http_client,
+        download_base_url="https://dll.website/download",
+    )
+
+    response = use_case.execute(
+        DownloadDLLRequest(
+            dll_name="ghost.dll",
+            architecture=Architecture.X64,
+            scan_before_save=False,
+        )
+    )
+
+    assert response.success is True
+    assert response.was_cached is False
+    assert repository.get_content(_require_dll_file(response.dll_file)) == replacement_zip
+
+
+@pytest.mark.unit
 def test_cached_extract_payload_check_rejects_non_extracted_cache(
     tmp_path: Path,
 ) -> None:
@@ -1024,6 +1070,27 @@ def test_cached_extract_payload_check_rejects_non_extracted_cache(
     )
     assert DownloadDLLUseCase._cached_payload_satisfies_extract(
         valid_payload,
+        Architecture.X64,
+    )
+
+
+@pytest.mark.unit
+def test_cached_extract_payload_check_rejects_non_regular_path(
+    tmp_path: Path,
+) -> None:
+    if not hasattr(os, "mkfifo"):
+        pytest.skip("FIFO files are not supported on this platform")
+
+    fifo_path = tmp_path / "cached.dll"
+    os.mkfifo(fifo_path)
+    cached_fifo = DLLFile(
+        name="cached.dll",
+        architecture=Architecture.X64,
+        file_path=str(fifo_path),
+    )
+
+    assert not DownloadDLLUseCase._cached_payload_satisfies_extract(
+        cached_fifo,
         Architecture.X64,
     )
 
@@ -1407,7 +1474,7 @@ def test_download_dll_use_case_fails_when_extract_is_enabled_but_payload_is_not_
 
 
 @pytest.mark.unit
-def test_download_dll_use_case_returns_cached_file() -> None:
+def test_download_dll_use_case_returns_cached_file(tmp_path: Path) -> None:
     """
     Test that use case returns cached file if already exists.
 
@@ -1421,14 +1488,17 @@ def test_download_dll_use_case_returns_cached_file() -> None:
     """
     repository = InMemoryRepository()
     http_client = StubHTTPClient()
+    cache_path = tmp_path / "cached.dll"
+    cache_path.write_bytes(_build_pe_payload(Architecture.X64))
 
     # Pre-populate repository
     existing_dll = DLLFile(
         name="cached.dll",
         architecture=Architecture.X64,
-        file_hash="abc123"
+        file_hash="abc123",
+        file_path=str(cache_path),
     )
-    repository.save(existing_dll, b'existing content')
+    repository._storage[repository._make_key("cached.dll", Architecture.X64)] = existing_dll
 
     use_case = DownloadDLLUseCase(
         repository=repository,
@@ -1721,6 +1791,29 @@ def test_download_dll_use_case_scanner_error_returns_failure() -> None:
 
     assert response.success is False
     assert response.error_message == "Download failed: scanner down"
+    assert repository.list_all() == []
+
+
+@pytest.mark.unit
+def test_download_dll_use_case_unknown_scan_status_returns_failure() -> None:
+    repository = InMemoryRepository()
+    use_case = DownloadDLLUseCase(
+        repository=repository,
+        http_client=StubHTTPClient(),
+        download_base_url="https://dll.website/download",
+        scanner=UnknownSecurityScanner(),
+    )
+
+    response = use_case.execute(
+        DownloadDLLRequest(
+            dll_name="unknownscan.dll",
+            architecture=Architecture.X64,
+            scan_before_save=True,
+        )
+    )
+
+    assert response.success is False
+    assert response.error_message == "Download failed: Security scan did not complete"
     assert repository.list_all() == []
 
 

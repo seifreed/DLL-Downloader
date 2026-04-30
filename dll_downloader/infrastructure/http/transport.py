@@ -61,6 +61,8 @@ class HTTPClientError(HTTPServiceError):
 HTTP_STREAM_ERROR_TYPES: tuple[type[Exception], ...] = (
     requests.RequestException,
     OSError,
+    RuntimeError,
+    TypeError,
     ValueError,
 )
 
@@ -148,7 +150,7 @@ class RequestsTransport:
             return
         try:
             close_response()
-        except (OSError, requests.RequestException) as exc:
+        except HTTP_STREAM_ERROR_TYPES as exc:
             logger.warning("Failed to close retryable response: %s", exc)
 
     def _prepare_request_headers(

@@ -216,8 +216,11 @@ class DownloadDLLUseCase:
         """Return True when a cached payload is already an extracted PE DLL."""
         if not dll_file.file_path:
             return False
+        cache_path = Path(dll_file.file_path)
+        if not cache_path.is_file():
+            return False
         try:
-            content = Path(dll_file.file_path).read_bytes()
+            content = cache_path.read_bytes()
         except OSError:
             return False
         if zipfile.is_zipfile(BytesIO(content)):
@@ -240,11 +243,9 @@ class DownloadDLLUseCase:
                 request.architecture,
             )
         if not dll_file.file_path:
-            return True
+            return False
 
         cache_path = Path(dll_file.file_path)
-        if not cache_path.exists():
-            return True
         if not cache_path.is_file():
             return False
 
@@ -302,6 +303,9 @@ class DownloadDLLUseCase:
             scanned_dll = self._scanner.scan_dll(dll_file)
         except SecurityServiceError as exc:
             raise DownloadExecutionError(str(exc)) from exc
+
+        if scanned_dll.security_status == SecurityStatus.UNKNOWN:
+            raise DownloadExecutionError("Security scan did not complete")
 
         if scanned_dll.security_status == SecurityStatus.MALICIOUS:
             return scanned_dll, (

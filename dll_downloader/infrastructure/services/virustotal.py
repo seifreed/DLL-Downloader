@@ -281,9 +281,11 @@ class VirusTotalScanner(ISecurityScanner):
                 vt_scan_date=result.scan_date,
             )
 
-        except FileNotFoundError:
+        except FileNotFoundError as exc:
             logger.info(f"No VT results for {dll_file.name}, file not previously scanned")
-            return replace(dll_file, security_status=SecurityStatus.UNKNOWN)
+            raise VirusTotalError(
+                f"No VirusTotal results found for {dll_file.name}"
+            ) from exc
 
         except VirusTotalError as e:
             logger.error(f"VT scan failed for {dll_file.name}: {e}")

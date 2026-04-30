@@ -24,6 +24,14 @@ from ...domain.repositories.dll_repository import IDLLRepository
 from ...domain.services import calculate_sha256
 
 logger = logging.getLogger(__name__)
+_PE_POINTER_OFFSET = 0x3C
+_PE_SIGNATURE = b"PE\x00\x00"
+_PE_CHARACTERISTICS_OFFSET_FROM_MACHINE = 18
+_PE_DLL_CHARACTERISTIC = 0x2000
+_PE_MACHINE_ARCHITECTURES = {
+    0x014C: Architecture.X86,
+    0x8664: Architecture.X64,
+}
 
 
 class IndexEntry(TypedDict):
@@ -307,13 +315,17 @@ class FileSystemDLLRepository(IDLLRepository):
             if arch in invalid_index_architectures:
                 continue
             file_path = self._get_file_path(name, arch)
-            fallback_path = self._validated_fallback_payload_path(file_path)
+            fallback_path = self._validated_fallback_payload_path(file_path, arch)
             if fallback_path is not None:
                 return self._create_dll_from_file(fallback_path, name, arch)
 
         return None
 
-    def _validated_fallback_payload_path(self, file_path: Path) -> Path | None:
+    def _validated_fallback_payload_path(
+        self,
+        file_path: Path,
+        architecture: Architecture,
+    ) -> Path | None:
         """Return a disk fallback payload only when its path is repository-owned."""
         if file_path.is_symlink():
             logger.warning("Skipping fallback DLL payload with symlink: %s", file_path)
@@ -329,20 +341,63 @@ class FileSystemDLLRepository(IDLLRepository):
             return None
         if not file_path.is_file():
             return None
-        if not self._fallback_payload_has_dll_signature(file_path):
-            logger.warning("Skipping fallback DLL payload without MZ signature: %s", file_path)
+        if not self._fallback_payload_is_valid_pe_dll(file_path, architecture):
+            logger.warning("Skipping fallback payload that is not a PE DLL: %s", file_path)
             return None
         return file_path
 
     @staticmethod
-    def _fallback_payload_has_dll_signature(file_path: Path) -> bool:
-        """Return True when an orphaned disk payload has a minimal DLL signature."""
+    def _fallback_payload_is_valid_pe_dll(
+        file_path: Path,
+        architecture: Architecture,
+    ) -> bool:
+        """Return True when an orphaned disk payload is a PE DLL."""
         try:
-            with file_path.open("rb") as payload:
-                return payload.read(2) == b"MZ"
+            content = file_path.read_bytes()
         except OSError as exc:
             logger.warning("Skipping unreadable fallback DLL payload: %s", exc)
             return False
+        return FileSystemDLLRepository._content_is_pe_dll(content, architecture)
+
+    @staticmethod
+    def _content_is_pe_dll(
+        content: bytes,
+        expected_architecture: Architecture,
+    ) -> bool:
+        if not content.startswith(b"MZ"):
+            return False
+        if len(content) < _PE_POINTER_OFFSET + 4:
+            return False
+
+        pe_offset = int.from_bytes(
+            content[_PE_POINTER_OFFSET:_PE_POINTER_OFFSET + 4],
+            "little",
+        )
+        machine_offset = pe_offset + len(_PE_SIGNATURE)
+        if (
+            len(content) < machine_offset + 2
+            or content[pe_offset:machine_offset] != _PE_SIGNATURE
+        ):
+            return False
+
+        machine = int.from_bytes(content[machine_offset:machine_offset + 2], "little")
+        architecture = _PE_MACHINE_ARCHITECTURES.get(machine)
+        if architecture is None:
+            return False
+        if (
+            expected_architecture != Architecture.UNKNOWN
+            and architecture != expected_architecture
+        ):
+            return False
+
+        characteristics_offset = machine_offset + _PE_CHARACTERISTICS_OFFSET_FROM_MACHINE
+        if len(content) < characteristics_offset + 2:
+            return False
+        characteristics = int.from_bytes(
+            content[characteristics_offset:characteristics_offset + 2],
+            "little",
+        )
+        return bool(characteristics & _PE_DLL_CHARACTERISTIC)
 
     @staticmethod
     def _iter_architectures(
@@ -400,41 +455,26 @@ class FileSystemDLLRepository(IDLLRepository):
             True if deletion was successful, False otherwise
         """
         try:
-            # Remove from filesystem
-            file_path = self._get_file_path(dll_file.name, dll_file.architecture)
-            if dll_file.file_path:
-                provided_path = Path(dll_file.file_path)
-                if not self._path_location_is_within_repository(provided_path):
-                    logger.warning(
-                        "Refusing to delete DLL outside repository: %s",
-                        provided_path,
-                    )
-                    return False
-                if not self._path_locations_match(provided_path, file_path):
-                    logger.warning(
-                        "Refusing to delete DLL with mismatched path: %s",
-                        provided_path,
-                    )
-                    return False
-                file_path = provided_path
+            file_path = self._resolve_delete_file_path(dll_file)
+            if file_path is None:
+                return False
 
-            if file_path.is_symlink():
-                file_path.unlink()
-            elif not self._path_is_within_repository(file_path):
+            self._validate_repository_write_path(self._index_path)
+            if not self._delete_path_is_safe(file_path):
                 logger.warning(
                     "Refusing to delete DLL outside repository: %s",
                     file_path,
                 )
                 return False
-            elif file_path.exists():
-                file_path.unlink()
 
-            # Remove from index
-            index = self._load_index()
-            key = self._get_file_key(dll_file.name, dll_file.architecture)
-            if key in index["files"]:
-                del index["files"][key]
-                self._save_index(index)
+            original_index, index_was_updated = self._remove_index_entry_for_delete(
+                dll_file
+            )
+            self._unlink_payload_for_delete(
+                file_path,
+                index_was_updated=index_was_updated,
+                original_index=original_index,
+            )
 
             logger.info(f"Deleted DLL: {dll_file.name}")
             return True
@@ -442,6 +482,73 @@ class FileSystemDLLRepository(IDLLRepository):
         except (OSError, RepositoryError) as e:
             logger.error(f"Failed to delete DLL {dll_file.name}: {e}")
             return False
+
+    def _resolve_delete_file_path(self, dll_file: DLLFile) -> Path | None:
+        """Resolve and validate the repository location targeted by delete()."""
+        file_path = self._get_file_path(dll_file.name, dll_file.architecture)
+        if not dll_file.file_path:
+            return file_path
+
+        provided_path = Path(dll_file.file_path)
+        if not self._path_location_is_within_repository(provided_path):
+            logger.warning(
+                "Refusing to delete DLL outside repository: %s",
+                provided_path,
+            )
+            return None
+        if not self._path_locations_match(provided_path, file_path):
+            logger.warning(
+                "Refusing to delete DLL with mismatched path: %s",
+                provided_path,
+            )
+            return None
+        return provided_path
+
+    def _delete_path_is_safe(self, file_path: Path) -> bool:
+        """Return True when deleting this payload path cannot escape the repo."""
+        if file_path.is_symlink():
+            return self._path_location_is_within_repository(file_path)
+        return self._path_is_within_repository(file_path)
+
+    def _remove_index_entry_for_delete(
+        self,
+        dll_file: DLLFile,
+    ) -> tuple[IndexData, bool]:
+        """Remove delete target metadata before unlinking the payload."""
+        index = self._load_index()
+        original_index: IndexData = {"files": dict(index["files"])}
+        key = self._get_file_key(dll_file.name, dll_file.architecture)
+        if key not in index["files"]:
+            return original_index, False
+
+        del index["files"][key]
+        self._save_index(index)
+        return original_index, True
+
+    def _unlink_payload_for_delete(
+        self,
+        file_path: Path,
+        *,
+        index_was_updated: bool,
+        original_index: IndexData,
+    ) -> None:
+        """Unlink the payload and restore metadata if the filesystem delete fails."""
+        if not file_path.is_symlink() and not file_path.exists():
+            return
+
+        try:
+            file_path.unlink()
+        except OSError:
+            if index_was_updated:
+                self._restore_index_after_delete_failure(original_index)
+            raise
+
+    def _restore_index_after_delete_failure(self, original_index: IndexData) -> None:
+        """Best-effort rollback for an index update when payload deletion fails."""
+        try:
+            self._save_index(original_index)
+        except RepositoryError as exc:
+            logger.error("Failed to roll back DLL index after delete failure: %s", exc)
 
     def exists(self, name: str, architecture: Architecture | None = None) -> bool:
         """

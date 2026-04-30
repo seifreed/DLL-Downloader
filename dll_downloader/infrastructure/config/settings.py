@@ -3,7 +3,56 @@ Settings model for the DLL Downloader application.
 """
 
 from dataclasses import dataclass, field
+from math import isfinite
 from pathlib import Path
+
+
+def _validate_number(value: object, field_name: str) -> int | float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{field_name} must be a number")
+    return value
+
+
+def _validate_positive_number(value: object, field_name: str) -> None:
+    value = _validate_number(value, field_name)
+    if not isfinite(value):
+        raise ValueError(f"{field_name} must be finite")
+    if value <= 0:
+        raise ValueError(f"{field_name} must be positive")
+
+
+def _validate_non_negative_number(value: object, field_name: str) -> None:
+    value = _validate_number(value, field_name)
+    if not isfinite(value):
+        raise ValueError(f"{field_name} must be finite")
+    if value < 0:
+        raise ValueError(f"{field_name} cannot be negative")
+
+
+def _validate_bool(value: object, field_name: str) -> None:
+    if not isinstance(value, bool):
+        raise ValueError(f"{field_name} must be a boolean")
+
+
+def _validate_string(value: object, field_name: str) -> None:
+    if not isinstance(value, str):
+        raise ValueError(f"{field_name} must be a string")
+
+
+def _validate_optional_string(value: object, field_name: str) -> None:
+    if value is not None and not isinstance(value, str):
+        raise ValueError(f"{field_name} must be a string or null")
+
+
+def _validate_user_agent_pool(value: object) -> None:
+    if value is None:
+        return
+    if not isinstance(value, tuple):
+        raise ValueError("user_agent_pool must be a tuple of strings")
+    if not value:
+        raise ValueError("user_agent_pool must contain at least one value")
+    if not all(isinstance(item, str) and item.strip() for item in value):
+        raise ValueError("user_agent_pool must contain non-empty string values")
 
 
 @dataclass
@@ -30,29 +79,29 @@ class Settings:
 
     def validate(self) -> bool:
         """Validate the current settings."""
-        if self.http_timeout <= 0:
-            raise ValueError("http_timeout must be positive")
+        _validate_optional_string(self.virustotal_api_key, "virustotal_api_key")
+        _validate_string(self.download_directory, "download_directory")
+        _validate_string(self.download_base_url, "download_base_url")
+        _validate_optional_string(self.user_agent, "user_agent")
+        _validate_user_agent_pool(self.user_agent_pool)
+        _validate_bool(self.verify_ssl, "verify_ssl")
+        _validate_bool(self.scan_before_save, "scan_before_save")
+        _validate_string(self.log_level, "log_level")
 
-        if self.virustotal_timeout <= 0:
-            raise ValueError("virustotal_timeout must be positive")
+        _validate_positive_number(self.http_timeout, "http_timeout")
+        _validate_positive_number(self.virustotal_timeout, "virustotal_timeout")
+        _validate_positive_number(self.http_max_retries, "http_max_retries")
+        _validate_non_negative_number(
+            self.http_retry_backoff_seconds,
+            "http_retry_backoff_seconds",
+        )
+        _validate_non_negative_number(
+            self.http_retry_jitter_seconds,
+            "http_retry_jitter_seconds",
+        )
 
-        if self.http_max_retries <= 0:
-            raise ValueError("http_max_retries must be positive")
-
-        if self.http_retry_backoff_seconds < 0:
-            raise ValueError("http_retry_backoff_seconds cannot be negative")
-
-        if self.http_retry_jitter_seconds < 0:
-            raise ValueError("http_retry_jitter_seconds cannot be negative")
-
-        if self.user_agent_pool is not None and not self.user_agent_pool:
-            raise ValueError("user_agent_pool must contain at least one value")
-
-        if self.malicious_threshold <= 0:
-            raise ValueError("malicious_threshold must be positive")
-
-        if self.suspicious_threshold <= 0:
-            raise ValueError("suspicious_threshold must be positive")
+        _validate_positive_number(self.malicious_threshold, "malicious_threshold")
+        _validate_positive_number(self.suspicious_threshold, "suspicious_threshold")
 
         if self.suspicious_threshold >= self.malicious_threshold:
             raise ValueError(

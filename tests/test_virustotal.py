@@ -1128,15 +1128,15 @@ def test_scan_hash_request_exception_raises() -> None:
 
 
 @pytest.mark.unit
-def test_scan_dll_no_results_sets_unknown() -> None:
+def test_scan_dll_no_results_raises_virustotal_error() -> None:
     """
-    Verify scan_dll returns UNKNOWN when no results exist.
+    Verify scan_dll fails when no scan results exist.
     """
     scanner = HashNotFoundScanner(api_key="key")
 
     dll = DLLFile(name="a.dll", file_hash="hash")
-    result = scanner.scan_dll(dll)
-    assert result.security_status == SecurityStatus.UNKNOWN
+    with pytest.raises(VirusTotalError, match="No VirusTotal results"):
+        scanner.scan_dll(dll)
 
 
 @pytest.mark.unit
