@@ -226,6 +226,7 @@ class CLIApplicationService:
             architecture=parse_architecture(getattr(args, "arch", "x64")),
             scan_enabled=(
                 not getattr(args, "no_scan", False)
+                and settings.scan_before_save
                 and settings.virustotal_api_key is not None
             ),
             force_download=getattr(args, "force", False),

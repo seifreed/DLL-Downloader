@@ -731,6 +731,57 @@ def test_http_client_get_text_raises_on_unsuccessful_response() -> None:
 
 
 @pytest.mark.unit
+def test_http_client_accepts_case_variant_user_agent_header() -> None:
+    class DummyResponse:
+        ok = True
+        status_code = 200
+        content = b"ok"
+        headers: dict[str, str] = {}
+        url = "https://example.com"
+
+        def json(self) -> object:
+            return {}
+
+        def iter_content(self, chunk_size: int = 8192) -> Iterator[bytes]:
+            yield self.content
+
+        def close(self) -> None:
+            pass
+
+    class DummySession:
+        def __init__(self) -> None:
+            self.headers: dict[str, str] = {}
+            self.request_headers: Mapping[str, str] | None = None
+
+        def get(self, *args: Any, **kwargs: Any) -> DummyResponse:
+            self.request_headers = cast(Mapping[str, str], kwargs["headers"])
+            return DummyResponse()
+
+        def head(self, *args: Any, **kwargs: Any) -> Any:
+            raise NotImplementedError
+
+        def post(self, *args: Any, **kwargs: Any) -> Any:
+            raise NotImplementedError
+
+        def close(self) -> None:
+            pass
+
+    session = DummySession()
+    client = RequestsHTTPClient(
+        session_resource=_resource_with_session(cast(HTTPSessionProtocol, session))
+    )
+
+    response = client.get(
+        "https://example.com",
+        headers={"user-agent": "Caller/1.0"},
+    )
+
+    assert response.content == b"ok"
+    assert session.request_headers == {"user-agent": "Caller/1.0"}
+    assert session.headers["User-Agent"] == "Caller/1.0"
+
+
+@pytest.mark.unit
 def test_http_client_download_request_exception_raises() -> None:
     """
     Verify download wraps request exceptions into HTTPClientError.

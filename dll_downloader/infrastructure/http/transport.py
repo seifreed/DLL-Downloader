@@ -172,7 +172,9 @@ class RequestsTransport:
     ) -> dict[str, str]:
         request_headers = self._header_builder.build(headers)
         assert request_headers is not None
-        self.session.headers["User-Agent"] = request_headers["User-Agent"]
+        user_agent = header_value(request_headers, "User-Agent")
+        assert user_agent is not None
+        self.session.headers["User-Agent"] = user_agent
         return request_headers
 
     def _request_error(

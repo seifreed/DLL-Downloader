@@ -13,6 +13,7 @@ execution and temporary files.
 import argparse
 import io
 import json
+import logging
 import os
 import sys
 import tempfile
@@ -37,6 +38,7 @@ from dll_downloader.domain.entities.dll_file import (
 )
 from dll_downloader.domain.services import calculate_sha256
 from dll_downloader.interfaces.cli import (
+    apply_logging_settings,
     format_response,
     get_architecture,
     main,
@@ -459,6 +461,28 @@ def test_set_debug_mode_disabled() -> None:
 
     # Cleanup
     os.environ.pop("DEBUG_MODE", None)
+
+
+@pytest.mark.unit
+def test_apply_logging_settings_uses_configured_level() -> None:
+    original_level = logging.getLogger().level
+    try:
+        apply_logging_settings(Settings(log_level="ERROR"), debug_enabled=False)
+
+        assert logging.getLogger().level == logging.ERROR
+    finally:
+        logging.getLogger().setLevel(original_level)
+
+
+@pytest.mark.unit
+def test_apply_logging_settings_keeps_debug_override() -> None:
+    original_level = logging.getLogger().level
+    try:
+        apply_logging_settings(Settings(log_level="ERROR"), debug_enabled=True)
+
+        assert logging.getLogger().level == logging.DEBUG
+    finally:
+        logging.getLogger().setLevel(original_level)
 
 
 # ============================================================================
@@ -1733,7 +1757,5 @@ def test_main_loads_settings_when_none(tmp_path: Path) -> None:
         json.dumps({"download_directory": str(repo_dir), "scan_before_save": False})
     )
 
-    with _temporary_cwd(tmp_path), _temporary_argv(
-        ["dll-downloader.py", "test.dll", "--no-scan"]
-    ):
+    with _temporary_cwd(tmp_path), _temporary_argv(["dll-downloader.py", "test.dll"]):
         assert main(None) == 0

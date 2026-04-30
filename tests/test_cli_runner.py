@@ -377,6 +377,38 @@ def test_cli_application_service_create_invocation_uses_settings_and_args() -> N
 
 
 @pytest.mark.unit
+def test_cli_application_service_create_invocation_honors_scan_setting() -> None:
+    service = CLIApplicationService(
+        StubPresenter(),
+        lambda settings, output_dir=None: _application_with_use_case(SuccessfulUseCase()),
+        writer=RecordingWriter(),
+    )
+    args = type(
+        "Args",
+        (),
+        {
+            "dll_name": "kernel32",
+            "file": None,
+            "arch": "x64",
+            "no_scan": False,
+            "force": False,
+            "extract": False,
+            "debug": False,
+            "output_dir": None,
+        },
+    )()
+
+    invocation = service.create_invocation(
+        args,
+        __import__("argparse").ArgumentParser(),
+        Settings(virustotal_api_key="key", scan_before_save=False),
+        lambda path: ["ignored.dll"],
+    )
+
+    assert invocation.scan_enabled is False
+
+
+@pytest.mark.unit
 def test_cli_application_service_run_from_args_raises_on_invalid_input() -> None:
     service = CLIApplicationService(
         StubPresenter(),

@@ -507,6 +507,44 @@ class TestDownloadFlowCaching:
         assert response.was_cached is True
         assert _require_dll_file(response.dll_file).version == "1.0"
 
+    def test_cached_scan_result_is_persisted(
+        self,
+        use_case: DownloadDLLUseCase,
+        repository: FileSystemDLLRepository,
+        security_scanner: StaticSecurityScanner,
+    ) -> None:
+        cached_content = _build_zip_payload(
+            "cachedscan.dll",
+            _build_pe_payload(Architecture.X64, b"cached scan content"),
+        )
+        saved = repository.save(
+            DLLFile(name="cachedscan.dll", architecture=Architecture.X64),
+            cached_content,
+        )
+        assert saved.file_hash is not None
+        security_scanner.register_scan_result(
+            saved.file_hash,
+            SecurityStatus.MALICIOUS,
+            "8/72",
+        )
+
+        response = use_case.execute(
+            DownloadDLLRequest(
+                dll_name="cachedscan.dll",
+                architecture=Architecture.X64,
+                scan_before_save=True,
+            )
+        )
+
+        assert response.success is True
+        assert response.was_cached is True
+        cached_response = _require_dll_file(response.dll_file)
+        assert cached_response.security_status == SecurityStatus.MALICIOUS
+        persisted = repository.find_by_name("cachedscan.dll", Architecture.X64)
+        assert persisted is not None
+        assert persisted.security_status == SecurityStatus.MALICIOUS
+        assert persisted.vt_detection_ratio == "8/72"
+
     def test_force_download_bypasses_cache(
         self,
         use_case: DownloadDLLUseCase,

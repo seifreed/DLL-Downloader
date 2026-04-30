@@ -34,6 +34,14 @@ logging.basicConfig(
     format="%(message)s"
 )
 logger = logging.getLogger(__name__)
+_LOG_LEVELS = {
+    "CRITICAL": logging.CRITICAL,
+    "ERROR": logging.ERROR,
+    "WARNING": logging.WARNING,
+    "INFO": logging.INFO,
+    "DEBUG": logging.DEBUG,
+    "NOTSET": logging.NOTSET,
+}
 
 
 def set_debug_mode(enabled: bool) -> None:
@@ -46,6 +54,16 @@ def set_debug_mode(enabled: bool) -> None:
     os.environ['DEBUG_MODE'] = '1' if enabled else '0'
     if enabled:
         logging.getLogger().setLevel(logging.DEBUG)
+
+
+def apply_logging_settings(settings: Settings, debug_enabled: bool) -> None:
+    """Apply configured logging unless debug mode explicitly wins."""
+    if debug_enabled:
+        logging.getLogger().setLevel(logging.DEBUG)
+        return
+    logging.getLogger().setLevel(
+        _LOG_LEVELS.get(settings.log_level.upper(), logging.INFO)
+    )
 
 
 def read_dll_list_from_file(file_path: str) -> list[str]:
@@ -191,9 +209,19 @@ def main(settings: Settings | None = None) -> int:
             )
             return 1
 
+    apply_logging_settings(settings, args.debug)
     return _run_cli_session(service, output_format, args, parser, settings)
+
+
 if __name__ == "__main__":
     sys.exit(main())
 
 
-__all__ = ["parse_arguments", "set_debug_mode", "read_dll_list_from_file", "get_architecture", "format_response", "main"]
+__all__ = [
+    "parse_arguments",
+    "set_debug_mode",
+    "read_dll_list_from_file",
+    "get_architecture",
+    "format_response",
+    "main",
+]

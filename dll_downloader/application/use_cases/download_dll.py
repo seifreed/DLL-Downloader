@@ -245,8 +245,30 @@ class DownloadDLLUseCase:
     ) -> tuple[DLLFile, str | None]:
         """Scan a cache hit when requested, otherwise preserve known warnings."""
         if should_scan and self._scanner and self._scanner.is_available:
-            return self._scan_for_malware(dll_file, should_scan)
+            scanned_dll, security_warning = self._scan_for_malware(
+                dll_file,
+                should_scan,
+            )
+            persisted_dll = self._persist_cached_scan_result(dll_file, scanned_dll)
+            return persisted_dll, security_warning
         return dll_file, self._security_warning_for_status(dll_file)
+
+    def _persist_cached_scan_result(
+        self,
+        cached_dll: DLLFile,
+        scanned_dll: DLLFile,
+    ) -> DLLFile:
+        """Persist refreshed scanner metadata for a cache hit."""
+        if not cached_dll.file_path:
+            return scanned_dll
+
+        try:
+            content = Path(cached_dll.file_path).read_bytes()
+        except OSError as exc:
+            raise DownloadExecutionError(
+                f"Failed to read cached DLL for metadata update: {exc}"
+            ) from exc
+        return self._save_dll(scanned_dll, content)
 
     @classmethod
     def _cached_payload_satisfies_extract(
