@@ -8,7 +8,10 @@ from dll_downloader.infrastructure.http.dll_files_resolver import (
     DllFilesResolver,
     DllFilesResolverError,
 )
-from dll_downloader.infrastructure.http.http_client import RequestsHTTPClient
+from dll_downloader.infrastructure.http.http_client import (
+    HTTPClientError,
+    RequestsHTTPClient,
+)
 
 
 class StubTextHTTPClient:
@@ -23,6 +26,16 @@ class StubTextHTTPClient:
     ) -> str:
         self.calls.append(url)
         return self._responses[url]
+
+
+class FailingTextHTTPClient:
+    def get_text(
+        self,
+        url: str,
+        headers: Mapping[str, str] | None = None,
+    ) -> str:
+        del headers
+        raise HTTPClientError("transport failed", url=url)
 
 
 @pytest.fixture
@@ -198,6 +211,53 @@ def test_extract_dll_page_non_matching_link() -> None:
 
 
 @pytest.mark.unit
+def test_extract_dll_page_requires_exact_basename_match() -> None:
+    resolver = DllFilesResolver(
+        http_client=StubTextHTTPClient({}),
+        base_url="http://example.com",
+    )
+    html = (
+        '<a href="/not-msvcp140.dll.html">Wrong</a>'
+        '<a href="/msvcp140.dll.html">Right</a>'
+    )
+
+    assert resolver._extract_dll_page(html, "msvcp140.dll") == "/msvcp140.dll.html"
+
+
+@pytest.mark.unit
+def test_extract_dll_page_rejects_external_absolute_link() -> None:
+    resolver = DllFilesResolver(
+        http_client=StubTextHTTPClient({}),
+        base_url="https://es.dll-files.com",
+    )
+    html = '<a href="https://evil.example/msvcp140.dll.html">Wrong host</a>'
+
+    assert resolver._extract_dll_page(html, "msvcp140.dll") is None
+
+
+@pytest.mark.unit
+def test_extract_dll_page_rejects_non_http_scheme() -> None:
+    resolver = DllFilesResolver(
+        http_client=StubTextHTTPClient({}),
+        base_url="https://es.dll-files.com",
+    )
+    html = '<a href="javascript:/msvcp140.dll.html">Wrong scheme</a>'
+
+    assert resolver._extract_dll_page(html, "msvcp140.dll") is None
+
+
+@pytest.mark.unit
+def test_extract_dll_page_rejects_http_base_host_downgrade() -> None:
+    resolver = DllFilesResolver(
+        http_client=StubTextHTTPClient({}),
+        base_url="https://es.dll-files.com",
+    )
+    html = '<a href="http://es.dll-files.com/msvcp140.dll.html">Downgrade</a>'
+
+    assert resolver._extract_dll_page(html, "msvcp140.dll") is None
+
+
+@pytest.mark.unit
 def test_extract_download_link_no_links() -> None:
     resolver = DllFilesResolver(
         http_client=StubTextHTTPClient({}),
@@ -221,6 +281,85 @@ def test_extract_download_link_ignores_external_non_download() -> None:
 
 
 @pytest.mark.unit
+def test_extract_download_link_uses_section_context_for_architecture() -> None:
+    resolver = DllFilesResolver(
+        http_client=StubTextHTTPClient({}),
+        base_url="http://example.com",
+    )
+    html = """
+    <section>
+      <div class="right-pane"><p>Version</p><p>64</p></div>
+      <div class="download-link"><a href="/download/x64/file.dll.html">Download</a></div>
+    </section>
+    <section>
+      <div class="right-pane"><p>Version</p><p>32</p></div>
+      <div class="download-link"><a href="/download/x86/file.dll.html">Download</a></div>
+    </section>
+    """
+
+    assert resolver._extract_download_link(html, Architecture.X64) == (
+        "/download/x64/file.dll.html"
+    )
+    assert resolver._extract_download_link(html, Architecture.X86) == (
+        "/download/x86/file.dll.html"
+    )
+
+
+@pytest.mark.unit
+def test_extract_download_link_does_not_fallback_to_x64_for_x86_request() -> None:
+    resolver = DllFilesResolver(
+        http_client=StubTextHTTPClient({}),
+        base_url="http://example.com",
+    )
+    html = """
+    <section>
+      <div class="right-pane"><p>Version</p><p>64</p></div>
+      <div class="download-link"><a href="/download/x64/file.dll.html">Download</a></div>
+    </section>
+    """
+
+    assert resolver._extract_download_link(html, Architecture.X86) is None
+
+
+@pytest.mark.unit
+def test_extract_download_link_rejects_unsupported_architecture() -> None:
+    resolver = DllFilesResolver(
+        http_client=StubTextHTTPClient({}),
+        base_url="http://example.com",
+    )
+    html = '<a href="/download/abc/file.dll.html">Download</a>'
+
+    assert resolver._extract_download_link(html, Architecture.ARM) is None
+
+
+@pytest.mark.unit
+def test_extract_link_context_returns_text_when_href_not_found() -> None:
+    resolver = DllFilesResolver(
+        http_client=StubTextHTTPClient({}),
+        base_url="http://example.com",
+    )
+
+    assert resolver._extract_link_context("<html></html>", "/missing", "Download") == (
+        "Download"
+    )
+
+
+@pytest.mark.unit
+def test_extract_link_context_handles_unclosed_section() -> None:
+    resolver = DllFilesResolver(
+        http_client=StubTextHTTPClient({}),
+        base_url="http://example.com",
+    )
+    html = '<section><a href="/download/abc/file.dll.html">Download</a>'
+
+    assert resolver._extract_link_context(
+        html,
+        "/download/abc/file.dll.html",
+        "Download",
+    ) == html
+
+
+@pytest.mark.unit
 def test_is_valid_download_link_variants() -> None:
     resolver = DllFilesResolver(
         http_client=StubTextHTTPClient({}),
@@ -231,7 +370,26 @@ def test_is_valid_download_link_variants() -> None:
     assert resolver._is_valid_download_link(
         "http://example.com/download/abc/file.dll.html"
     ) is True
+    assert resolver._is_valid_download_link(
+        "//example.com/download/abc/file.dll.html"
+    ) is True
     assert resolver._is_valid_download_link("http://example.com/other") is False
+
+
+@pytest.mark.unit
+def test_extract_download_link_accepts_protocol_relative_base_host() -> None:
+    resolver = DllFilesResolver(
+        http_client=StubTextHTTPClient({}),
+        base_url="https://es.dll-files.com",
+    )
+    html = (
+        '<a href="//es.dll-files.com/download/abc/msvcp140.dll.html">'
+        "Download 64-bit</a>"
+    )
+
+    assert resolver._extract_download_link(html, Architecture.X64) == (
+        "//es.dll-files.com/download/abc/msvcp140.dll.html"
+    )
 
 
 @pytest.mark.unit
@@ -244,6 +402,90 @@ def test_extract_direct_link_fallback_zip() -> None:
     direct_link = resolver._extract_direct_link(html)
     assert direct_link is not None
     assert direct_link.endswith(".zip")
+
+
+@pytest.mark.unit
+def test_extract_direct_link_fallback_zip_with_query_string() -> None:
+    resolver = DllFilesResolver(
+        http_client=StubTextHTTPClient({}),
+        base_url="https://mirror.example.com",
+    )
+    html = '<a href="https://mirror.example.com/file.zip?token=abc">zip</a>'
+
+    assert resolver._extract_direct_link(html) == (
+        "https://mirror.example.com/file.zip?token=abc"
+    )
+
+
+@pytest.mark.unit
+def test_extract_direct_link_rejects_external_zip_with_official_host_in_query() -> None:
+    resolver = DllFilesResolver(
+        http_client=StubTextHTTPClient({}),
+        base_url="https://es.dll-files.com",
+    )
+    html = (
+        '<a href="https://evil.example/payload.zip?next=download.zip.dll-files.com">'
+        "zip</a>"
+    )
+
+    assert resolver._extract_direct_link(html) is None
+
+
+@pytest.mark.unit
+def test_extract_direct_link_rejects_non_http_base_zip() -> None:
+    resolver = DllFilesResolver(
+        http_client=StubTextHTTPClient({}),
+        base_url="https://es.dll-files.com",
+    )
+    html = '<a href="ftp://es.dll-files.com/file.zip">zip</a>'
+
+    assert resolver._extract_direct_link(html) is None
+
+
+@pytest.mark.unit
+def test_extract_direct_link_rejects_non_http_official_zip() -> None:
+    resolver = DllFilesResolver(
+        http_client=StubTextHTTPClient({}),
+        base_url="https://es.dll-files.com",
+    )
+    html = '<a href="ftp://download.zip.dll-files.com/file.zip">zip</a>'
+
+    assert resolver._extract_direct_link(html) is None
+
+
+@pytest.mark.unit
+def test_extract_direct_link_rejects_http_official_zip_downgrade() -> None:
+    resolver = DllFilesResolver(
+        http_client=StubTextHTTPClient({}),
+        base_url="https://es.dll-files.com",
+    )
+    html = '<a href="http://download.zip.dll-files.com/file.zip">zip</a>'
+
+    assert resolver._extract_direct_link(html) is None
+
+
+@pytest.mark.unit
+def test_extract_direct_link_rejects_http_base_zip_downgrade() -> None:
+    resolver = DllFilesResolver(
+        http_client=StubTextHTTPClient({}),
+        base_url="https://es.dll-files.com",
+    )
+    html = '<a href="http://es.dll-files.com/file.zip">zip</a>'
+
+    assert resolver._extract_direct_link(html) is None
+
+
+@pytest.mark.unit
+def test_extract_direct_link_normalizes_protocol_relative_official_zip() -> None:
+    resolver = DllFilesResolver(
+        http_client=StubTextHTTPClient({}),
+        base_url="https://es.dll-files.com",
+    )
+    html = '<a href="//download.zip.dll-files.com/file.zip?token=1">zip</a>'
+
+    assert resolver._extract_direct_link(html) == (
+        "https://download.zip.dll-files.com/file.zip?token=1"
+    )
 
 
 @pytest.mark.unit
@@ -285,3 +527,14 @@ def test_get_uses_injected_http_client() -> None:
     resolver = DllFilesResolver(http_client=client, base_url="http://example.com")
 
     assert resolver._get("http://example.com/search/?q=test.dll") == "ok"
+
+
+@pytest.mark.unit
+def test_get_wraps_http_client_failures() -> None:
+    resolver = DllFilesResolver(
+        http_client=FailingTextHTTPClient(),
+        base_url="http://example.com",
+    )
+
+    with pytest.raises(DllFilesResolverError, match="transport failed"):
+        resolver.resolve_download_url("test.dll", Architecture.X64)

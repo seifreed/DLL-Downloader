@@ -21,6 +21,7 @@ This document is the current source of truth for the runtime architecture.
 - `interfaces/cli.py` is an entrypoint adapter, not a library façade.
 - Programmatic integration uses `dll_downloader.api`.
 - `Settings` is a data model only; loading lives in `SettingsLoader` and the public `load_settings()` wrapper.
+- `SettingsLoader.load()` validates the final merged runtime settings before production wiring consumes them.
 
 ## Supported Public API
 
@@ -41,6 +42,7 @@ This document is the current source of truth for the runtime architecture.
 - `infrastructure/composition.py` builds the default production runtime.
 - `interfaces/cli_runner.py` receives an injected application builder instead of importing production wiring directly.
 - `DllFilesResolver` requires an injected HTTP text client; infrastructure adapters do not self-wire hidden concrete dependencies.
+- `VirusTotalScanner` receives its API timeout from `Settings.virustotal_timeout` through production composition.
 
 ## Shared Technical Resources
 

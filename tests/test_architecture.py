@@ -158,6 +158,7 @@ TECHNICAL_ADAPTER_IMPORT_ALLOWLIST: dict[str, tuple[str, ...]] = {
         "collections.abc",
         "dataclasses",
         "datetime",
+        "pathlib",
         "requests",
         "domain.entities.dll_file",
         "domain.errors",

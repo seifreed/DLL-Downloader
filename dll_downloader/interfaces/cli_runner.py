@@ -3,6 +3,7 @@ CLI-focused orchestration helpers.
 """
 
 import argparse
+import logging
 import traceback
 from dataclasses import dataclass
 from typing import Protocol
@@ -32,6 +33,8 @@ from .cli_output import (
     OutputWriter,
     emit_command_result,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class SupportsClose(Protocol):
@@ -182,9 +185,16 @@ def cleanup_runtime_resources(
     scanner: SupportsClose | None,
 ) -> None:
     """Close runtime adapters created by the composition root."""
-    http_client.close()
+    _close_runtime_resource(http_client, "HTTP client")
     if scanner:
-        scanner.close()
+        _close_runtime_resource(scanner, "security scanner")
+
+
+def _close_runtime_resource(resource: SupportsClose, label: str) -> None:
+    try:
+        resource.close()
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        logger.warning("Failed to close %s: %s", label, exc)
 
 
 class CLIApplicationService:

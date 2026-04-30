@@ -57,9 +57,12 @@ class DownloadBatchUseCase:
         self._download_use_case = download_use_case
 
     def execute(self, request: DownloadBatchRequest) -> DownloadBatchResponse:
+        normalized_names = [
+            normalize_dll_name(dll_name)
+            for dll_name in request.dll_names
+        ]
         items: list[DownloadBatchItem] = []
-        for dll_name in request.dll_names:
-            normalized_name = normalize_dll_name(dll_name)
+        for normalized_name in normalized_names:
             response = self._download_use_case.execute(
                 DownloadDLLRequest(
                     dll_name=normalized_name,

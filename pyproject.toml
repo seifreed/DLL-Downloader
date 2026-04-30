@@ -144,7 +144,6 @@ addopts = [
     "--tb=short",
     "--strict-markers",
     "--cov=dll_downloader",
-    "--cov=downloader",
     "--cov-report=term-missing",
     "--cov-report=html",
 ]
@@ -156,7 +155,7 @@ markers = [
 
 # Coverage configuration
 [tool.coverage.run]
-source = ["dll_downloader", "downloader"]
+source = ["dll_downloader"]
 branch = true
 omit = [
     "tests/*",

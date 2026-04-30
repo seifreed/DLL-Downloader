@@ -33,7 +33,7 @@
 |---------|-------------|
 | **Search & Download** | Resolve DLL names and download the correct file |
 | **ZIP Extraction** | Optionally extract the DLL when the source returns a ZIP |
-| **Architecture Support** | x86 and x64 downloads |
+| **Architecture Support** | x86 and x64 downloads with PE architecture validation |
 | **VirusTotal Scan** | Optional security scan before saving |
 | **Batch Mode** | Download many DLLs from a file |
 | **Library Mode** | Use the downloader directly from Python |
@@ -73,6 +73,7 @@ You can configure settings using `.config.json`, environment variables, or `~/.v
   "download_directory": "./downloads",
   "download_base_url": "https://es.dll-files.com",
   "http_timeout": 60,
+  "virustotal_timeout": 60.0,
   "verify_ssl": true,
   "scan_before_save": true,
   "malicious_threshold": 5,
@@ -93,6 +94,7 @@ apikey="your_virustotal_api_key_here"
 ```bash
 export DLL_VIRUSTOTAL_API_KEY="your_virustotal_api_key_here"
 export DLL_DOWNLOAD_DIRECTORY="./downloads"
+export DLL_VIRUSTOTAL_TIMEOUT="60"
 ```
 
 ---
@@ -103,7 +105,7 @@ export DLL_DOWNLOAD_DIRECTORY="./downloads"
 # Download a single DLL
 python3 dll-downloader.py msvcp140.dll
 
-# Download x86
+# Download x86 and fail if the source does not provide a matching PE DLL
 python3 dll-downloader.py msvcp140.dll --arch x86
 
 # Download and extract when the source returns a ZIP
@@ -134,7 +136,7 @@ python3 dll-downloader.py <dll_name> [options]
 | Option | Description |
 |--------|-------------|
 | `--file` | File with one DLL name per line |
-| `--arch` | Target architecture (`x86` or `x64`) |
+| `--arch` | Target architecture (`x86` or `x64`; default: `x64`) |
 | `--debug` | Enable debug output |
 | `--no-scan` | Skip VirusTotal scan |
 | `--force` | Force download even if cached |
@@ -149,6 +151,10 @@ DLL. Without `--extract`, the validated ZIP is saved as-is. With `--extract`,
 the tool saves the unpacked `.dll`, which is useful in CI/CD workflows. If the
 payload is not a valid ZIP or the embedded DLL is not a valid PE file, the
 download fails with an explicit error.
+
+The selected architecture is also validated against the embedded PE header.
+If `--arch x86` is requested and the source returns an x64 DLL, the download
+fails instead of saving a mislabeled file.
 
 The HTTP transport retries transient failures up to 5 times by default and
 rotates across a pool of 5 legitimate `User-Agent` strings unless you provide

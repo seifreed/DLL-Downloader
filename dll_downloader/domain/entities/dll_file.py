@@ -4,9 +4,12 @@ DLL File Entity
 Represents a DLL file with its metadata and security information.
 """
 
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
+
+_SAFE_DLL_NAME_PATTERN = re.compile(r"[A-Za-z0-9_.-]+")
 
 
 def normalize_dll_name(name: str) -> str:
@@ -18,9 +21,24 @@ def normalize_dll_name(name: str) -> str:
     Returns:
         Name with .dll extension appended if not present
     """
-    if not name.lower().endswith('.dll'):
-        return f"{name}.dll"
-    return name
+    stripped_name = name.strip()
+    if not stripped_name:
+        raise ValueError("DLL name cannot be empty")
+
+    normalized_name = stripped_name
+    if not normalized_name.lower().endswith('.dll'):
+        normalized_name = f"{normalized_name}.dll"
+
+    base_name = normalized_name[:-4]
+    if (
+        base_name in {"", ".", ".."}
+        or "/" in normalized_name
+        or "\\" in normalized_name
+        or not _SAFE_DLL_NAME_PATTERN.fullmatch(normalized_name)
+    ):
+        raise ValueError("DLL name must be a simple filename")
+
+    return normalized_name
 
 
 class Architecture(Enum):

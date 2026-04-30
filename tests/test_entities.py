@@ -198,6 +198,29 @@ def test_dll_file_validation_empty_name_raises_error() -> None:
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize(
+    "name",
+    [
+        "   ",
+        "../evil",
+        "/tmp/evil",
+        "nested/file.dll",
+        "..\\evil",
+        "C:\\Windows\\evil.dll",
+        "http://example.com/evil.dll",
+        ".",
+        "..",
+        ".dll",
+        "bad:name.dll",
+        "bad*name.dll",
+    ],
+)
+def test_dll_file_rejects_unsafe_names(name: str) -> None:
+    with pytest.raises(ValueError, match="DLL name"):
+        DLLFile(name=name)
+
+
+@pytest.mark.unit
 def test_dll_file_auto_adds_extension() -> None:
     """
     Test that DLLFile automatically adds .dll extension if missing.

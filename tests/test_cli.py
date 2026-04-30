@@ -101,13 +101,38 @@ def _temporary_cwd(path: Path) -> Iterator[None]:
         os.chdir(original)
 
 
+@contextmanager
+def _temporary_env(values: dict[str, str]) -> Iterator[None]:
+    original = {key: os.environ.get(key) for key in values}
+    os.environ.update(values)
+    try:
+        yield
+    finally:
+        for key, value in original.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
+def _build_cached_pe_payload(marker: bytes = b"") -> bytes:
+    pe_offset = 0x80
+    payload = bytearray(pe_offset + 24)
+    payload[0:2] = b"MZ"
+    payload[0x3C:0x40] = pe_offset.to_bytes(4, "little")
+    payload[pe_offset:pe_offset + 4] = b"PE\x00\x00"
+    payload[pe_offset + 4:pe_offset + 6] = (0x8664).to_bytes(2, "little")
+    payload[pe_offset + 22:pe_offset + 24] = (0x2000).to_bytes(2, "little")
+    return bytes(payload) + marker
+
+
 def _seed_cached_dll(repo_dir: Path, dll_names: list[str]) -> None:
     (repo_dir / "x64").mkdir(parents=True, exist_ok=True)
     index_data: dict[str, dict[str, object]] = {}
     for dll_name in dll_names:
         normalized_name = normalize_dll_name(dll_name)
         file_path = repo_dir / "x64" / normalized_name
-        content = b"cached content"
+        content = _build_cached_pe_payload(normalized_name.encode())
         file_path.write_bytes(content)
         index_data[f"x64/{normalized_name.lower()}"] = {
             "name": normalized_name,
@@ -452,6 +477,33 @@ def test_read_dll_list_from_file_nonexistent_raises_error() -> None:
         read_dll_list_from_file("/nonexistent/path/file.txt")
 
 
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="requires FIFO support")
+@pytest.mark.unit
+def test_read_dll_list_from_file_fifo_raises_error(tmp_path: Path) -> None:
+    fifo_path = tmp_path / "dlls.txt"
+    os.mkfifo(fifo_path)
+
+    with pytest.raises(ValueError, match="regular file"):
+        read_dll_list_from_file(str(fifo_path))
+
+
+@pytest.mark.skipif(
+    hasattr(os, "geteuid") and os.geteuid() == 0,
+    reason="root can read files regardless of permission bits",
+)
+@pytest.mark.unit
+def test_read_dll_list_from_file_unreadable_file_raises_error(tmp_path: Path) -> None:
+    file_path = tmp_path / "dlls.txt"
+    file_path.write_text("kernel32.dll\n")
+    file_path.chmod(0)
+
+    try:
+        with pytest.raises(ValueError, match="Failed to read file"):
+            read_dll_list_from_file(str(file_path))
+    finally:
+        file_path.chmod(0o600)
+
+
 @pytest.mark.unit
 def test_read_dll_list_from_file_empty_file_raises_error() -> None:
     """
@@ -568,6 +620,24 @@ def test_normalize_dll_name_no_double_extension() -> None:
 
     assert result == "kernel32.dll"
     assert result != "kernel32.dll.dll"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "name",
+    [
+        "../evil",
+        "/tmp/evil",
+        "nested/file.dll",
+        "..\\evil",
+        "bad:name.dll",
+        "bad*name.dll",
+        "   ",
+    ],
+)
+def test_normalize_dll_name_rejects_unsafe_names(name: str) -> None:
+    with pytest.raises(ValueError, match="DLL name"):
+        normalize_dll_name(name)
 
 
 # ============================================================================
@@ -1212,6 +1282,27 @@ def test_process_downloads_exception_without_debug(capsys: CaptureFixture[str]) 
 
 
 @pytest.mark.unit
+def test_process_downloads_rejects_unsafe_batch_name(
+    capsys: CaptureFixture[str],
+) -> None:
+    success_count, failure_count = process_downloads(
+        use_case=RecordingUseCase(responses={}),
+        dll_names=["../evil"],
+        architecture=Architecture.X64,
+        scan_enabled=False,
+        force_download=False,
+        extract_archive=False,
+        debug=False,
+    )
+
+    out = capsys.readouterr()
+    assert success_count == 0
+    assert failure_count == 1
+    assert "[ERROR]" in out.out
+    assert "DLL name" in out.out
+
+
+@pytest.mark.unit
 def test_main_no_args_prints_help_and_returns_error(
     capsys: CaptureFixture[str],
 ) -> None:
@@ -1267,6 +1358,200 @@ def test_main_json_output_for_missing_batch_file(
     payload = json.loads(capsys.readouterr().out)
     assert payload["format"] == "json"
     assert "not found" in payload["error"]["message"]
+
+
+@pytest.mark.unit
+def test_main_json_output_for_invalid_output_dir(
+    tmp_path: Path,
+    capsys: CaptureFixture[str],
+) -> None:
+    output_path = tmp_path / "not-a-directory"
+    output_path.write_text("content")
+
+    with _temporary_argv(
+        [
+            "dll-downloader.py",
+            "test.dll",
+            "--output-dir",
+            str(output_path),
+            "--json",
+        ]
+    ):
+        assert main(Settings()) == 1
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert captured.err == ""
+    assert payload["format"] == "json"
+    assert payload["error"]["kind"] == "boundary"
+    assert "File exists" in payload["error"]["message"]
+
+
+@pytest.mark.unit
+def test_main_sarif_output_for_invalid_output_dir(
+    tmp_path: Path,
+    capsys: CaptureFixture[str],
+) -> None:
+    output_path = tmp_path / "not-a-directory"
+    output_path.write_text("content")
+
+    with _temporary_argv(
+        [
+            "dll-downloader.py",
+            "test.dll",
+            "--output-dir",
+            str(output_path),
+            "--sarif",
+        ]
+    ):
+        assert main(Settings()) == 1
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    result = payload["runs"][0]["results"][0]
+    assert captured.err == ""
+    assert result["ruleId"] == "dll-downloader/boundary-failure"
+    assert "File exists" in result["message"]["text"]
+
+
+@pytest.mark.unit
+def test_main_json_output_for_invalid_argparse_input(
+    capsys: CaptureFixture[str],
+) -> None:
+    with _temporary_argv(
+        ["dll-downloader.py", "test.dll", "--arch", "arm", "--json"]
+    ):
+        assert main(Settings()) == 1
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert captured.err == ""
+    assert payload["format"] == "json"
+    assert payload["error"]["kind"] == "boundary"
+    assert "invalid choice" in payload["error"]["message"]
+
+
+@pytest.mark.unit
+def test_main_json_output_for_abbreviated_json_invalid_argparse_input(
+    capsys: CaptureFixture[str],
+) -> None:
+    with _temporary_argv(["dll-downloader.py", "test.dll", "--arch", "arm", "--js"]):
+        assert main(Settings()) == 1
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert captured.err == ""
+    assert payload["format"] == "json"
+    assert payload["error"]["kind"] == "boundary"
+    assert "invalid choice" in payload["error"]["message"]
+
+
+@pytest.mark.unit
+def test_main_sarif_output_for_invalid_argparse_input(
+    capsys: CaptureFixture[str],
+) -> None:
+    with _temporary_argv(
+        ["dll-downloader.py", "test.dll", "--arch", "arm", "--sarif"]
+    ):
+        assert main(Settings()) == 1
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    result = payload["runs"][0]["results"][0]
+    assert captured.err == ""
+    assert result["ruleId"] == "dll-downloader/boundary-failure"
+    assert "invalid choice" in result["message"]["text"]
+
+
+@pytest.mark.unit
+def test_main_json_output_for_unreadable_batch_file(
+    tmp_path: Path,
+    capsys: CaptureFixture[str],
+) -> None:
+    batch_path = tmp_path / "dlls.txt"
+    batch_path.mkdir()
+
+    with _temporary_argv(
+        [
+            "dll-downloader.py",
+            "--file",
+            str(batch_path),
+            "--json",
+        ]
+    ):
+        assert main(Settings()) == 1
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["format"] == "json"
+    assert "Failed to read file" in payload["error"]["message"]
+
+
+@pytest.mark.unit
+def test_main_json_output_for_invalid_loaded_settings(
+    capsys: CaptureFixture[str],
+) -> None:
+    with _temporary_env({"DLL_HTTP_TIMEOUT": "0"}), _temporary_argv(
+        ["dll-downloader.py", "test.dll", "--json"]
+    ):
+        assert main(None) == 1
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["format"] == "json"
+    assert payload["error"]["kind"] == "boundary"
+    assert payload["error"]["message"] == "http_timeout must be positive"
+
+
+@pytest.mark.unit
+def test_main_sarif_output_for_invalid_loaded_settings(
+    capsys: CaptureFixture[str],
+) -> None:
+    with _temporary_env({"DLL_HTTP_TIMEOUT": "0"}), _temporary_argv(
+        ["dll-downloader.py", "test.dll", "--sarif"]
+    ):
+        assert main(None) == 1
+
+    payload = json.loads(capsys.readouterr().out)
+    result = payload["runs"][0]["results"][0]
+    assert result["ruleId"] == "dll-downloader/boundary-failure"
+    assert result["message"]["text"] == "http_timeout must be positive"
+
+
+@pytest.mark.unit
+def test_main_console_output_for_invalid_loaded_settings(
+    capsys: CaptureFixture[str],
+) -> None:
+    with _temporary_env({"DLL_HTTP_TIMEOUT": "0"}), _temporary_argv(
+        ["dll-downloader.py", "test.dll"]
+    ):
+        assert main(None) == 1
+
+    assert "[ERROR]" in capsys.readouterr().out
+
+
+@pytest.mark.unit
+def test_main_json_ignores_unreadable_config_and_keeps_contract(
+    tmp_path: Path,
+    capsys: CaptureFixture[str],
+) -> None:
+    repo_dir = tmp_path / "downloads"
+    _seed_cached_dll(repo_dir, ["test.dll"])
+    (tmp_path / ".config.json").mkdir()
+
+    with _temporary_cwd(tmp_path), _temporary_argv(
+        [
+            "dll-downloader.py",
+            "test.dll",
+            "--output-dir",
+            str(repo_dir),
+            "--json",
+        ]
+    ):
+        assert main(None) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["format"] == "json"
+    assert payload["items"][0]["success"] is True
+    assert payload["items"][0]["was_cached"] is True
 
 
 @pytest.mark.unit

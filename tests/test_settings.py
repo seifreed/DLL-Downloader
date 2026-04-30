@@ -12,6 +12,8 @@ I/O and environment manipulation.
 
 import json
 import os
+import subprocess
+import sys
 import tempfile
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
@@ -80,6 +82,7 @@ def test_settings_creation_with_defaults() -> None:
     assert settings.download_base_url == "https://es.dll-files.com"
     assert settings.http_timeout == 60
     assert settings.http_max_retries == 5
+    assert settings.virustotal_timeout == 60.0
     assert settings.verify_ssl is True
     assert settings.user_agent is None
     assert settings.scan_before_save is True
@@ -105,6 +108,7 @@ def test_settings_creation_with_custom_values() -> None:
         download_base_url="https://custom.url",
         http_timeout=30,
         http_max_retries=7,
+        virustotal_timeout=15.5,
         verify_ssl=False,
         user_agent="CustomAgent/1.0",
         scan_before_save=False,
@@ -118,6 +122,7 @@ def test_settings_creation_with_custom_values() -> None:
     assert settings.download_base_url == "https://custom.url"
     assert settings.http_timeout == 30
     assert settings.http_max_retries == 7
+    assert settings.virustotal_timeout == 15.5
     assert settings.verify_ssl is False
     assert settings.user_agent == "CustomAgent/1.0"
     assert settings.scan_before_save is False
@@ -148,6 +153,7 @@ def test_settings_from_env_all_variables() -> None:
             "DLL_DOWNLOAD_BASE_URL": "https://env.url",
             "DLL_HTTP_TIMEOUT": "45",
             "DLL_HTTP_MAX_RETRIES": "6",
+            "DLL_VIRUSTOTAL_TIMEOUT": "12.5",
             "DLL_HTTP_RETRY_BACKOFF_SECONDS": "0.5",
             "DLL_HTTP_RETRY_JITTER_SECONDS": "0.1",
             "DLL_VERIFY_SSL": "false",
@@ -166,6 +172,7 @@ def test_settings_from_env_all_variables() -> None:
     assert settings.download_base_url == "https://env.url"
     assert settings.http_timeout == 45
     assert settings.http_max_retries == 6
+    assert settings.virustotal_timeout == 12.5
     assert settings.http_retry_backoff_seconds == 0.5
     assert settings.http_retry_jitter_seconds == 0.1
     assert settings.verify_ssl is False
@@ -213,7 +220,7 @@ def test_settings_from_env_boolean_parsing() -> None:
         Verify that various boolean representations are handled correctly.
 
     Expected Behavior:
-        'true', '1', 'yes' -> True; other values -> False
+        'true', '1', 'yes' -> True; 'false', '0', 'no' -> False.
     """
     # Test True values
     for true_value in ["true", "True", "TRUE", "1", "yes", "Yes"]:
@@ -222,10 +229,25 @@ def test_settings_from_env_boolean_parsing() -> None:
             assert settings.verify_ssl is True, f"Failed for value: {true_value}"
 
     # Test False values
-    for false_value in ["false", "False", "0", "no", "anything"]:
+    for false_value in ["false", "False", "FALSE", "0", "no", "No"]:
         with _temporary_env({"DLL_VERIFY_SSL": false_value}):
             settings = SettingsLoader.from_env()
             assert settings.verify_ssl is False, f"Failed for value: {false_value}"
+
+
+@pytest.mark.unit
+def test_settings_from_env_rejects_invalid_boolean_values() -> None:
+    with (
+        _temporary_env({"DLL_VERIFY_SSL": "treu"}),
+        pytest.raises(ValueError, match="verify_ssl must be a boolean value"),
+    ):
+        SettingsLoader.from_env()
+
+    with (
+        _temporary_env({"DLL_SCAN_BEFORE_SAVE": "treu"}),
+        pytest.raises(ValueError, match="scan_before_save must be a boolean value"),
+    ):
+        SettingsLoader.from_env()
 
 
 @pytest.mark.unit
@@ -257,6 +279,15 @@ def test_settings_from_env_integer_parsing() -> None:
 
 
 @pytest.mark.unit
+def test_settings_from_env_validates_values() -> None:
+    with (
+        _temporary_env({"DLL_HTTP_TIMEOUT": "0"}),
+        pytest.raises(ValueError, match="http_timeout must be positive"),
+    ):
+        SettingsLoader.from_env()
+
+
+@pytest.mark.unit
 def test_settings_loader_load_reads_vt_toml_when_api_key_missing(tmp_path: Path) -> None:
     vt_file = tmp_path / ".vt.toml"
     vt_file.write_text("apikey = 'vt-test-key'")
@@ -277,12 +308,44 @@ def test_settings_loader_from_json_rejects_non_object_payload(tmp_path: Path) ->
 
 
 @pytest.mark.unit
+def test_settings_loader_from_json_validates_positive_values(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps({"http_timeout": 0}))
+
+    with pytest.raises(ValueError, match="http_timeout must be positive"):
+        SettingsLoader.from_json(str(config_path))
+
+
+@pytest.mark.unit
+def test_settings_loader_from_json_validates_threshold_order(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "suspicious_threshold": 90,
+                "malicious_threshold": 80,
+            }
+        )
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="suspicious_threshold must be less than malicious_threshold",
+    ):
+        SettingsLoader.from_json(str(config_path))
+
+
+@pytest.mark.unit
 def test_settings_loader_mapped_kwargs_ignores_unsupported_value_types() -> None:
     mapped = SettingsLoader._mapped_kwargs(
         {
             "download_directory": ["not", "valid"],
             "http_timeout": {"bad": "type"},
+            "http_max_retries": True,
+            "http_retry_backoff_seconds": False,
             "verify_ssl": object(),
+            "virustotal_api_key": True,
+            "user_agent": False,
         },
         SettingsLoader.JSON_MAPPING,
     )
@@ -297,7 +360,9 @@ def test_settings_loader_assign_helpers_return_false_for_non_matching_inputs() -
     assert SettingsLoader._assign_string(mapped, "unknown", "value") is False
     assert SettingsLoader._assign_int(mapped, "http_timeout", "10") is False
     assert SettingsLoader._assign_int(mapped, "http_max_retries", "10") is False
-    assert SettingsLoader._assign_float(mapped, "http_retry_backoff_seconds", 1) is False
+    assert SettingsLoader._assign_int(mapped, "http_timeout", True) is False
+    assert SettingsLoader._assign_int(mapped, "unknown", 10) is False
+    assert SettingsLoader._assign_float(mapped, "http_retry_backoff_seconds", True) is False
     assert SettingsLoader._assign_float(mapped, "unknown", 0.2) is False
     assert (
         SettingsLoader._assign_string_tuple(
@@ -318,11 +383,12 @@ def test_settings_loader_assign_helpers_accept_supported_float_and_tuple_values(
     assert (
         SettingsLoader._assign_float(
             mapped,
-            "http_retry_jitter_seconds",
-            0.2,
+            "virustotal_timeout",
+            1,
         )
         is True
     )
+    assert mapped["virustotal_timeout"] == 1.0
     assert (
         SettingsLoader._assign_string_tuple(
             mapped,
@@ -332,7 +398,6 @@ def test_settings_loader_assign_helpers_accept_supported_float_and_tuple_values(
         is True
     )
 
-    assert mapped["http_retry_jitter_seconds"] == 0.2
     assert mapped["user_agent_pool"] == ("ua-1", "ua-2")
 
 
@@ -381,6 +446,7 @@ def test_settings_from_json_all_fields() -> None:
         "download_base_url": "https://json.url",
         "http_timeout": 75,
         "http_max_retries": 9,
+        "virustotal_timeout": 22.5,
         "http_retry_backoff_seconds": 0.2,
         "http_retry_jitter_seconds": 0.05,
         "verify_ssl": False,
@@ -404,6 +470,7 @@ def test_settings_from_json_all_fields() -> None:
         assert settings.download_base_url == "https://json.url"
         assert settings.http_timeout == 75
         assert settings.http_max_retries == 9
+        assert settings.virustotal_timeout == 22.5
         assert settings.http_retry_backoff_seconds == 0.2
         assert settings.http_retry_jitter_seconds == 0.05
         assert settings.verify_ssl is False
@@ -415,6 +482,24 @@ def test_settings_from_json_all_fields() -> None:
         assert settings.log_level == "ERROR"
     finally:
         os.unlink(temp_path)
+
+
+@pytest.mark.unit
+def test_settings_from_json_ignores_non_string_sensitive_values(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "virustotal_api_key": True,
+                "user_agent": False,
+            }
+        )
+    )
+
+    settings = SettingsLoader.from_json(str(config_path))
+
+    assert settings.virustotal_api_key is None
+    assert settings.user_agent is None
 
 
 @pytest.mark.unit
@@ -500,18 +585,19 @@ def test_settings_merge_override_values() -> None:
         Verify that override values take precedence.
 
     Expected Behavior:
-        Non-default values from override replace base values.
+        Explicit override values replace base values.
     """
     base = Settings(
         virustotal_api_key="base_key",
         http_timeout=60
     )
-    override = Settings(
-        virustotal_api_key="override_key",
-        malicious_threshold=10
+    merged = SettingsLoader._merge(
+        base,
+        {
+            "virustotal_api_key": "override_key",
+            "malicious_threshold": 10,
+        },
     )
-
-    merged = SettingsLoader._merge(base, override)
 
     assert merged.virustotal_api_key == "override_key"
     assert merged.malicious_threshold == 10
@@ -521,21 +607,19 @@ def test_settings_merge_override_values() -> None:
 @pytest.mark.unit
 def test_settings_merge_preserves_base_when_override_is_default() -> None:
     """
-    Test that merge preserves base values when override has defaults.
+    Test that merge preserves base values when no override keys are present.
 
     Purpose:
         Verify that default values don't override explicit base values.
 
     Expected Behavior:
-        Base values retained when override values are defaults.
+        Base values retained when override mapping is empty.
     """
     base = Settings(
         http_timeout=120,
         malicious_threshold=15
     )
-    override = Settings()  # All defaults
-
-    merged = SettingsLoader._merge(base, override)
+    merged = SettingsLoader._merge(base, {})
 
     assert merged.http_timeout == 120
     assert merged.malicious_threshold == 15
@@ -553,9 +637,7 @@ def test_settings_merge_handles_none_values() -> None:
         None values in override don't override non-None base values.
     """
     base = Settings(virustotal_api_key="base_key")
-    override = Settings(virustotal_api_key=None)
-
-    merged = SettingsLoader._merge(base, override)
+    merged = SettingsLoader._merge(base, {"virustotal_api_key": None})
 
     assert merged.virustotal_api_key == "base_key"
 
@@ -595,6 +677,114 @@ def test_settings_load_priority_env_over_file() -> None:
         assert settings.http_timeout == 50
     finally:
         os.unlink(temp_path)
+
+
+@pytest.mark.unit
+def test_settings_load_env_default_value_overrides_file_value() -> None:
+    config_data = {
+        "http_timeout": 10,
+        "scan_before_save": False,
+        "verify_ssl": False,
+    }
+
+    with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".json") as f:
+        json.dump(config_data, f)
+        temp_path = f.name
+
+    try:
+        with _temporary_env(
+            {
+                "DLL_HTTP_TIMEOUT": "60",
+                "DLL_SCAN_BEFORE_SAVE": "true",
+                "DLL_VERIFY_SSL": "true",
+            }
+        ):
+            settings = SettingsLoader.load(config_path=temp_path)
+
+        assert settings.http_timeout == 60
+        assert settings.scan_before_save is True
+        assert settings.verify_ssl is True
+    finally:
+        os.unlink(temp_path)
+
+
+@pytest.mark.unit
+def test_settings_load_validates_final_merged_settings(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps({"http_timeout": 0}))
+
+    with pytest.raises(ValueError, match="http_timeout must be positive"):
+        SettingsLoader.load(config_path=str(config_path))
+
+
+@pytest.mark.unit
+def test_settings_load_validates_threshold_relationship(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "suspicious_threshold": 10,
+                "malicious_threshold": 5,
+            }
+        )
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="suspicious_threshold must be less than malicious_threshold",
+    ):
+        SettingsLoader.load(config_path=str(config_path))
+
+
+@pytest.mark.unit
+def test_settings_load_validates_after_env_precedence(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps({"http_timeout": 0}))
+
+    with _temporary_env({"DLL_HTTP_TIMEOUT": "60"}):
+        settings = SettingsLoader.load(config_path=str(config_path))
+
+    assert settings.http_timeout == 60
+
+
+@pytest.mark.unit
+def test_settings_load_logs_warning_for_unreadable_config(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.mkdir()
+
+    with caplog.at_level("WARNING"):
+        settings = SettingsLoader.load(config_path=str(config_path))
+
+    assert "Failed to load config" in caplog.text
+    assert settings.download_directory == Settings().download_directory
+
+
+@pytest.mark.unit
+def test_settings_load_fifo_config_does_not_block(tmp_path: Path) -> None:
+    if not hasattr(os, "mkfifo"):
+        pytest.skip("FIFO files are not supported on this platform")
+
+    config_path = tmp_path / "config.json"
+    os.mkfifo(config_path)
+    code = (
+        "from dll_downloader.infrastructure.config.loader import SettingsLoader; "
+        f"SettingsLoader.load(config_path={str(config_path)!r}); "
+        "print('done')"
+    )
+
+    completed = subprocess.run(
+        [sys.executable, "-c", code],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=2,
+    )
+
+    assert completed.returncode == 0
+    assert completed.stdout.strip() == "done"
 
 
 @pytest.mark.unit
@@ -688,6 +878,26 @@ def test_load_vt_toml_key_invalid_contents() -> None:
         vt_path = Path(temp_dir) / ".vt.toml"
         vt_path.write_text("not_a_key=true")
         assert _VTTomlSettingsSource.load(temp_dir) is None
+
+
+@pytest.mark.unit
+def test_load_vt_toml_key_ignores_commented_key() -> None:
+    with tempfile.TemporaryDirectory() as temp_dir, _temporary_env(
+        {"HOME": temp_dir, "USERPROFILE": temp_dir}
+    ):
+        vt_path = Path(temp_dir) / ".vt.toml"
+        vt_path.write_text('# apikey = "commented-key"\n')
+        assert _VTTomlSettingsSource.load(temp_dir) is None
+
+
+@pytest.mark.unit
+def test_load_vt_toml_key_accepts_active_key_with_comment() -> None:
+    with tempfile.TemporaryDirectory() as temp_dir, _temporary_env(
+        {"HOME": temp_dir, "USERPROFILE": temp_dir}
+    ):
+        vt_path = Path(temp_dir) / ".vt.toml"
+        vt_path.write_text('apikey = "real-key" # active key\n')
+        assert _VTTomlSettingsSource.load(temp_dir) == "real-key"
 
 
 @pytest.mark.unit
@@ -860,6 +1070,14 @@ def test_settings_validate_negative_http_retry_jitter_raises_error() -> None:
         ValueError,
         match="http_retry_jitter_seconds cannot be negative",
     ):
+        settings.validate()
+
+
+@pytest.mark.unit
+def test_settings_validate_negative_virustotal_timeout_raises_error() -> None:
+    settings = Settings(virustotal_timeout=0)
+
+    with pytest.raises(ValueError, match="virustotal_timeout must be positive"):
         settings.validate()
 
 

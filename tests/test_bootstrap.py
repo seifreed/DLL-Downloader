@@ -2,6 +2,7 @@
 Unit tests for the composition root.
 """
 
+import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -30,6 +31,7 @@ from dll_downloader.domain.services import (
 from dll_downloader.infrastructure.composition import build_default_download_application
 from dll_downloader.infrastructure.config.settings import Settings
 from dll_downloader.infrastructure.http.http_client import RequestsHTTPClient
+from dll_downloader.infrastructure.services.virustotal import VirusTotalScanner
 
 
 @dataclass
@@ -176,6 +178,37 @@ def test_build_default_download_application_uses_default_runtime(tmp_path: Path)
 
 
 @pytest.mark.unit
+def test_build_default_download_application_expands_custom_output_dir(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(download_directory=str(tmp_path), virustotal_api_key=None)
+    home_dir = tmp_path / "home"
+    work_dir = tmp_path / "work"
+    home_dir.mkdir()
+    work_dir.mkdir()
+    previous_home = os.environ.get("HOME")
+    previous_cwd = Path.cwd()
+
+    try:
+        os.environ["HOME"] = str(home_dir)
+        os.chdir(work_dir)
+        application = build_default_download_application(
+            settings,
+            output_dir="~/dll-cache",
+        )
+        application.http_client.close()
+    finally:
+        os.chdir(previous_cwd)
+        if previous_home is None:
+            os.environ.pop("HOME", None)
+        else:
+            os.environ["HOME"] = previous_home
+
+    assert (home_dir / "dll-cache" / "x64").is_dir()
+    assert not (work_dir / "~" / "dll-cache").exists()
+
+
+@pytest.mark.unit
 def test_build_default_download_application_uses_configured_user_agent_pool(
     tmp_path: Path,
 ) -> None:
@@ -189,3 +222,38 @@ def test_build_default_download_application_uses_configured_user_agent_pool(
 
     assert isinstance(application.http_client, RequestsHTTPClient)
     assert application.http_client.session.headers["User-Agent"] in {"AgentA", "AgentB"}
+
+
+@pytest.mark.unit
+def test_build_default_download_application_prefers_explicit_user_agent(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        download_directory=str(tmp_path),
+        virustotal_api_key=None,
+        user_agent="FixedAgent/1.0",
+        user_agent_pool=("PoolAgent/1.0",),
+    )
+
+    application = build_default_download_application(settings, output_dir=str(tmp_path))
+
+    assert isinstance(application.http_client, RequestsHTTPClient)
+    assert application.http_client.session.headers["User-Agent"] == "FixedAgent/1.0"
+    application.http_client.close()
+
+
+@pytest.mark.unit
+def test_build_default_download_application_passes_virustotal_timeout(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        download_directory=str(tmp_path),
+        virustotal_api_key="key",
+        virustotal_timeout=11.5,
+    )
+
+    application = build_default_download_application(settings, output_dir=str(tmp_path))
+
+    assert isinstance(application.scanner, VirusTotalScanner)
+    assert application.scanner._timeout == 11.5
+    application.scanner.close()

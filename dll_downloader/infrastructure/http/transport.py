@@ -36,7 +36,12 @@ class HTTPResponse:
     @property
     def content_length(self) -> int | None:
         length = self.headers.get("content-length")
-        return int(length) if length else None
+        if not length:
+            return None
+        try:
+            return int(length)
+        except ValueError:
+            return None
 
 
 class HTTPClientError(HTTPServiceError):
@@ -51,6 +56,13 @@ class HTTPClientError(HTTPServiceError):
         self.status_code = status_code
         self.url = url
         super().__init__(message)
+
+
+HTTP_STREAM_ERROR_TYPES: tuple[type[Exception], ...] = (
+    requests.RequestException,
+    OSError,
+    ValueError,
+)
 
 
 class RequestsTransport:
@@ -113,6 +125,7 @@ class RequestsTransport:
 
             if self._retry_policy.should_retry_status(response.status_code, attempt):
                 self._log_retryable_status(method_name, url, attempt, response.status_code)
+                self._close_retryable_response(response)
                 self._retry_policy.pause_before_retry(attempt)
                 continue
 
@@ -127,6 +140,16 @@ class RequestsTransport:
         if method_name in {"GET", "DOWNLOAD"}:
             return self.session.get
         return self.session.head
+
+    def _close_retryable_response(self, response: HTTPResponseProtocol) -> None:
+        """Release a retryable response before issuing the next request."""
+        close_response = getattr(response, "close", None)
+        if not callable(close_response):
+            return
+        try:
+            close_response()
+        except (OSError, requests.RequestException) as exc:
+            logger.warning("Failed to close retryable response: %s", exc)
 
     def _prepare_request_headers(
         self,

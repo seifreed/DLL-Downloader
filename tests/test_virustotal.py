@@ -10,6 +10,9 @@ scanning functionality. Tests use in-memory data structures and real method
 execution to validate behavior.
 """
 
+import os
+import subprocess
+import sys
 from collections.abc import MutableMapping
 from dataclasses import replace
 from datetime import datetime
@@ -58,12 +61,14 @@ class FixedResultScanner(VirusTotalScanner):
         api_key: str | None = None,
         malicious_threshold: int = 5,
         suspicious_threshold: int = 1,
+        timeout: float = 60.0,
         session_resource: HTTPSessionResource | None = None,
     ) -> None:
         super().__init__(
             api_key=api_key,
             malicious_threshold=malicious_threshold,
             suspicious_threshold=suspicious_threshold,
+            timeout=timeout,
             session_resource=session_resource,
         )
         self._result = result
@@ -90,12 +95,13 @@ def test_virustotal_scanner_initialization_with_api_key() -> None:
         - Session headers include API key
     """
     api_key = "test_api_key_12345"
-    scanner = VirusTotalScanner(api_key=api_key)
+    scanner = VirusTotalScanner(api_key=api_key, timeout=12.5)
 
     assert scanner._api_key == api_key
     assert scanner.is_available is True
     assert scanner._malicious_threshold == 5
     assert scanner._suspicious_threshold == 1
+    assert scanner._timeout == 12.5
     assert scanner.session.headers["x-apikey"] == api_key
 
 
@@ -804,6 +810,57 @@ def test_scan_file_unavailable_returns_unknown(tmp_download_dir: Path) -> None:
 
 
 @pytest.mark.unit
+def test_scan_file_missing_file_raises_virustotal_error(tmp_download_dir: Path) -> None:
+    scanner = VirusTotalScanner(api_key="key")
+
+    with pytest.raises(VirusTotalError, match="File upload failed"):
+        scanner.scan_file(str(tmp_download_dir / "missing.dll"))
+
+
+@pytest.mark.unit
+def test_scan_file_non_regular_path_raises_virustotal_error(
+    tmp_download_dir: Path,
+) -> None:
+    scanner = VirusTotalScanner(api_key="key")
+    directory_path = tmp_download_dir / "directory.dll"
+    directory_path.mkdir()
+
+    with pytest.raises(VirusTotalError, match="not a regular file"):
+        scanner.scan_file(str(directory_path))
+
+
+@pytest.mark.unit
+def test_scan_file_fifo_path_does_not_block(tmp_path: Path) -> None:
+    if not hasattr(os, "mkfifo"):
+        pytest.skip("FIFO files are not supported on this platform")
+
+    fifo_path = tmp_path / "sample.dll"
+    os.mkfifo(fifo_path)
+    code = f"""
+from dll_downloader.infrastructure.services.virustotal import (
+    VirusTotalError,
+    VirusTotalScanner,
+)
+scanner = VirusTotalScanner(api_key='key')
+try:
+    scanner.scan_file({str(fifo_path)!r})
+except VirusTotalError:
+    print('failed-fast')
+"""
+
+    completed = subprocess.run(
+        [sys.executable, "-c", code],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=2,
+    )
+
+    assert completed.returncode == 0
+    assert completed.stdout.strip() == "failed-fast"
+
+
+@pytest.mark.unit
 def test_scan_file_upload_success(
     tmp_download_dir: Path,
 ) -> None:
@@ -819,12 +876,15 @@ def test_scan_file_upload_success(
             return self._payload
 
     class DummySession:
-        headers: dict[str, str] = {}
+        def __init__(self) -> None:
+            self.headers: dict[str, str] = {}
+            self.post_timeout: float | None = None
 
         def get(self, *args: Any, **kwargs: Any) -> Any:
             raise NotImplementedError
 
         def post(self, url: str, files: Any = None, **kwargs: Any) -> DummyResponse:
+            self.post_timeout = cast(float, kwargs.get("timeout"))
             return DummyResponse(200, {"data": {"id": "abc"}})
 
         def head(self, *args: Any, **kwargs: Any) -> Any:
@@ -833,9 +893,11 @@ def test_scan_file_upload_success(
         def close(self) -> None:
             pass
 
+    session = DummySession()
     scanner = HashNotFoundScanner(
         api_key="key",
-        session_resource=_resource_with_session(cast(HTTPSessionProtocol, DummySession())),
+        timeout=9.5,
+        session_resource=_resource_with_session(cast(HTTPSessionProtocol, session)),
     )
 
     sample = tmp_download_dir / "file.dll"
@@ -844,6 +906,7 @@ def test_scan_file_upload_success(
     result = scanner.scan_file(str(sample))
     assert result.status == SecurityStatus.UNKNOWN
     assert "Results pending" in (result.error_message or "")
+    assert session.post_timeout == 9.5
 
 
 @pytest.mark.unit
@@ -961,6 +1024,45 @@ def test_scan_hash_404_raises() -> None:
 
 
 @pytest.mark.unit
+def test_scan_hash_passes_configured_timeout() -> None:
+    class DummyResponse:
+        status_code = 404
+
+        def json(self) -> dict[str, object]:
+            return {}
+
+    class DummySession:
+        def __init__(self) -> None:
+            self.headers: dict[str, str] = {}
+            self.get_timeout: float | None = None
+
+        def get(self, url: str, **kwargs: Any) -> DummyResponse:
+            self.get_timeout = cast(float, kwargs.get("timeout"))
+            return DummyResponse()
+
+        def head(self, *args: Any, **kwargs: Any) -> Any:
+            raise NotImplementedError
+
+        def post(self, *args: Any, **kwargs: Any) -> Any:
+            raise NotImplementedError
+
+        def close(self) -> None:
+            pass
+
+    session = DummySession()
+    scanner = VirusTotalScanner(
+        api_key="key",
+        timeout=7.25,
+        session_resource=_resource_with_session(cast(HTTPSessionProtocol, session)),
+    )
+
+    with pytest.raises(FileNotFoundError):
+        scanner.scan_hash("hash")
+
+    assert session.get_timeout == 7.25
+
+
+@pytest.mark.unit
 def test_scan_hash_non_200_raises() -> None:
     """
     Verify scan_hash raises VirusTotalError on non-200.
@@ -1038,15 +1140,15 @@ def test_scan_dll_no_results_sets_unknown() -> None:
 
 
 @pytest.mark.unit
-def test_scan_dll_error_returns_original() -> None:
+def test_scan_dll_error_raises_virustotal_error() -> None:
     """
-    Verify scan_dll returns original on VirusTotalError.
+    Verify scan_dll propagates VirusTotalError.
     """
     scanner = HashErrorScanner(api_key="key")
 
     dll = DLLFile(name="a.dll", file_hash="hash")
-    result = scanner.scan_dll(dll)
-    assert result == dll
+    with pytest.raises(VirusTotalError, match="err"):
+        scanner.scan_dll(dll)
 
 
 @pytest.mark.unit
@@ -1094,9 +1196,12 @@ def test_get_detailed_report_success() -> None:
             return self._payload
 
     class DummySession:
-        headers: dict[str, str] = {}
+        def __init__(self) -> None:
+            self.headers: dict[str, str] = {}
+            self.get_timeout: float | None = None
 
         def get(self, url: str, **kwargs: Any) -> DummyResponse:
+            self.get_timeout = cast(float, kwargs.get("timeout"))
             return DummyResponse(200, {"ok": True})
 
         def head(self, *args: Any, **kwargs: Any) -> Any:
@@ -1108,12 +1213,15 @@ def test_get_detailed_report_success() -> None:
         def close(self) -> None:
             pass
 
+    session = DummySession()
     scanner = VirusTotalScanner(
         api_key="key",
-        session_resource=_resource_with_session(cast(HTTPSessionProtocol, DummySession())),
+        timeout=8.75,
+        session_resource=_resource_with_session(cast(HTTPSessionProtocol, session)),
     )
 
     assert scanner.get_detailed_report("hash") == {"ok": True}
+    assert session.get_timeout == 8.75
 
 
 @pytest.mark.unit

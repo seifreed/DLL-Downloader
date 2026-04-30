@@ -9,11 +9,13 @@ import argparse
 import logging
 import os
 import sys
+from pathlib import Path
 
 from ..api import Settings
 from ..application.use_cases.download_dll import DownloadDLLResponse
 from ..domain.entities.dll_file import Architecture
 from ..runtime import load_settings
+from .cli_arguments import ArgumentParseFailure, parse_arguments, parse_main_arguments
 from .cli_contracts import OutputFormat
 from .cli_formatters import (
     create_batch_presenter,
@@ -32,102 +34,6 @@ logging.basicConfig(
     format="%(message)s"
 )
 logger = logging.getLogger(__name__)
-
-
-def _build_argument_parser() -> argparse.ArgumentParser:
-    """Create the CLI parser with its help text."""
-    return argparse.ArgumentParser(
-        description="Download DLL files from DLL-files.com",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  python3 dll-downloader.py msvcp140.dll
-  python3 dll-downloader.py msvcp140.dll --arch x86
-  python3 dll-downloader.py --file dll_list.txt
-  python3 dll-downloader.py msvcp140.dll --debug
-  python3 dll-downloader.py msvcp140.dll --no-scan
-  python3 dll-downloader.py msvcp140.dll --extract
-        """
-    )
-
-
-def _add_standard_arguments(parser: argparse.ArgumentParser) -> None:
-    """Register all supported CLI arguments on the parser."""
-    parser.add_argument(
-        'dll_name',
-        nargs='?',
-        help='Name of the DLL to download (e.g., msvcp140.dll)'
-    )
-
-    parser.add_argument(
-        '--file',
-        help='File containing a list of DLL names (one per line)'
-    )
-
-    parser.add_argument(
-        '--arch',
-        choices=['x86', 'x64'],
-        default='x64',
-        help='Target architecture (default: x64)'
-    )
-
-    parser.add_argument(
-        '--debug',
-        action='store_true',
-        help='Enable debug mode for verbose output'
-    )
-
-    parser.add_argument(
-        '--no-scan',
-        action='store_true',
-        help='Skip VirusTotal security scanning'
-    )
-
-    parser.add_argument(
-        '--force',
-        action='store_true',
-        help='Force download even if file already exists locally'
-    )
-
-    parser.add_argument(
-        '--output-dir',
-        type=str,
-        help='Custom output directory for downloads'
-    )
-
-    parser.add_argument(
-        '--extract',
-        action='store_true',
-        help='Extract the DLL when the downloaded file is a ZIP archive'
-    )
-
-    output_group = parser.add_mutually_exclusive_group()
-    output_group.add_argument(
-        "--json",
-        action="store_true",
-        help="Emit machine-readable JSON output",
-    )
-    output_group.add_argument(
-        "--sarif",
-        action="store_true",
-        help="Emit SARIF v2.1.0 output",
-    )
-
-
-def parse_arguments() -> tuple[argparse.Namespace, argparse.ArgumentParser]:
-    """
-    Parse and return command line arguments.
-
-    Creates an argument parser with options for specifying DLL names,
-    input files, target architecture, and debug mode.
-
-    Returns:
-        A tuple containing the parsed arguments namespace and the parser object.
-    """
-    parser = _build_argument_parser()
-    _add_standard_arguments(parser)
-
-    return parser.parse_args(), parser
 
 
 def set_debug_mode(enabled: bool) -> None:
@@ -155,11 +61,17 @@ def read_dll_list_from_file(file_path: str) -> list[str]:
     Raises:
         ValueError: If the file does not exist or is empty.
     """
-    if not os.path.exists(file_path):
+    path = Path(file_path)
+    if not path.exists():
         raise ValueError(f"File '{file_path}' not found.")
+    if not path.is_file():
+        raise ValueError(f"Failed to read file '{file_path}': not a regular file")
 
-    with open(file_path) as f:
-        dll_names = [line.strip() for line in f if line.strip()]
+    try:
+        with path.open() as f:
+            dll_names = [line.strip() for line in f if line.strip()]
+    except OSError as exc:
+        raise ValueError(f"Failed to read file '{file_path}': {exc}") from exc
 
     if not dll_names:
         raise ValueError(
@@ -230,7 +142,7 @@ def _run_cli_session(
             settings,
             read_dll_list_from_file,
         )
-    except ValueError as exc:
+    except (OSError, ValueError) as exc:
         emit_cli_input_error(
             service,
             create_batch_presenter(output_format).boundary_error(str(exc)),
@@ -253,7 +165,15 @@ def main(settings: Settings | None = None) -> int:
     Returns:
         Exit code (0 for success, 1 for failure)
     """
-    args, parser = parse_arguments()
+    parsed = parse_main_arguments()
+    if isinstance(parsed, ArgumentParseFailure):
+        service = create_cli_service(parsed.output_format)
+        emit_cli_input_error(
+            service,
+            create_batch_presenter(parsed.output_format).boundary_error(parsed.message),
+        )
+        return 1
+    args, parser = parsed
     set_debug_mode(args.debug)
     output_format = get_output_format(args)
     service = create_cli_service(output_format)
@@ -262,7 +182,14 @@ def main(settings: Settings | None = None) -> int:
         return _handle_missing_cli_input(parser, output_format, service)
 
     if settings is None:
-        settings = load_settings()
+        try:
+            settings = load_settings()
+        except ValueError as exc:
+            emit_cli_input_error(
+                service,
+                create_batch_presenter(output_format).boundary_error(str(exc)),
+            )
+            return 1
 
     return _run_cli_session(service, output_format, args, parser, settings)
 if __name__ == "__main__":

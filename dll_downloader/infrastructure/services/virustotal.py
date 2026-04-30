@@ -9,6 +9,7 @@ import logging
 from collections.abc import Mapping
 from dataclasses import replace
 from datetime import datetime
+from pathlib import Path
 
 import requests
 
@@ -92,6 +93,7 @@ class VirusTotalScanner(ISecurityScanner):
         api_key: str | None = None,
         malicious_threshold: int = 5,
         suspicious_threshold: int = 1,
+        timeout: float = 60.0,
         session_resource: HTTPSessionResource | None = None,
     ) -> None:
         """
@@ -101,10 +103,12 @@ class VirusTotalScanner(ISecurityScanner):
             api_key: VirusTotal API key. If not provided, scanner will be unavailable.
             malicious_threshold: Number of positive detections to mark as malicious
             suspicious_threshold: Number of positive detections to mark as suspicious
+            timeout: Timeout in seconds for VirusTotal API requests
         """
         self._api_key = api_key
         self._malicious_threshold = malicious_threshold
         self._suspicious_threshold = suspicious_threshold
+        self._timeout = timeout
         session_headers: dict[str, str] = {}
         if self._api_key:
             session_headers = {
@@ -168,8 +172,19 @@ class VirusTotalScanner(ISecurityScanner):
                 error_message=_API_KEY_MISSING
             )
 
-        with open(file_path, 'rb') as f:
-            content = f.read()
+        path = Path(file_path)
+        if path.exists() and not path.is_file():
+            raise VirusTotalError(
+                f"File upload failed: path is not a regular file: {file_path}"
+            )
+
+        try:
+            with path.open('rb') as f:
+                content = f.read()
+        except OSError as e:
+            logger.error(f"Failed to upload file to VirusTotal: {e}")
+            raise VirusTotalError(f"File upload failed: {e}") from e
+
         file_hash = calculate_sha256(content)
 
         try:
@@ -179,7 +194,11 @@ class VirusTotalScanner(ISecurityScanner):
 
         try:
             files = {'file': (file_path.split('/')[-1], content)}
-            response = self.session.post(f"{self.VT_API_URL}/files", files=files)
+            response = self.session.post(
+                f"{self.VT_API_URL}/files",
+                files=files,
+                timeout=self._timeout,
+            )
 
             if response.status_code != 200:
                 raise VirusTotalError(f"Upload failed: {response.status_code}")
@@ -220,7 +239,10 @@ class VirusTotalScanner(ISecurityScanner):
             )
 
         try:
-            response = self.session.get(f"{self.VT_API_URL}/files/{file_hash}")
+            response = self.session.get(
+                f"{self.VT_API_URL}/files/{file_hash}",
+                timeout=self._timeout,
+            )
             if response.status_code == 404:
                 raise FileNotFoundError(f"No results found for hash: {file_hash}")
             if response.status_code != 200:
@@ -265,7 +287,7 @@ class VirusTotalScanner(ISecurityScanner):
 
         except VirusTotalError as e:
             logger.error(f"VT scan failed for {dll_file.name}: {e}")
-            return dll_file
+            raise
 
     def get_detailed_report(self, file_hash: str) -> dict[str, object]:
         """
@@ -285,7 +307,7 @@ class VirusTotalScanner(ISecurityScanner):
 
         try:
             url = f"{self.VT_API_URL}/files/{file_hash}"
-            response = self.session.get(url)
+            response = self.session.get(url, timeout=self._timeout)
 
             if response.status_code != 200:
                 raise VirusTotalError(

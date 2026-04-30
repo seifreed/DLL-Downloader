@@ -25,6 +25,7 @@ Structural changes include:
 - No new forbidden imports were introduced between layers.
 - CLI adapters remain thin and do not absorb business logic.
 - New infrastructure adapters implement domain/application contracts explicitly.
+- Bug fixes and behavior guarantees include regression contracts for the affected code path.
 - `ruff`, `mypy`, and `pytest` pass locally.
 
 ## Public API Rule

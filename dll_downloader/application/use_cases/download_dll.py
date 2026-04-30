@@ -6,20 +6,36 @@ for security threats, and storing it in the repository.
 """
 
 import zipfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from io import BytesIO
+from pathlib import Path
 
-from ...domain.entities.dll_file import Architecture, DLLFile, SecurityStatus
+from ...domain.entities.dll_file import (
+    Architecture,
+    DLLFile,
+    SecurityStatus,
+    normalize_dll_name,
+)
 from ...domain.errors import (
     DownloadResolutionError,
     HTTPServiceError,
     RepositoryOperationError,
+    SecurityServiceError,
 )
 from ...domain.repositories.dll_repository import IDLLRepository
 from ...domain.services import IHTTPClient, calculate_sha256
 from ...domain.services.download_resolver import IDownloadURLResolver
 from ...domain.services.security_scanner import ISecurityScanner
 from ..errors import ArchiveExtractionError, DownloadExecutionError
+
+_PE_POINTER_OFFSET = 0x3C
+_PE_SIGNATURE = b"PE\x00\x00"
+_PE_CHARACTERISTICS_OFFSET_FROM_MACHINE = 18
+_PE_DLL_CHARACTERISTIC = 0x2000
+_PE_MACHINE_ARCHITECTURES = {
+    0x014C: Architecture.X86,
+    0x8664: Architecture.X64,
+}
 
 
 @dataclass
@@ -132,6 +148,7 @@ class DownloadDLLUseCase:
 
     def _execute_download(self, request: DownloadDLLRequest) -> DownloadDLLResponse:
         """Execute the happy-path download flow and raise typed failures."""
+        request = self._normalize_request(request)
         cached_response = self._validate_request(request)
         if cached_response:
             return cached_response
@@ -173,17 +190,97 @@ class DownloadDLLUseCase:
             DownloadDLLResponse if file is cached, None to proceed with download
         """
         if not request.force_download:
-            existing = self._repository.find_by_name(
-                request.dll_name,
-                request.architecture
-            )
+            try:
+                existing = self._repository.find_by_name(
+                    request.dll_name,
+                    request.architecture
+                )
+            except RepositoryOperationError as exc:
+                raise DownloadExecutionError(str(exc)) from exc
             if existing:
+                if not self._cached_payload_satisfies_request(existing, request):
+                    return None
                 return DownloadDLLResponse(
                     success=True,
                     dll_file=existing,
                     was_cached=True
-                )
+            )
         return None
+
+    @classmethod
+    def _cached_payload_satisfies_extract(
+        cls,
+        dll_file: DLLFile,
+        architecture: Architecture,
+    ) -> bool:
+        """Return True when a cached payload is already an extracted PE DLL."""
+        if not dll_file.file_path:
+            return False
+        try:
+            content = Path(dll_file.file_path).read_bytes()
+        except OSError:
+            return False
+        if zipfile.is_zipfile(BytesIO(content)):
+            return False
+        try:
+            cls._validate_dll_architecture(content, architecture)
+        except DownloadExecutionError:
+            return False
+        return True
+
+    def _cached_payload_satisfies_request(
+        self,
+        dll_file: DLLFile,
+        request: DownloadDLLRequest,
+    ) -> bool:
+        """Return True when a file-backed cache entry matches the active request."""
+        if request.extract_archive:
+            return self._cached_payload_satisfies_extract(
+                dll_file,
+                request.architecture,
+            )
+        if not dll_file.file_path:
+            return True
+
+        cache_path = Path(dll_file.file_path)
+        if not cache_path.exists():
+            return True
+        if not cache_path.is_file():
+            return False
+
+        try:
+            content = cache_path.read_bytes()
+        except OSError:
+            return False
+
+        if zipfile.is_zipfile(BytesIO(content)):
+            try:
+                self._validate_zip_contains_valid_dll(content, request)
+            except (
+                ArchiveExtractionError,
+                DownloadExecutionError,
+                RuntimeError,
+                NotImplementedError,
+                zipfile.BadZipFile,
+            ):
+                return False
+            return True
+
+        try:
+            self._validate_dll_architecture(content, request.architecture)
+        except DownloadExecutionError:
+            return False
+        return True
+
+    def _normalize_request(self, request: DownloadDLLRequest) -> DownloadDLLRequest:
+        """Normalize user-provided request values before touching dependencies."""
+        try:
+            normalized_name = normalize_dll_name(request.dll_name)
+        except ValueError as exc:
+            raise DownloadExecutionError(str(exc)) from exc
+        if normalized_name == request.dll_name:
+            return request
+        return replace(request, dll_name=normalized_name)
 
     def _scan_for_malware(
         self, dll_file: DLLFile, should_scan: bool
@@ -201,7 +298,10 @@ class DownloadDLLUseCase:
         if not should_scan or not self._scanner or not self._scanner.is_available:
             return dll_file, None
 
-        scanned_dll = self._scanner.scan_dll(dll_file)
+        try:
+            scanned_dll = self._scanner.scan_dll(dll_file)
+        except SecurityServiceError as exc:
+            raise DownloadExecutionError(str(exc)) from exc
 
         if scanned_dll.security_status == SecurityStatus.MALICIOUS:
             return scanned_dll, (
@@ -249,7 +349,7 @@ class DownloadDLLUseCase:
                     request.dll_name,
                     request.architecture
                 )
-            except DownloadResolutionError as exc:
+            except (DownloadResolutionError, HTTPServiceError, ValueError) as exc:
                 raise DownloadExecutionError(str(exc)) from exc
         return self._build_download_url(request.dll_name, request.architecture)
 
@@ -273,23 +373,16 @@ class DownloadDLLUseCase:
         request: DownloadDLLRequest,
     ) -> bytes:
         """Validate downloaded content and optionally extract a DLL from a ZIP payload."""
-        try:
-            is_zip_archive = zipfile.is_zipfile(BytesIO(content))
-        except (OSError, ValueError, zipfile.BadZipFile) as exc:
-            raise ArchiveExtractionError(
-                "Downloaded archive is not a valid ZIP file"
-            ) from exc
-
+        is_zip_archive = zipfile.is_zipfile(BytesIO(content))
         if not is_zip_archive:
             raise ArchiveExtractionError("Downloaded archive is not a valid ZIP file")
 
-        if not request.extract_archive:
-            self._validate_zip_contains_valid_dll(content, request)
-            return content
-
         try:
+            if not request.extract_archive:
+                self._validate_zip_contains_valid_dll(content, request)
+                return content
             return self._extract_valid_dll_from_zip(content, request)
-        except zipfile.BadZipFile as exc:
+        except (RuntimeError, NotImplementedError, zipfile.BadZipFile) as exc:
             raise ArchiveExtractionError("Downloaded archive is not a valid ZIP file") from exc
 
     def _validate_zip_contains_valid_dll(
@@ -298,8 +391,7 @@ class DownloadDLLUseCase:
         request: DownloadDLLRequest,
     ) -> None:
         """Validate that a ZIP payload contains a real PE DLL before saving it as-is."""
-        extracted_content = self._extract_valid_dll_from_zip(content, request)
-        self._validate_dll_signature(extracted_content)
+        self._extract_valid_dll_from_zip(content, request)
 
     def _extract_valid_dll_from_zip(
         self,
@@ -324,19 +416,81 @@ class DownloadDLLUseCase:
                     member for member in matching_members
                     if member.filename.rsplit("/", 1)[-1].lower() == expected_name
                 ),
-                matching_members[0]
+                None,
             )
+            if preferred_member is None:
+                raise ArchiveExtractionError(
+                    f"ZIP archive does not contain requested DLL {request.dll_name}"
+                )
 
             extracted_content = archive.read(preferred_member)
             if not extracted_content:
                 raise ArchiveExtractionError("Extracted DLL from ZIP archive is empty")
 
-            self._validate_dll_signature(extracted_content)
+            self._validate_dll_architecture(extracted_content, request.architecture)
             return extracted_content
 
     @staticmethod
-    def _validate_dll_signature(content: bytes) -> None:
-        """Reject content that is neither a PE DLL nor a supported archive."""
-        if content.startswith(b"MZ"):
+    def _detect_pe_architecture(content: bytes) -> Architecture:
+        """Return the PE machine architecture or reject invalid DLL content."""
+        if not content.startswith(b"MZ"):
+            raise DownloadExecutionError(
+                "Downloaded content is not a valid DLL (missing PE signature)"
+            )
+
+        if len(content) < _PE_POINTER_OFFSET + 4:
+            raise DownloadExecutionError(
+                "Downloaded content is not a valid DLL (missing PE signature)"
+            )
+
+        pe_offset = int.from_bytes(
+            content[_PE_POINTER_OFFSET:_PE_POINTER_OFFSET + 4],
+            "little",
+        )
+        machine_offset = pe_offset + len(_PE_SIGNATURE)
+        if (
+            pe_offset < 0
+            or len(content) < machine_offset + 2
+            or content[pe_offset:machine_offset] != _PE_SIGNATURE
+        ):
+            raise DownloadExecutionError(
+                "Downloaded content is not a valid DLL (missing PE signature)"
+            )
+
+        machine = int.from_bytes(content[machine_offset:machine_offset + 2], "little")
+        architecture = _PE_MACHINE_ARCHITECTURES.get(machine)
+        if architecture is None:
+            raise DownloadExecutionError(
+                f"Downloaded DLL uses unsupported PE machine type 0x{machine:04x}"
+            )
+
+        characteristics_offset = machine_offset + _PE_CHARACTERISTICS_OFFSET_FROM_MACHINE
+        if len(content) < characteristics_offset + 2:
+            raise DownloadExecutionError(
+                "Downloaded content is not a valid DLL (missing PE signature)"
+            )
+        characteristics = int.from_bytes(
+            content[characteristics_offset:characteristics_offset + 2],
+            "little",
+        )
+        if characteristics & _PE_DLL_CHARACTERISTIC == 0:
+            raise DownloadExecutionError("Downloaded PE file is not a DLL")
+        return architecture
+
+    @classmethod
+    def _validate_dll_architecture(
+        cls,
+        content: bytes,
+        requested_architecture: Architecture,
+    ) -> None:
+        """Reject PE DLL content that does not match the requested architecture."""
+        actual_architecture = cls._detect_pe_architecture(content)
+        if requested_architecture == Architecture.UNKNOWN:
             return
-        raise DownloadExecutionError("Downloaded content is not a valid DLL (missing PE signature)")
+        if actual_architecture == requested_architecture:
+            return
+        raise DownloadExecutionError(
+            "Downloaded DLL architecture "
+            f"{actual_architecture.value} does not match requested architecture "
+            f"{requested_architecture.value}"
+        )

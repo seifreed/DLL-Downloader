@@ -5,10 +5,19 @@ HTTP client adapter built on top of the shared requests transport.
 from collections.abc import Mapping
 
 from ...domain.services.http_client import HTTPFileInfo
-from ..http_session import HTTPSessionProtocol, HTTPSessionResource
+from ..http_session import (
+    HTTPResponseProtocol,
+    HTTPSessionProtocol,
+    HTTPSessionResource,
+)
 from .request_headers import RequestHeaderBuilder
 from .retry_policy import RetryPolicy
-from .transport import HTTPClientError, HTTPResponse, RequestsTransport
+from .transport import (
+    HTTP_STREAM_ERROR_TYPES,
+    HTTPClientError,
+    HTTPResponse,
+    RequestsTransport,
+)
 from .user_agents import (
     FixedUserAgentProvider,
     RandomUserAgentProvider,
@@ -118,13 +127,34 @@ class RequestsHTTPClient:
         headers: Mapping[str, str] | None = None,
     ) -> bytes:
         response = self._transport.execute("DOWNLOAD", url, headers=headers, stream=True)
-        if not response.ok:
-            raise HTTPClientError(
-                f"Download failed with status {response.status_code}",
-                status_code=response.status_code,
-                url=url,
+        try:
+            if not response.ok:
+                raise HTTPClientError(
+                    f"Download failed with status {response.status_code}",
+                    status_code=response.status_code,
+                    url=url,
+                )
+            return b"".join(
+                chunk for chunk in response.iter_content(chunk_size=8192) if chunk
             )
-        return b"".join(chunk for chunk in response.iter_content(chunk_size=8192) if chunk)
+        except HTTP_STREAM_ERROR_TYPES as exc:
+            raise HTTPClientError(
+                f"Download stream failed: {exc}",
+                status_code=response.status_code,
+                url=response.url or url,
+            ) from exc
+        finally:
+            self._close_response(response)
+
+    @staticmethod
+    def _close_response(response: HTTPResponseProtocol) -> None:
+        close_response = getattr(response, "close", None)
+        if not callable(close_response):
+            return
+        try:
+            close_response()
+        except HTTP_STREAM_ERROR_TYPES:
+            return
 
     def head(self, url: str) -> dict[str, str]:
         response = self._transport.execute("HEAD", url, allow_redirects=True)

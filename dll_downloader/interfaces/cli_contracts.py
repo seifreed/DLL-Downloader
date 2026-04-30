@@ -58,6 +58,8 @@ def resolve_dll_names(
     """Resolve CLI-provided DLL names from direct args or a batch file."""
     if not args.dll_name and not args.file:
         raise ValueError("Please provide a DLL name or use --file")
+    if args.dll_name and args.file:
+        raise ValueError("Please provide either a DLL name or --file, not both")
 
     if args.file:
         return read_dll_list(args.file)

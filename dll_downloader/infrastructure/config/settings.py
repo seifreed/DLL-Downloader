@@ -16,6 +16,7 @@ class Settings:
     download_directory: str = field(default_factory=lambda: str(Path.cwd() / "downloads"))
     download_base_url: str = "https://es.dll-files.com"
     http_timeout: int = 60
+    virustotal_timeout: float = 60.0
     http_max_retries: int = 5
     http_retry_backoff_seconds: float = 0.0
     http_retry_jitter_seconds: float = 0.0
@@ -31,6 +32,9 @@ class Settings:
         """Validate the current settings."""
         if self.http_timeout <= 0:
             raise ValueError("http_timeout must be positive")
+
+        if self.virustotal_timeout <= 0:
+            raise ValueError("virustotal_timeout must be positive")
 
         if self.http_max_retries <= 0:
             raise ValueError("http_max_retries must be positive")

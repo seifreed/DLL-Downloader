@@ -274,6 +274,54 @@ def test_cleanup_runtime_resources_accepts_missing_scanner() -> None:
 
 
 @pytest.mark.unit
+def test_cleanup_runtime_resources_closes_scanner_after_http_close_failure() -> None:
+    class FailingHTTPClient(HTTPClientStub):
+        def close(self) -> None:
+            self.closed = True
+            raise OSError("http close failed")
+
+    http_client = FailingHTTPClient()
+    scanner = ScannerStub()
+
+    cleanup_runtime_resources(http_client, scanner)
+
+    assert http_client.closed is True
+    assert scanner.closed is True
+
+
+@pytest.mark.unit
+def test_cleanup_runtime_resources_closes_scanner_after_value_error() -> None:
+    class FailingHTTPClient(HTTPClientStub):
+        def close(self) -> None:
+            self.closed = True
+            raise ValueError("http close failed")
+
+    http_client = FailingHTTPClient()
+    scanner = ScannerStub()
+
+    cleanup_runtime_resources(http_client, scanner)
+
+    assert http_client.closed is True
+    assert scanner.closed is True
+
+
+@pytest.mark.unit
+def test_cleanup_runtime_resources_suppresses_scanner_close_failure() -> None:
+    class FailingScanner(ScannerStub):
+        def close(self) -> None:
+            self.closed = True
+            raise RuntimeError("scanner close failed")
+
+    http_client = HTTPClientStub()
+    scanner = FailingScanner()
+
+    cleanup_runtime_resources(http_client, scanner)
+
+    assert http_client.closed is True
+    assert scanner.closed is True
+
+
+@pytest.mark.unit
 def test_cli_application_service_create_invocation_uses_settings_and_args() -> None:
     service = CLIApplicationService(
         StubPresenter(),
@@ -324,6 +372,32 @@ def test_cli_application_service_run_from_args_raises_on_invalid_input() -> None
 
     with pytest.raises(ValueError, match="Please provide a DLL name or use --file"):
         service.run_from_args(args, parser, Settings(), lambda path: [])
+
+
+@pytest.mark.unit
+def test_cli_application_service_create_invocation_rejects_unsafe_name() -> None:
+    service = CLIApplicationService(
+        StubPresenter(),
+        lambda settings, output_dir=None: _application_with_use_case(SuccessfulUseCase()),
+        writer=RecordingWriter(),
+    )
+    args = type(
+        "Args",
+        (),
+        {
+            "dll_name": "../evil",
+            "file": None,
+            "arch": "x64",
+            "no_scan": False,
+            "force": False,
+            "extract": False,
+            "debug": False,
+            "output_dir": None,
+        },
+    )()
+
+    with pytest.raises(ValueError, match="DLL name"):
+        service.create_invocation(args, __import__("argparse").ArgumentParser(), Settings(), lambda path: [])
 
 
 @pytest.mark.unit

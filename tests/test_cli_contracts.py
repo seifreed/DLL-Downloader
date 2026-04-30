@@ -40,6 +40,18 @@ def test_resolve_dll_names_raises_when_missing_inputs() -> None:
 
 
 @pytest.mark.unit
+def test_resolve_dll_names_rejects_ambiguous_inputs() -> None:
+    parser = argparse.ArgumentParser()
+    args = argparse.Namespace(dll_name="ignored.dll", file="dlls.txt")
+    reader = RecordingReader(["a.dll"])
+
+    with pytest.raises(ValueError, match="either a DLL name or --file"):
+        resolve_dll_names(args, parser, reader)
+
+    assert reader.calls == []
+
+
+@pytest.mark.unit
 def test_resolve_dll_names_reads_batch_file() -> None:
     parser = argparse.ArgumentParser()
     args = argparse.Namespace(dll_name=None, file="dlls.txt")

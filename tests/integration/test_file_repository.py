@@ -11,6 +11,7 @@ operations with temporary directories. No mocks or stubs are used.
 
 import hashlib
 import json
+import os
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
@@ -80,6 +81,57 @@ def sample_dll_content() -> bytes:
         dos_header + dos_stub + dos_padding + dos_filler +
         pe_signature + coff_header + content_section
     )
+
+
+class FailingIndexSaveRepository(FileSystemDLLRepository):
+    """Repository variant that fails only after payload writes."""
+
+    def _save_index(self, _index: object) -> None:
+        raise RepositoryError("index write failed")
+
+
+class OSErrorAtomicWriteRepository(FileSystemDLLRepository):
+    """Repository variant whose atomic writes fail with OSError."""
+
+    def _atomic_write_bytes(self, _file_path: Path, _content: bytes) -> None:
+        raise OSError("atomic write failed")
+
+
+class DirectoryRaceRepository(FileSystemDLLRepository):
+    """Repository variant that creates a directory after write validation."""
+
+    def _validate_repository_write_path(self, file_path: Path) -> None:
+        super()._validate_repository_write_path(file_path)
+        if file_path.name == "race.dll" and not file_path.exists():
+            file_path.mkdir()
+
+
+class FailingRollbackWriteRepository(FailingIndexSaveRepository):
+    """Repository variant whose rollback restoration write fails."""
+
+    def _atomic_write_bytes(self, file_path: Path, content: bytes) -> None:
+        if content == b"original content":
+            raise OSError("rollback restore failed")
+        super()._atomic_write_bytes(file_path, content)
+
+
+class VanishingPayloadRepository(FileSystemDLLRepository):
+    """Repository variant that removes payloads during index validation."""
+
+    def _path_locations_match(self, left: Path, right: Path) -> bool:
+        matches = super()._path_locations_match(left, right)
+        left.unlink(missing_ok=True)
+        return matches
+
+
+class EscapingFallbackRepository(FileSystemDLLRepository):
+    """Repository variant that simulates a fallback payload resolving outside."""
+
+    def _path_location_is_within_repository(self, _file_path: Path) -> bool:
+        return True
+
+    def _path_is_within_repository(self, _file_path: Path) -> bool:
+        return False
 
 
 @pytest.fixture
@@ -330,6 +382,160 @@ class TestFileSystemDLLRepositorySave:
         assert expected_path.read_bytes() == sample_dll_content
         assert saved_dll.architecture == Architecture.X86
 
+    def test_find_rejects_unsafe_name(
+        self,
+        repository: FileSystemDLLRepository,
+        tmp_path: Path,
+    ) -> None:
+        with pytest.raises(ValueError, match="DLL name"):
+            repository.find_by_name("../evil", Architecture.X64)
+
+        assert not (tmp_path / "evil.dll").exists()
+
+    def test_save_rejects_symlink_dll_target(
+        self,
+        repository: FileSystemDLLRepository,
+        sample_dll_content: bytes,
+        tmp_path: Path,
+    ) -> None:
+        outside_file = tmp_path.parent / f"{tmp_path.name}-outside.dll"
+        outside_file.write_bytes(b"external content")
+        target_path = tmp_path / "x64" / "kernel32.dll"
+        target_path.symlink_to(outside_file)
+
+        try:
+            with pytest.raises(RepositoryError, match="symlink"):
+                repository.save(
+                    DLLFile(name="kernel32.dll", architecture=Architecture.X64),
+                    sample_dll_content,
+                )
+
+            assert outside_file.read_bytes() == b"external content"
+            assert target_path.is_symlink()
+            assert not (tmp_path / ".dll_index.json").exists()
+        finally:
+            target_path.unlink(missing_ok=True)
+            outside_file.unlink(missing_ok=True)
+
+    def test_save_rejects_symlink_index_target(
+        self,
+        repository: FileSystemDLLRepository,
+        sample_dll_content: bytes,
+        tmp_path: Path,
+    ) -> None:
+        outside_index = tmp_path.parent / f"{tmp_path.name}-outside-index.json"
+        outside_index.write_text("external index")
+        index_path = tmp_path / ".dll_index.json"
+        index_path.symlink_to(outside_index)
+
+        try:
+            with pytest.raises(RepositoryError, match="symlink"):
+                repository.save(
+                    DLLFile(name="kernel32.dll", architecture=Architecture.X64),
+                    sample_dll_content,
+                )
+
+            assert outside_index.read_text() == "external index"
+            assert index_path.is_symlink()
+            assert not (tmp_path / "x64" / "kernel32.dll").exists()
+        finally:
+            index_path.unlink(missing_ok=True)
+            outside_index.unlink(missing_ok=True)
+
+    @pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="requires FIFO support")
+    def test_save_rejects_fifo_payload_target(
+        self,
+        repository: FileSystemDLLRepository,
+        tmp_path: Path,
+    ) -> None:
+        target_path = tmp_path / "x64" / "pipe.dll"
+        os.mkfifo(target_path)
+
+        with pytest.raises(RepositoryError, match="non-regular file"):
+            repository._validate_repository_write_path(target_path)
+
+        assert target_path.exists()
+        assert not (tmp_path / ".dll_index.json").exists()
+
+    def test_save_rejects_index_directory_without_leaving_payload(
+        self,
+        repository: FileSystemDLLRepository,
+        sample_dll_content: bytes,
+        tmp_path: Path,
+    ) -> None:
+        index_path = tmp_path / ".dll_index.json"
+        index_path.mkdir()
+
+        with pytest.raises(RepositoryError, match="directory"):
+            repository.save(
+                DLLFile(name="orphan.dll", architecture=Architecture.X64),
+                sample_dll_content,
+            )
+
+        assert not (tmp_path / "x64" / "orphan.dll").exists()
+        assert repository.find_by_name("orphan.dll", Architecture.X64) is None
+
+    def test_save_rolls_back_new_payload_when_index_save_fails(
+        self,
+        sample_dll_content: bytes,
+        tmp_path: Path,
+    ) -> None:
+        repository = FailingIndexSaveRepository(tmp_path)
+
+        with pytest.raises(RepositoryError, match="index write failed"):
+            repository.save(
+                DLLFile(name="rollback.dll", architecture=Architecture.X64),
+                sample_dll_content,
+            )
+
+        assert not (tmp_path / "x64" / "rollback.dll").exists()
+        assert repository.find_by_name("rollback.dll", Architecture.X64) is None
+
+    def test_save_restores_existing_payload_when_index_save_fails(
+        self,
+        sample_dll_content: bytes,
+        tmp_path: Path,
+    ) -> None:
+        repository = FileSystemDLLRepository(tmp_path)
+        saved = repository.save(
+            DLLFile(name="restore.dll", architecture=Architecture.X64),
+            sample_dll_content,
+        )
+        saved_path = Path(_require_str(saved.file_path))
+
+        failing_repository = FailingIndexSaveRepository(tmp_path)
+        with pytest.raises(RepositoryError, match="index write failed"):
+            failing_repository.save(
+                DLLFile(name="restore.dll", architecture=Architecture.X64),
+                b"new content",
+            )
+
+        assert saved_path.read_bytes() == sample_dll_content
+
+    def test_save_rejects_repository_subdirectory_symlink(
+        self,
+        repository: FileSystemDLLRepository,
+        sample_dll_content: bytes,
+        tmp_path: Path,
+    ) -> None:
+        outside_dir = tmp_path.parent / f"{tmp_path.name}-outside-dir"
+        outside_dir.mkdir()
+        arch_dir = tmp_path / "x64"
+        arch_dir.rmdir()
+        arch_dir.symlink_to(outside_dir, target_is_directory=True)
+
+        try:
+            with pytest.raises(RepositoryError, match="outside repository"):
+                repository.save(
+                    DLLFile(name="kernel32.dll", architecture=Architecture.X64),
+                    sample_dll_content,
+                )
+
+            assert not (outside_dir / "kernel32.dll").exists()
+        finally:
+            arch_dir.unlink(missing_ok=True)
+            outside_dir.rmdir()
+
     def test_save_overwrites_existing_file(
         self,
         repository: FileSystemDLLRepository,
@@ -482,7 +688,7 @@ def test_find_with_unknown_architecture_finds_x64(tmp_download_dir: Path) -> Non
     """
     repository = FileSystemDLLRepository(tmp_download_dir)
     dll = DLLFile(name="unknown.dll", architecture=Architecture.X64)
-    repository.save(dll, b"data")
+    repository.save(dll, b"MZdata")
 
     found = repository.find_by_name("unknown.dll", Architecture.UNKNOWN)
     assert found is not None
@@ -502,6 +708,23 @@ def test_save_index_raises_repository_error(
         repository._save_index({"files": {}})
 
 
+def test_save_index_wraps_atomic_write_os_error(tmp_download_dir: Path) -> None:
+    repository = OSErrorAtomicWriteRepository(tmp_download_dir)
+
+    with pytest.raises(RepositoryError, match="Failed to save index"):
+        repository._save_index({"files": {}})
+
+
+def test_atomic_write_cleans_temp_file_when_replace_fails(tmp_download_dir: Path) -> None:
+    repository = DirectoryRaceRepository(tmp_download_dir)
+    target_path = tmp_download_dir / "x64" / "race.dll"
+
+    with pytest.raises(OSError):
+        repository._atomic_write_bytes(target_path, b"data")
+
+    assert sorted(path.name for path in target_path.parent.iterdir()) == ["race.dll"]
+
+
 def test_save_raises_repository_error_on_write(
     tmp_download_dir: Path,
 ) -> None:
@@ -515,6 +738,34 @@ def test_save_raises_repository_error_on_write(
 
     with pytest.raises(RepositoryError):
         repository.save(dll, b"data")
+
+
+def test_save_wraps_payload_os_error(tmp_download_dir: Path) -> None:
+    repository = OSErrorAtomicWriteRepository(tmp_download_dir)
+    dll = DLLFile(name="writefail.dll", architecture=Architecture.X64)
+
+    with pytest.raises(RepositoryError, match="Failed to save DLL"):
+        repository.save(dll, b"data")
+
+
+def test_failed_rollback_write_is_logged_without_masking_index_error(
+    tmp_download_dir: Path,
+) -> None:
+    repository = FileSystemDLLRepository(tmp_download_dir)
+    saved = repository.save(
+        DLLFile(name="rollbacklog.dll", architecture=Architecture.X64),
+        b"original content",
+    )
+    saved_path = Path(_require_str(saved.file_path))
+
+    failing_repository = FailingRollbackWriteRepository(tmp_download_dir)
+    with pytest.raises(RepositoryError, match="index write failed"):
+        failing_repository.save(
+            DLLFile(name="rollbacklog.dll", architecture=Architecture.X64),
+            b"new content",
+        )
+
+    assert saved_path.read_bytes() == b"new content"
 
 
 def test_delete_returns_false_on_exception(
@@ -540,6 +791,151 @@ def test_delete_with_missing_file_path_returns_true(tmp_download_dir: Path) -> N
     dll = DLLFile(name="missing.dll", architecture=Architecture.X64, file_path=str(tmp_download_dir / "x64" / "missing.dll"))
 
     assert repository.delete(dll) is True
+
+
+def test_delete_without_file_path_removes_expected_payload(
+    tmp_download_dir: Path,
+) -> None:
+    repository = FileSystemDLLRepository(tmp_download_dir)
+    saved = repository.save(
+        DLLFile(name="victim.dll", architecture=Architecture.X64),
+        b"victim content",
+    )
+    saved_path = Path(_require_str(saved.file_path))
+
+    assert repository.delete(DLLFile(name="victim.dll", architecture=Architecture.X64))
+    assert not saved_path.exists()
+    assert repository.find_by_name("victim.dll", Architecture.X64) is None
+
+
+def test_delete_rejects_mismatched_internal_file_path(
+    tmp_download_dir: Path,
+) -> None:
+    repository = FileSystemDLLRepository(tmp_download_dir)
+    first = repository.save(
+        DLLFile(name="first.dll", architecture=Architecture.X64),
+        b"first content",
+    )
+    second = repository.save(
+        DLLFile(name="second.dll", architecture=Architecture.X64),
+        b"second content",
+    )
+    first_path = Path(_require_str(first.file_path))
+    second_path = Path(_require_str(second.file_path))
+
+    result = repository.delete(
+        DLLFile(
+            name="first.dll",
+            architecture=Architecture.X64,
+            file_path=str(second_path),
+        )
+    )
+
+    assert result is False
+    assert first_path.read_bytes() == b"first content"
+    assert second_path.read_bytes() == b"second content"
+    assert repository.find_by_name("first.dll", Architecture.X64) is not None
+    assert repository.find_by_name("second.dll", Architecture.X64) is not None
+
+
+def test_path_locations_match_rejects_missing_parent(tmp_download_dir: Path) -> None:
+    repository = FileSystemDLLRepository(tmp_download_dir)
+
+    assert not repository._path_locations_match(
+        tmp_download_dir / "missing-parent" / "missing.dll",
+        tmp_download_dir / "x64" / "missing.dll",
+    )
+
+
+def test_delete_rejects_file_path_outside_repository(tmp_download_dir: Path, tmp_path: Path) -> None:
+    repository = FileSystemDLLRepository(tmp_download_dir)
+    outside_file = tmp_path / "outside.dll"
+    outside_file.write_bytes(b"external content")
+    dll = DLLFile(
+        name="outside.dll",
+        architecture=Architecture.X64,
+        file_path=str(outside_file),
+    )
+
+    assert repository.delete(dll) is False
+    assert outside_file.read_bytes() == b"external content"
+
+
+def test_delete_rejects_payload_resolving_outside_repository(
+    tmp_download_dir: Path,
+    tmp_path: Path,
+) -> None:
+    repository = FileSystemDLLRepository(tmp_download_dir)
+    arch_dir = tmp_download_dir / Architecture.X64.value
+    outside_dir = tmp_path / "outside-arch"
+    outside_dir.mkdir()
+    arch_dir.rmdir()
+    arch_dir.symlink_to(outside_dir, target_is_directory=True)
+
+    try:
+        dll = DLLFile(name="escaped.dll", architecture=Architecture.X64)
+
+        assert repository.delete(dll) is False
+        assert arch_dir.is_symlink()
+    finally:
+        arch_dir.unlink(missing_ok=True)
+
+
+def test_delete_rejects_symlink_path_outside_repository(
+    tmp_download_dir: Path,
+    tmp_path: Path,
+) -> None:
+    repository = FileSystemDLLRepository(tmp_download_dir)
+    inside_file = tmp_download_dir / "x64" / "inside.dll"
+    inside_file.write_bytes(b"inside content")
+    outside_symlink = tmp_path / "outside-link.dll"
+    outside_symlink.symlink_to(inside_file)
+    dll = DLLFile(
+        name="outside-link.dll",
+        architecture=Architecture.X64,
+        file_path=str(outside_symlink),
+    )
+
+    try:
+        assert repository.delete(dll) is False
+        assert outside_symlink.is_symlink()
+        assert inside_file.read_bytes() == b"inside content"
+    finally:
+        outside_symlink.unlink(missing_ok=True)
+
+
+def test_delete_removes_internal_symlink_pointing_outside_repository(
+    tmp_download_dir: Path,
+    tmp_path: Path,
+) -> None:
+    repository = FileSystemDLLRepository(tmp_download_dir)
+    outside_file = tmp_path / "outside-target.dll"
+    outside_file.write_bytes(b"external content")
+    symlink_path = tmp_download_dir / "x64" / "evil.dll"
+    symlink_path.symlink_to(outside_file)
+    dll = DLLFile(
+        name="evil.dll",
+        architecture=Architecture.X64,
+        file_path=str(symlink_path),
+    )
+
+    assert repository.delete(dll) is True
+    assert not symlink_path.is_symlink()
+    assert outside_file.read_bytes() == b"external content"
+
+
+def test_delete_removes_broken_symlink_inside_repository(tmp_download_dir: Path) -> None:
+    repository = FileSystemDLLRepository(tmp_download_dir)
+    symlink_path = tmp_download_dir / "x64" / "broken.dll"
+    symlink_path.symlink_to(tmp_download_dir / "missing-target.dll")
+    dll = DLLFile(
+        name="broken.dll",
+        architecture=Architecture.X64,
+        file_path=str(symlink_path),
+    )
+
+    assert repository.delete(dll) is True
+    assert not symlink_path.is_symlink()
 
 
 def test_find_nonexistent_dll_returns_none(
@@ -579,6 +975,313 @@ def test_find_file_on_disk_without_index_entry(
     assert found.name == "orphaned.dll"
     assert found.architecture == Architecture.X64
     assert found.file_hash == hashlib.sha256(content).hexdigest()
+
+
+def test_find_by_name_ignores_fallback_payload_without_mz_signature(
+    repository: FileSystemDLLRepository,
+    tmp_path: Path,
+) -> None:
+    dll_path = tmp_path / "x64" / "bad.dll"
+    dll_path.write_bytes(b"not a PE DLL")
+
+    assert repository.find_by_name("bad.dll", Architecture.X64) is None
+
+
+def test_find_by_name_ignores_fallback_payload_through_arch_symlink(
+    tmp_download_dir: Path,
+    tmp_path: Path,
+) -> None:
+    repository = FileSystemDLLRepository(tmp_download_dir)
+    arch_dir = tmp_download_dir / Architecture.X64.value
+    outside_dir = tmp_path / "outside-arch"
+    outside_dir.mkdir()
+    arch_dir.rmdir()
+    arch_dir.symlink_to(outside_dir, target_is_directory=True)
+    outside_payload = outside_dir / "escape.dll"
+    outside_payload.write_bytes(b"MZ external content")
+
+    try:
+        assert repository.find_by_name("escape.dll", Architecture.X64) is None
+    finally:
+        arch_dir.unlink(missing_ok=True)
+
+
+def test_find_by_name_ignores_symlink_fallback_payload(
+    repository: FileSystemDLLRepository,
+    tmp_path: Path,
+) -> None:
+    outside_file = tmp_path.parent / f"{tmp_path.name}-fallback-outside.dll"
+    outside_file.write_bytes(b"MZ outside content")
+    symlink_path = tmp_path / "x64" / "linked.dll"
+    symlink_path.symlink_to(outside_file)
+
+    try:
+        assert repository.find_by_name("linked.dll", Architecture.X64) is None
+    finally:
+        symlink_path.unlink(missing_ok=True)
+        outside_file.unlink(missing_ok=True)
+
+
+def test_find_by_name_ignores_fallback_payload_resolving_outside(
+    tmp_path: Path,
+) -> None:
+    repository = EscapingFallbackRepository(tmp_path)
+    payload_path = tmp_path / "x64" / "escape.dll"
+    payload_path.write_bytes(b"MZ outside content")
+
+    assert repository.find_by_name("escape.dll", Architecture.X64) is None
+
+
+def test_list_all_ignores_index_entry_without_file_path(
+    repository: FileSystemDLLRepository,
+    sample_dll_content: bytes,
+    tmp_path: Path,
+) -> None:
+    repository.save(
+        DLLFile(name="missing-path.dll", architecture=Architecture.X64),
+        sample_dll_content,
+    )
+    index_path = tmp_path / ".dll_index.json"
+    index_data = json.loads(index_path.read_text())
+    index_data["files"]["x64/missing-path.dll"]["file_path"] = None
+    index_path.write_text(json.dumps(index_data))
+
+    assert repository.list_all() == []
+
+
+def test_find_by_name_ignores_index_entry_when_payload_is_missing(
+    repository: FileSystemDLLRepository,
+    sample_dll_content: bytes,
+) -> None:
+    saved = repository.save(
+        DLLFile(name="ghost.dll", architecture=Architecture.X64),
+        sample_dll_content,
+    )
+    Path(_require_str(saved.file_path)).unlink()
+
+    assert repository.find_by_name("ghost.dll", Architecture.X64) is None
+    assert repository.exists("ghost.dll", Architecture.X64) is False
+
+
+def test_find_by_name_rejects_tampered_indexed_payload(
+    repository: FileSystemDLLRepository,
+    sample_dll_content: bytes,
+) -> None:
+    saved = repository.save(
+        DLLFile(name="tampered.dll", architecture=Architecture.X64),
+        sample_dll_content,
+    )
+    payload_path = Path(_require_str(saved.file_path))
+    payload_path.write_bytes(b"tampered content")
+
+    assert repository.find_by_name("tampered.dll", Architecture.X64) is None
+
+
+def test_find_by_name_rejects_mismatched_index_metadata(
+    repository: FileSystemDLLRepository,
+    sample_dll_content: bytes,
+    tmp_path: Path,
+) -> None:
+    repository.save(
+        DLLFile(name="valid.dll", architecture=Architecture.X64),
+        sample_dll_content,
+    )
+    index_path = tmp_path / ".dll_index.json"
+    index_data = json.loads(index_path.read_text())
+    index_data["files"]["x64/valid.dll"]["name"] = "other.dll"
+    index_path.write_text(json.dumps(index_data))
+
+    assert repository.find_by_name("valid.dll", Architecture.X64) is None
+
+
+def test_find_by_name_rejects_mismatched_index_architecture(
+    repository: FileSystemDLLRepository,
+    sample_dll_content: bytes,
+    tmp_path: Path,
+) -> None:
+    repository.save(
+        DLLFile(name="valid.dll", architecture=Architecture.X64),
+        sample_dll_content,
+    )
+    index_path = tmp_path / ".dll_index.json"
+    index_data = json.loads(index_path.read_text())
+    index_data["files"]["x64/valid.dll"]["architecture"] = "x86"
+    index_path.write_text(json.dumps(index_data))
+
+    assert repository.find_by_name("valid.dll", Architecture.X64) is None
+
+
+def test_list_all_rejects_mismatched_index_payload_path(
+    repository: FileSystemDLLRepository,
+    sample_dll_content: bytes,
+    tmp_path: Path,
+) -> None:
+    repository.save(
+        DLLFile(name="valid.dll", architecture=Architecture.X64),
+        sample_dll_content,
+    )
+    other = repository.save(
+        DLLFile(name="other.dll", architecture=Architecture.X64),
+        sample_dll_content,
+    )
+    index_path = tmp_path / ".dll_index.json"
+    index_data = json.loads(index_path.read_text())
+    index_data["files"]["x64/valid.dll"]["file_path"] = other.file_path
+    del index_data["files"]["x64/other.dll"]
+    index_path.write_text(json.dumps(index_data))
+
+    assert repository.list_all() == []
+
+
+def test_list_all_rejects_payload_that_disappears_during_validation(
+    tmp_path: Path,
+    sample_dll_content: bytes,
+) -> None:
+    repository = VanishingPayloadRepository(tmp_path)
+    repository.save(
+        DLLFile(name="vanish.dll", architecture=Architecture.X64),
+        sample_dll_content,
+    )
+
+    assert repository.list_all() == []
+
+
+def test_indexed_payload_validation_rejects_expected_hash_mismatch(
+    repository: FileSystemDLLRepository,
+    sample_dll_content: bytes,
+) -> None:
+    saved = repository.save(
+        DLLFile(name="expected-hash.dll", architecture=Architecture.X64),
+        sample_dll_content,
+    )
+    without_hash = replace(saved, file_hash=None)
+
+    assert not repository._indexed_payload_is_valid(
+        without_hash,
+        expected_hash="wrong-hash",
+    )
+
+
+def test_list_all_rejects_mismatched_index_payload_size(
+    repository: FileSystemDLLRepository,
+    sample_dll_content: bytes,
+    tmp_path: Path,
+) -> None:
+    repository.save(
+        DLLFile(name="wrong-size.dll", architecture=Architecture.X64),
+        sample_dll_content,
+    )
+    index_path = tmp_path / ".dll_index.json"
+    index_data = json.loads(index_path.read_text())
+    index_data["files"]["x64/wrong-size.dll"]["file_size"] = len(sample_dll_content) + 1
+    index_path.write_text(json.dumps(index_data))
+
+    assert repository.list_all() == []
+
+
+def test_find_by_name_ignores_index_entry_when_payload_is_symlink(
+    repository: FileSystemDLLRepository,
+    sample_dll_content: bytes,
+    tmp_path: Path,
+) -> None:
+    saved = repository.save(
+        DLLFile(name="linked.dll", architecture=Architecture.X64),
+        sample_dll_content,
+    )
+    payload_path = Path(_require_str(saved.file_path))
+    outside_file = tmp_path.parent / f"{tmp_path.name}-outside-linked.dll"
+    outside_file.write_bytes(b"external content")
+
+    try:
+        payload_path.unlink()
+        payload_path.symlink_to(outside_file)
+
+        assert repository.find_by_name("linked.dll", Architecture.X64) is None
+    finally:
+        payload_path.unlink(missing_ok=True)
+        outside_file.unlink(missing_ok=True)
+
+
+def test_index_symlink_is_not_loaded(
+    repository: FileSystemDLLRepository,
+    sample_dll_content: bytes,
+    tmp_path: Path,
+) -> None:
+    payload_path = tmp_path / "x64" / "external-index.dll"
+    payload_path.write_bytes(sample_dll_content)
+    file_hash = hashlib.sha256(sample_dll_content).hexdigest()
+    external_index = tmp_path.parent / f"{tmp_path.name}-external-index.json"
+    external_index.write_text(
+        json.dumps(
+            {
+                "files": {
+                    "x64/external-index.dll": {
+                        "name": "external-index.dll",
+                        "version": None,
+                        "architecture": "x64",
+                        "file_hash": file_hash,
+                        "file_path": str(payload_path),
+                        "download_url": "https://external.example/payload.zip",
+                        "file_size": len(sample_dll_content),
+                        "security_status": "unknown",
+                        "vt_detection_ratio": None,
+                        "vt_scan_date": None,
+                        "created_at": None,
+                    }
+                }
+            }
+        )
+    )
+    index_path = tmp_path / ".dll_index.json"
+    index_path.symlink_to(external_index)
+
+    try:
+        found = repository.find_by_name("external-index.dll", Architecture.X64)
+
+        assert found is not None
+        assert found.download_url is None
+        assert repository.find_by_hash(file_hash) is None
+        assert repository.list_all() == []
+    finally:
+        index_path.unlink(missing_ok=True)
+        external_index.unlink(missing_ok=True)
+
+
+def test_index_entry_pointing_outside_repository_is_not_returned(
+    repository: FileSystemDLLRepository,
+    sample_dll_content: bytes,
+    tmp_path: Path,
+) -> None:
+    saved = repository.save(
+        DLLFile(name="outside-index.dll", architecture=Architecture.X64),
+        sample_dll_content,
+    )
+    assert saved.file_hash is not None
+    Path(_require_str(saved.file_path)).unlink()
+    outside_file = tmp_path.parent / f"{tmp_path.name}-outside-index.dll"
+    outside_file.write_bytes(sample_dll_content)
+
+    try:
+        index_path = tmp_path / ".dll_index.json"
+        index_data = json.loads(index_path.read_text())
+        index_data["files"]["x64/outside-index.dll"]["file_path"] = str(outside_file)
+        index_path.write_text(json.dumps(index_data))
+
+        assert repository.find_by_name("outside-index.dll", Architecture.X64) is None
+        assert repository.find_by_hash(saved.file_hash) is None
+        assert [dll.name for dll in repository.list_all()] == []
+    finally:
+        outside_file.unlink(missing_ok=True)
+
+
+def test_find_by_name_ignores_directory_named_like_dll(
+    repository: FileSystemDLLRepository,
+    tmp_path: Path,
+) -> None:
+    dll_path = tmp_path / "x64" / "dir.dll"
+    dll_path.mkdir()
+
+    assert repository.find_by_name("dir.dll", Architecture.X64) is None
 
 
 class TestFileSystemDLLRepositoryFindByHash:
@@ -648,6 +1351,29 @@ class TestFileSystemDLLRepositoryFindByHash:
         found = repository.find_by_hash(fake_hash)
 
         assert found is None
+
+    def test_find_by_hash_rejects_mismatched_payload_hash(
+        self,
+        repository: FileSystemDLLRepository,
+        sample_dll_content: bytes,
+        tmp_path: Path,
+    ) -> None:
+        saved = repository.save(
+            DLLFile(name="valid.dll", architecture=Architecture.X64),
+            sample_dll_content,
+        )
+        payload_path = Path(_require_str(saved.file_path))
+        payload_path.write_bytes(b"tampered content")
+
+        assert saved.file_hash is not None
+        assert repository.find_by_hash(saved.file_hash) is None
+
+        index_path = tmp_path / ".dll_index.json"
+        index_data = json.loads(index_path.read_text())
+        index_data["files"]["x64/valid.dll"]["file_hash"] = "fakehash"
+        index_path.write_text(json.dumps(index_data))
+
+        assert repository.find_by_hash("fakehash") is None
 
 
 class TestFileSystemDLLRepositoryDelete:
@@ -969,6 +1695,101 @@ class TestFileSystemDLLRepositoryIndexPersistence:
         # Should return empty list
         all_dlls = repo.list_all()
         assert all_dlls == []
+
+    def test_invalid_index_entries_are_skipped_when_listing(
+        self,
+        tmp_path: Path,
+        sample_dll_content: bytes,
+    ) -> None:
+        repo = FileSystemDLLRepository(tmp_path)
+        repo.save(DLLFile(name="valid.dll", architecture=Architecture.X64), sample_dll_content)
+
+        index_path = tmp_path / ".dll_index.json"
+        index_data = json.loads(index_path.read_text())
+        valid_entry = index_data["files"]["x64/valid.dll"]
+        index_data["files"]["x64/bad.dll"] = {
+            **valid_entry,
+            "name": "bad.dll",
+            "architecture": "bogus",
+        }
+        index_path.write_text(json.dumps(index_data))
+
+        all_dlls = repo.list_all()
+
+        assert [dll.name for dll in all_dlls] == ["valid.dll"]
+
+    def test_malformed_index_entry_does_not_hide_valid_entries(
+        self,
+        tmp_path: Path,
+        sample_dll_content: bytes,
+    ) -> None:
+        repo = FileSystemDLLRepository(tmp_path)
+        saved = repo.save(
+            DLLFile(name="valid.dll", architecture=Architecture.X64),
+            sample_dll_content,
+        )
+        assert saved.file_hash is not None
+
+        index_path = tmp_path / ".dll_index.json"
+        index_data = json.loads(index_path.read_text())
+        index_data["files"]["x64/malformed.dll"] = {"architecture": "x64"}
+        index_path.write_text(json.dumps(index_data))
+
+        all_dlls = repo.list_all()
+        found = repo.find_by_hash(saved.file_hash)
+
+        assert [dll.name for dll in all_dlls] == ["valid.dll"]
+        assert found is not None
+        assert found.name == "valid.dll"
+
+    def test_find_by_hash_skips_invalid_index_entries(
+        self,
+        tmp_path: Path,
+        sample_dll_content: bytes,
+    ) -> None:
+        repo = FileSystemDLLRepository(tmp_path)
+        saved = repo.save(DLLFile(name="valid.dll", architecture=Architecture.X64), sample_dll_content)
+        assert saved.file_hash is not None
+
+        index_path = tmp_path / ".dll_index.json"
+        index_data = json.loads(index_path.read_text())
+        valid_entry = index_data["files"]["x64/valid.dll"]
+        index_data["files"] = {
+            "x64/other.dll": {
+                **valid_entry,
+                "name": "other.dll",
+                "file_hash": "different-hash",
+            },
+            "x64/bad.dll": {
+                **valid_entry,
+                "name": "bad.dll",
+                "architecture": "bogus",
+            },
+            "x64/valid.dll": valid_entry,
+        }
+        index_path.write_text(json.dumps(index_data))
+
+        found = repo.find_by_hash(saved.file_hash)
+
+        assert found is not None
+        assert found.name == "valid.dll"
+
+    def test_find_by_name_ignores_invalid_index_entry(
+        self,
+        tmp_path: Path,
+        sample_dll_content: bytes,
+    ) -> None:
+        repo = FileSystemDLLRepository(tmp_path)
+        saved = repo.save(DLLFile(name="bad.dll", architecture=Architecture.X64), sample_dll_content)
+        assert saved.file_path is not None
+        Path(saved.file_path).unlink()
+
+        index_path = tmp_path / ".dll_index.json"
+        index_data = json.loads(index_path.read_text())
+        index_data["files"]["x64/bad.dll"]["architecture"] = "bogus"
+        index_path.write_text(json.dumps(index_data))
+
+        assert repo.find_by_name("bad.dll", Architecture.X64) is None
 
 
 @pytest.mark.integration

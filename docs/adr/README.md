@@ -54,6 +54,7 @@ Each ADR follows this structure:
 | [013](013-remove-legacy-compatibility-shims.md) | Remove Legacy Compatibility Shims | Accepted | 2026-03-10 |
 | [014](014-lazy-public-wiring-and-explicit-resolver-dependencies.md) | Lazy Public Wiring and Explicit Resolver Dependencies | Accepted | 2026-03-10 |
 | [015](015-split-core-api-from-default-runtime-surface.md) | Split Core API from Default Runtime Surface | Accepted | 2026-03-10 |
+| [016](016-runtime-safety-validation-and-timeouts.md) | Runtime Safety Validation and Timeouts | Accepted | 2026-04-30 |
 
 ## Contributing
 
@@ -77,4 +78,4 @@ All ADRs are licensed under GPLv3 and authored by Marc Rivero López unless othe
 
 ---
 
-**Last Updated**: 2026-03-10
+**Last Updated**: 2026-04-30

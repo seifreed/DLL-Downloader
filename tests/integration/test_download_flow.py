@@ -51,6 +51,26 @@ def _build_zip_payload(dll_name: str, dll_bytes: bytes) -> bytes:
     return archive_buffer.getvalue()
 
 
+def _build_pe_payload(
+    architecture: Architecture,
+    marker: bytes = b"",
+) -> bytes:
+    """Create a minimal PE-like DLL payload with a real machine field."""
+    machine_by_architecture = {
+        Architecture.X86: 0x014C,
+        Architecture.X64: 0x8664,
+    }
+    machine = machine_by_architecture[architecture]
+    pe_offset = 0x80
+    payload = bytearray(pe_offset + 24)
+    payload[0:2] = b"MZ"
+    payload[0x3C:0x40] = pe_offset.to_bytes(4, "little")
+    payload[pe_offset:pe_offset + 4] = b"PE\x00\x00"
+    payload[pe_offset + 4:pe_offset + 6] = machine.to_bytes(2, "little")
+    payload[pe_offset + 22:pe_offset + 24] = (0x2000).to_bytes(2, "little")
+    return bytes(payload) + marker
+
+
 class InMemoryHTTPClient(IHTTPClient):
     """
     Lightweight HTTP client that serves DLL content from memory.
@@ -301,14 +321,9 @@ def sample_dll_content() -> bytes:
     Returns:
         ZIP bytes containing a minimal valid DLL structure
     """
-    dos_header = b'MZ\x90\x00'  # DOS signature
-    dos_stub = b'\x03\x00\x00\x00\x04\x00\x00\x00\xff\xff\x00\x00'
-    dos_padding = b'\xb8\x00\x00\x00\x00\x00\x00\x00\x40\x00\x00\x00'
-    dos_filler = b'\x00' * 32
-    pe_signature = b'PE\x00\x00'  # PE signature
     content = b'Test DLL content for integration testing.' * 50
 
-    dll_bytes = dos_header + dos_stub + dos_padding + dos_filler + pe_signature + content
+    dll_bytes = _build_pe_payload(Architecture.X64, content)
     return _build_zip_payload("sample.dll", dll_bytes)
 
 
@@ -333,7 +348,11 @@ class TestDownloadFlowBasicOperations:
         """
         # Register URL in HTTP client
         url = "https://test.example.com/dlls/x64/kernel32.dll"
-        http_client.register_url(url, sample_dll_content)
+        content = _build_zip_payload(
+            "kernel32.dll",
+            _build_pe_payload(Architecture.X64, b"kernel32 content"),
+        )
+        http_client.register_url(url, content)
 
         # Execute download
         request = DownloadDLLRequest(
@@ -372,7 +391,11 @@ class TestDownloadFlowBasicOperations:
             - Hash is stored in entity
         """
         url = "https://test.example.com/dlls/x64/test.dll"
-        http_client.register_url(url, sample_dll_content)
+        content = _build_zip_payload(
+            "test.dll",
+            _build_pe_payload(Architecture.X64, b"test content"),
+        )
+        http_client.register_url(url, content)
 
         request = DownloadDLLRequest(
             dll_name="test.dll",
@@ -381,7 +404,7 @@ class TestDownloadFlowBasicOperations:
         )
         response = use_case.execute(request)
 
-        expected_hash = hashlib.sha256(sample_dll_content).hexdigest()
+        expected_hash = hashlib.sha256(content).hexdigest()
         assert _require_dll_file(response.dll_file).file_hash == expected_hash
 
     def test_download_x86_architecture(
@@ -401,7 +424,11 @@ class TestDownloadFlowBasicOperations:
             - Architecture is correctly set
         """
         url = "https://test.example.com/dlls/x86/user32.dll"
-        http_client.register_url(url, sample_dll_content)
+        x86_content = _build_zip_payload(
+            "user32.dll",
+            _build_pe_payload(Architecture.X86, b"user32 x86 content"),
+        )
+        http_client.register_url(url, x86_content)
 
         request = DownloadDLLRequest(
             dll_name="user32.dll",
@@ -438,7 +465,11 @@ class TestDownloadFlowCaching:
         """
         # Pre-save a DLL
         dll = DLLFile(name="cached.dll", architecture=Architecture.X64, version="1.0")
-        repository.save(dll, sample_dll_content)
+        cached_content = _build_zip_payload(
+            "cached.dll",
+            _build_pe_payload(Architecture.X64, b"cached content"),
+        )
+        repository.save(dll, cached_content)
 
         # Attempt to download (should return cached version)
         request = DownloadDLLRequest(
@@ -473,7 +504,10 @@ class TestDownloadFlowCaching:
         repository.save(dll, sample_dll_content)
 
         # Register new content
-        new_content = _build_zip_payload("force.dll", b"MZ\x90\x00new version content")
+        new_content = _build_zip_payload(
+            "force.dll",
+            _build_pe_payload(Architecture.X64, b"new version content"),
+        )
         url = "https://test.example.com/dlls/x64/force.dll"
         http_client.register_url(url, new_content)
 
@@ -515,9 +549,13 @@ class TestDownloadFlowSecurityScanning:
             - File is saved
         """
         url = "https://test.example.com/dlls/x64/clean.dll"
-        http_client.register_url(url, sample_dll_content)
+        content = _build_zip_payload(
+            "clean.dll",
+            _build_pe_payload(Architecture.X64, b"clean content"),
+        )
+        http_client.register_url(url, content)
 
-        file_hash = hashlib.sha256(sample_dll_content).hexdigest()
+        file_hash = hashlib.sha256(content).hexdigest()
         security_scanner.register_scan_result(file_hash, SecurityStatus.CLEAN, "0/72")
 
         request = DownloadDLLRequest(
@@ -551,9 +589,13 @@ class TestDownloadFlowSecurityScanning:
             - File is still saved (warning only)
         """
         url = "https://test.example.com/dlls/x64/suspicious.dll"
-        http_client.register_url(url, sample_dll_content)
+        content = _build_zip_payload(
+            "suspicious.dll",
+            _build_pe_payload(Architecture.X64, b"suspicious content"),
+        )
+        http_client.register_url(url, content)
 
-        file_hash = hashlib.sha256(sample_dll_content).hexdigest()
+        file_hash = hashlib.sha256(content).hexdigest()
         security_scanner.register_scan_result(file_hash, SecurityStatus.SUSPICIOUS, "3/72")
 
         request = DownloadDLLRequest(
@@ -589,9 +631,13 @@ class TestDownloadFlowSecurityScanning:
             - File is still saved (with warning)
         """
         url = "https://test.example.com/dlls/x64/malicious.dll"
-        http_client.register_url(url, sample_dll_content)
+        content = _build_zip_payload(
+            "malicious.dll",
+            _build_pe_payload(Architecture.X64, b"malicious content"),
+        )
+        http_client.register_url(url, content)
 
-        file_hash = hashlib.sha256(sample_dll_content).hexdigest()
+        file_hash = hashlib.sha256(content).hexdigest()
         security_scanner.register_scan_result(file_hash, SecurityStatus.MALICIOUS, "45/72")
 
         request = DownloadDLLRequest(
@@ -637,7 +683,11 @@ class TestDownloadFlowSecurityScanning:
         )
 
         url = "https://test.example.com/dlls/x64/notscan.dll"
-        http_client.register_url(url, sample_dll_content)
+        content = _build_zip_payload(
+            "notscan.dll",
+            _build_pe_payload(Architecture.X64, b"notscan content"),
+        )
+        http_client.register_url(url, content)
 
         request = DownloadDLLRequest(
             dll_name="notscan.dll",
@@ -666,7 +716,11 @@ class TestDownloadFlowSecurityScanning:
             - File is saved successfully
         """
         url = "https://test.example.com/dlls/x64/noscan.dll"
-        http_client.register_url(url, sample_dll_content)
+        content = _build_zip_payload(
+            "noscan.dll",
+            _build_pe_payload(Architecture.X64, b"noscan content"),
+        )
+        http_client.register_url(url, content)
 
         request = DownloadDLLRequest(
             dll_name="noscan.dll",
@@ -732,7 +786,11 @@ class TestDownloadFlowErrorHandling:
         )
 
         url = "https://test.example.com/dlls/x64/noscanner.dll"
-        http_client.register_url(url, sample_dll_content)
+        content = _build_zip_payload(
+            "noscanner.dll",
+            _build_pe_payload(Architecture.X64, b"noscanner content"),
+        )
+        http_client.register_url(url, content)
 
         request = DownloadDLLRequest(
             dll_name="noscanner.dll",
@@ -771,9 +829,13 @@ class TestDownloadFlowEndToEnd:
             - All metadata is preserved
         """
         url = "https://test.example.com/dlls/x64/complete.dll"
-        http_client.register_url(url, sample_dll_content)
+        content = _build_zip_payload(
+            "complete.dll",
+            _build_pe_payload(Architecture.X64, b"complete content"),
+        )
+        http_client.register_url(url, content)
 
-        file_hash = hashlib.sha256(sample_dll_content).hexdigest()
+        file_hash = hashlib.sha256(content).hexdigest()
         security_scanner.register_scan_result(file_hash, SecurityStatus.CLEAN, "0/72")
 
         request = DownloadDLLRequest(
@@ -796,13 +858,13 @@ class TestDownloadFlowEndToEnd:
         assert dll.file_hash == file_hash
         assert dll.security_status == SecurityStatus.CLEAN
         assert dll.vt_detection_ratio == "0/72"
-        assert dll.file_size == len(sample_dll_content)
+        assert dll.file_size == len(content)
 
         # Verify filesystem
         assert dll.file_path is not None
         file_path = Path(dll.file_path)
         assert file_path.exists()
-        assert file_path.read_bytes() == sample_dll_content
+        assert file_path.read_bytes() == content
 
         # Verify repository
         found = repository.find_by_name("complete.dll", Architecture.X64)
@@ -837,7 +899,10 @@ class TestDownloadFlowEndToEnd:
 
         for dll_name, arch in dlls:
             url = f"https://test.example.com/dlls/{arch.value}/{dll_name}"
-            content = _build_zip_payload(dll_name, b"MZ\x90\x00" + dll_name.encode())
+            content = _build_zip_payload(
+                dll_name,
+                _build_pe_payload(arch, dll_name.encode()),
+            )
             http_client.register_url(url, content)
 
             request = DownloadDLLRequest(
@@ -876,7 +941,10 @@ class TestDownloadFlowEndToEnd:
         url = f"https://test.example.com/dlls/x64/{dll_name}"
 
         # Version 1
-        v1_content = _build_zip_payload(dll_name, b"MZ\x90\x00version 1 content")
+        v1_content = _build_zip_payload(
+            dll_name,
+            _build_pe_payload(Architecture.X64, b"version 1 content"),
+        )
         http_client.register_url(url, v1_content)
 
         request = DownloadDLLRequest(
@@ -898,7 +966,10 @@ class TestDownloadFlowEndToEnd:
         assert _require_dll_file(response2.dll_file).file_hash == v1_hash
 
         # Update content
-        v2_content = _build_zip_payload(dll_name, b"MZ\x90\x00version 2 content")
+        v2_content = _build_zip_payload(
+            dll_name,
+            _build_pe_payload(Architecture.X64, b"version 2 content"),
+        )
         http_client.register_url(url, v2_content)
 
         # Force re-download
@@ -934,12 +1005,18 @@ class TestDownloadFlowEndToEnd:
 
         # x64 version
         x64_url = "https://test.example.com/dlls/x64/multiarch.dll"
-        x64_content = _build_zip_payload(dll_name, b"MZ\x90\x00x64 specific content")
+        x64_content = _build_zip_payload(
+            dll_name,
+            _build_pe_payload(Architecture.X64, b"x64 specific content"),
+        )
         http_client.register_url(x64_url, x64_content)
 
         # x86 version
         x86_url = "https://test.example.com/dlls/x86/multiarch.dll"
-        x86_content = _build_zip_payload(dll_name, b"MZ\x90\x00x86 specific content")
+        x86_content = _build_zip_payload(
+            dll_name,
+            _build_pe_payload(Architecture.X86, b"x86 specific content"),
+        )
         http_client.register_url(x86_url, x86_content)
 
         # Download x64

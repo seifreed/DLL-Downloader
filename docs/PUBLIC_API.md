@@ -32,6 +32,8 @@ default runtime wiring helpers.
 
 `Settings` remains part of the stable public API for the full `1.x` line.
 Any replacement with a narrower public configuration surface must ship as a `2.0` breaking change with explicit migration guidance.
+Additive settings fields, such as `virustotal_timeout`, are backward-compatible
+when they have safe defaults and remain supported for the current major line.
 
 ## Stable Package Symbols (`dll_downloader`)
 

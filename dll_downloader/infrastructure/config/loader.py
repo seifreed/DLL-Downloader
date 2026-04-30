@@ -9,12 +9,17 @@ import re
 from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
-from typing import ClassVar, TypedDict
+from typing import Any, ClassVar, TypedDict, cast
 
 from .settings import Settings
 
 RawSettingsMap = Mapping[str, object]
 ConvertedSettingValue = str | int | float | bool | tuple[str, ...]
+_FALSE_BOOLEAN_VALUES = {"false", "0", "no"}
+_TRUE_BOOLEAN_VALUES = {"true", "1", "yes"}
+_VT_API_KEY_LINE_PATTERN = re.compile(
+    r"^\s*apikey\s*=\s*(['\"])(?P<api_key>[^'\"]+)\1\s*(?:#.*)?$"
+)
 
 
 class SettingsInitKwargs(TypedDict, total=False):
@@ -22,6 +27,7 @@ class SettingsInitKwargs(TypedDict, total=False):
     download_directory: str
     download_base_url: str
     http_timeout: int
+    virustotal_timeout: float
     http_max_retries: int
     http_retry_backoff_seconds: float
     http_retry_jitter_seconds: float
@@ -39,7 +45,10 @@ class _JSONSettingsSource:
 
     @staticmethod
     def load(config_path: str) -> SettingsInitKwargs:
-        with open(config_path) as file_handle:
+        path = Path(config_path)
+        if path.exists() and not path.is_file():
+            raise OSError(f"Configuration path is not a regular file: {config_path}")
+        with path.open() as file_handle:
             config_data = json.load(file_handle)
         if not isinstance(config_data, Mapping):
             raise ValueError("Configuration file must contain a JSON object")
@@ -64,7 +73,7 @@ class _VTTomlSettingsSource:
             if home_override
             else Path("~/.vt.toml").expanduser()
         )
-        if not vt_path.exists():
+        if not vt_path.exists() or not vt_path.is_file():
             return None
 
         try:
@@ -72,8 +81,11 @@ class _VTTomlSettingsSource:
         except OSError:
             return None
 
-        match = re.search(r"apikey\s*=\s*['\"]([^'\"]+)['\"]", contents)
-        return match.group(1) if match else None
+        for line in contents.splitlines():
+            match = _VT_API_KEY_LINE_PATTERN.fullmatch(line)
+            if match:
+                return match.group("api_key")
+        return None
 
 
 class SettingsLoader:
@@ -90,6 +102,7 @@ class SettingsLoader:
         "DLL_DOWNLOAD_DIRECTORY": "download_directory",
         "DLL_DOWNLOAD_BASE_URL": "download_base_url",
         "DLL_HTTP_TIMEOUT": "http_timeout",
+        "DLL_VIRUSTOTAL_TIMEOUT": "virustotal_timeout",
         "DLL_HTTP_MAX_RETRIES": "http_max_retries",
         "DLL_HTTP_RETRY_BACKOFF_SECONDS": "http_retry_backoff_seconds",
         "DLL_HTTP_RETRY_JITTER_SECONDS": "http_retry_jitter_seconds",
@@ -107,6 +120,7 @@ class SettingsLoader:
         "download_directory": "download_directory",
         "download_base_url": "download_base_url",
         "http_timeout": "http_timeout",
+        "virustotal_timeout": "virustotal_timeout",
         "http_max_retries": "http_max_retries",
         "http_retry_backoff_seconds": "http_retry_backoff_seconds",
         "http_retry_jitter_seconds": "http_retry_jitter_seconds",
@@ -122,12 +136,12 @@ class SettingsLoader:
     @classmethod
     def from_env(cls) -> Settings:
         """Create settings from environment variables."""
-        return Settings(**_EnvironmentSettingsSource.load())
+        return cls._validated_settings(_EnvironmentSettingsSource.load())
 
     @classmethod
     def from_json(cls, config_path: str) -> Settings:
         """Load settings from a JSON configuration file."""
-        return Settings(**_JSONSettingsSource.load(config_path))
+        return cls._validated_settings(_JSONSettingsSource.load(config_path))
 
     @classmethod
     def load(cls, config_path: str | None = None) -> Settings:
@@ -137,8 +151,8 @@ class SettingsLoader:
 
         if resolved_config_path and os.path.exists(resolved_config_path):
             try:
-                settings = cls._merge(settings, cls.from_json(resolved_config_path))
-            except (json.JSONDecodeError, FileNotFoundError, ValueError) as exc:
+                settings = cls._merge(settings, _JSONSettingsSource.load(resolved_config_path))
+            except (OSError, json.JSONDecodeError, ValueError) as exc:
                 logging.warning(
                     "Failed to load config from %s: %s",
                     resolved_config_path,
@@ -148,9 +162,11 @@ class SettingsLoader:
         if settings.virustotal_api_key is None:
             vt_key = _VTTomlSettingsSource.load(os.environ.get("HOME"))
             if vt_key:
-                settings = replace(settings, virustotal_api_key=vt_key)
+                settings = cls._merge(settings, {"virustotal_api_key": vt_key})
 
-        return cls._merge(settings, cls.from_env())
+        settings = cls._merge(settings, _EnvironmentSettingsSource.load())
+        settings.validate()
+        return settings
 
     @classmethod
     def _mapped_kwargs(
@@ -189,7 +205,11 @@ class SettingsLoader:
             "suspicious_threshold",
         }:
             return int(value)
-        if attr_name in {"http_retry_backoff_seconds", "http_retry_jitter_seconds"}:
+        if attr_name in {
+            "virustotal_timeout",
+            "http_retry_backoff_seconds",
+            "http_retry_jitter_seconds",
+        }:
             return float(value)
         if attr_name == "user_agent_pool":
             return tuple(
@@ -198,8 +218,17 @@ class SettingsLoader:
                 if item.strip()
             )
         if attr_name in {"verify_ssl", "scan_before_save"}:
-            return value.lower() in ("true", "1", "yes")
+            return SettingsLoader._convert_env_bool(attr_name, value)
         return value
+
+    @staticmethod
+    def _convert_env_bool(attr_name: str, value: str) -> bool:
+        normalized = value.strip().lower()
+        if normalized in _TRUE_BOOLEAN_VALUES:
+            return True
+        if normalized in _FALSE_BOOLEAN_VALUES:
+            return False
+        raise ValueError(f"{attr_name} must be a boolean value")
 
     @staticmethod
     def _assign_mapped_value(
@@ -225,12 +254,15 @@ class SettingsLoader:
         attr_name: str,
         value: ConvertedSettingValue | None,
     ) -> bool:
-        normalized = value if value is None or isinstance(value, str) else str(value)
         if attr_name == "virustotal_api_key":
-            mapped["virustotal_api_key"] = normalized
+            if value is not None and not isinstance(value, str):
+                return False
+            mapped["virustotal_api_key"] = value
             return True
         if attr_name == "user_agent":
-            mapped["user_agent"] = normalized
+            if value is not None and not isinstance(value, str):
+                return False
+            mapped["user_agent"] = value
             return True
         return False
 
@@ -274,7 +306,7 @@ class SettingsLoader:
         attr_name: str,
         value: str | int | float | bool | tuple[str, ...] | None,
     ) -> bool:
-        if not isinstance(value, int):
+        if not isinstance(value, int) or isinstance(value, bool):
             return False
         if attr_name == "http_timeout":
             mapped["http_timeout"] = value
@@ -296,13 +328,16 @@ class SettingsLoader:
         attr_name: str,
         value: str | int | float | bool | tuple[str, ...] | None,
     ) -> bool:
-        if not isinstance(value, float):
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
             return False
         if attr_name == "http_retry_backoff_seconds":
-            mapped["http_retry_backoff_seconds"] = value
+            mapped["http_retry_backoff_seconds"] = float(value)
+            return True
+        if attr_name == "virustotal_timeout":
+            mapped["virustotal_timeout"] = float(value)
             return True
         if attr_name == "http_retry_jitter_seconds":
-            mapped["http_retry_jitter_seconds"] = value
+            mapped["http_retry_jitter_seconds"] = float(value)
             return True
         return False
 
@@ -330,12 +365,16 @@ class SettingsLoader:
         return None
 
     @staticmethod
-    def _merge(base: Settings, override: Settings) -> Settings:
-        defaults = Settings()
+    def _merge(base: Settings, override: SettingsInitKwargs) -> Settings:
         overrides = {
-            field_name: getattr(override, field_name)
-            for field_name in base.__dataclass_fields__
-            if getattr(override, field_name) != getattr(defaults, field_name)
-            and getattr(override, field_name) is not None
+            field_name: value
+            for field_name, value in override.items()
+            if value is not None
         }
-        return replace(base, **overrides)
+        return replace(base, **cast(dict[str, Any], overrides))
+
+    @staticmethod
+    def _validated_settings(values: SettingsInitKwargs) -> Settings:
+        settings = Settings(**values)
+        settings.validate()
+        return settings

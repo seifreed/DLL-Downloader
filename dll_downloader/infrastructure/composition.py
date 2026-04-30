@@ -30,7 +30,7 @@ class DefaultDownloadComponentFactory:
 
     def create_http_client(self, settings: Settings) -> RequestsHTTPClient:
         user_agent_provider = None
-        if settings.user_agent_pool:
+        if settings.user_agent_pool and not settings.user_agent:
             user_agent_provider = RandomUserAgentProvider(settings.user_agent_pool)
         return RequestsHTTPClient(
             timeout=settings.http_timeout,
@@ -52,6 +52,7 @@ class DefaultDownloadComponentFactory:
             api_key=settings.virustotal_api_key,
             malicious_threshold=settings.malicious_threshold,
             suspicious_threshold=settings.suspicious_threshold,
+            timeout=settings.virustotal_timeout,
         )
 
     def create_resolver(
@@ -76,7 +77,11 @@ class FactoryBackedDownloadApplicationAssembler:
         settings: Settings,
         output_dir: str | None = None,
     ) -> DownloadApplication:
-        download_path = Path(output_dir) if output_dir else settings.downloads_path
+        download_path = (
+            Path(output_dir).expanduser().resolve()
+            if output_dir
+            else settings.downloads_path
+        )
 
         repository = self._factory.create_repository(download_path)
         http_client = self._factory.create_http_client(settings)
