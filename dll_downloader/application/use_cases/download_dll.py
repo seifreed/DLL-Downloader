@@ -304,7 +304,10 @@ class DownloadDLLUseCase:
         except SecurityServiceError as exc:
             raise DownloadExecutionError(str(exc)) from exc
 
-        if scanned_dll.security_status == SecurityStatus.UNKNOWN:
+        if scanned_dll.security_status in {
+            SecurityStatus.UNKNOWN,
+            SecurityStatus.NOT_SCANNED,
+        }:
             raise DownloadExecutionError("Security scan did not complete")
 
         if scanned_dll.security_status == SecurityStatus.MALICIOUS:

@@ -335,7 +335,6 @@ class TestDownloadFlowBasicOperations:
         use_case: DownloadDLLUseCase,
         http_client: InMemoryHTTPClient,
         repository: FileSystemDLLRepository,
-        sample_dll_content: bytes,
     ) -> None:
         """
         Verify successful download of a new DLL file.
@@ -488,7 +487,6 @@ class TestDownloadFlowCaching:
         use_case: DownloadDLLUseCase,
         http_client: InMemoryHTTPClient,
         repository: FileSystemDLLRepository,
-        sample_dll_content: bytes,
     ) -> None:
         """
         Verify that force_download bypasses cache.
@@ -501,7 +499,11 @@ class TestDownloadFlowCaching:
         """
         # Pre-save a DLL
         dll = DLLFile(name="force.dll", architecture=Architecture.X64, version="1.0")
-        repository.save(dll, sample_dll_content)
+        cached_content = _build_zip_payload(
+            "force.dll",
+            _build_pe_payload(Architecture.X64, b"cached content"),
+        )
+        repository.save(dll, cached_content)
 
         # Register new content
         new_content = _build_zip_payload(

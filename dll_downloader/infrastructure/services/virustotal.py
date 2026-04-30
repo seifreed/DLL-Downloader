@@ -213,7 +213,13 @@ class VirusTotalScanner(ISecurityScanner):
                 error_message="File submitted for analysis. Results pending."
             )
 
-        except (OSError, requests.RequestException, ValueError, TypeError) as e:
+        except (
+            OSError,
+            requests.RequestException,
+            RuntimeError,
+            ValueError,
+            TypeError,
+        ) as e:
             logger.error(f"Failed to upload file to VirusTotal: {e}")
             raise VirusTotalError(f"File upload failed: {e}") from e
 

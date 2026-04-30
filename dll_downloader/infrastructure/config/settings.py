@@ -21,6 +21,19 @@ def _validate_positive_number(value: object, field_name: str) -> None:
         raise ValueError(f"{field_name} must be positive")
 
 
+def _validate_integer(value: object, field_name: str) -> int:
+    value = _validate_number(value, field_name)
+    if not isinstance(value, int):
+        raise ValueError(f"{field_name} must be an integer")
+    return value
+
+
+def _validate_positive_integer(value: object, field_name: str) -> None:
+    value = _validate_integer(value, field_name)
+    if value <= 0:
+        raise ValueError(f"{field_name} must be positive")
+
+
 def _validate_non_negative_number(value: object, field_name: str) -> None:
     value = _validate_number(value, field_name)
     if not isfinite(value):
@@ -88,9 +101,9 @@ class Settings:
         _validate_bool(self.scan_before_save, "scan_before_save")
         _validate_string(self.log_level, "log_level")
 
-        _validate_positive_number(self.http_timeout, "http_timeout")
+        _validate_positive_integer(self.http_timeout, "http_timeout")
         _validate_positive_number(self.virustotal_timeout, "virustotal_timeout")
-        _validate_positive_number(self.http_max_retries, "http_max_retries")
+        _validate_positive_integer(self.http_max_retries, "http_max_retries")
         _validate_non_negative_number(
             self.http_retry_backoff_seconds,
             "http_retry_backoff_seconds",
@@ -100,8 +113,8 @@ class Settings:
             "http_retry_jitter_seconds",
         )
 
-        _validate_positive_number(self.malicious_threshold, "malicious_threshold")
-        _validate_positive_number(self.suspicious_threshold, "suspicious_threshold")
+        _validate_positive_integer(self.malicious_threshold, "malicious_threshold")
+        _validate_positive_integer(self.suspicious_threshold, "suspicious_threshold")
 
         if self.suspicious_threshold >= self.malicious_threshold:
             raise ValueError(

@@ -988,6 +988,43 @@ def test_scan_file_upload_type_error_raises(
 
 
 @pytest.mark.unit
+def test_scan_file_upload_runtime_json_error_raises_virustotal_error(
+    tmp_download_dir: Path,
+) -> None:
+    class DummyResponse:
+        status_code = 200
+
+        def json(self) -> dict[str, object]:
+            raise RuntimeError("json failed")
+
+    class DummySession:
+        headers: dict[str, str] = {}
+
+        def get(self, *args: object, **kwargs: object) -> object:
+            raise NotImplementedError
+
+        def post(self, url: str, files: object = None, **kwargs: object) -> DummyResponse:
+            return DummyResponse()
+
+        def head(self, *args: object, **kwargs: object) -> object:
+            raise NotImplementedError
+
+        def close(self) -> None:
+            pass
+
+    scanner = HashNotFoundScanner(
+        api_key="key",
+        session_resource=_resource_with_session(cast(HTTPSessionProtocol, DummySession())),
+    )
+
+    sample = tmp_download_dir / "file.dll"
+    sample.write_bytes(b"data")
+
+    with pytest.raises(VirusTotalError, match="File upload failed: json failed"):
+        scanner.scan_file(str(sample))
+
+
+@pytest.mark.unit
 def test_scan_hash_404_raises() -> None:
     """
     Verify scan_hash raises FileNotFoundError on 404.

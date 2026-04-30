@@ -10,8 +10,10 @@ operations with temporary directories. No mocks or stubs are used.
 """
 
 import hashlib
+import io
 import json
 import os
+import zipfile
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
@@ -68,31 +70,15 @@ def sample_dll_content() -> bytes:
     Returns:
         Bytes representing a minimal valid DLL structure
     """
-    # Realistic PE header structure
-    dos_header = b'MZ\x90\x00'  # DOS signature
-    dos_stub = b'\x03\x00\x00\x00\x04\x00\x00\x00\xff\xff\x00\x00'
-    dos_padding = b'\xb8\x00\x00\x00\x00\x00\x00\x00\x40\x00\x00\x00'
-    dos_filler = b'\x00' * 32
-    pe_signature = b'PE\x00\x00'
-
-    # COFF header
-    coff_header = (
-        b'\x64\x86'  # Machine type: AMD64
-        b'\x03\x00'  # Number of sections
-        b'\x00\x00\x00\x00'  # Time stamp
-        b'\x00\x00\x00\x00'  # Pointer to symbol table
-        b'\x00\x00\x00\x00'  # Number of symbols
-        b'\xf0\x00'  # Size of optional header
-        b'\x22\x00'  # Characteristics
-    )
-
-    # Content section
     content_section = b'Realistic DLL content for integration testing.' * 50
+    return _build_pe_payload(Architecture.X64) + content_section
 
-    return (
-        dos_header + dos_stub + dos_padding + dos_filler +
-        pe_signature + coff_header + content_section
-    )
+
+def _build_zip_payload(dll_name: str, dll_bytes: bytes) -> bytes:
+    archive_buffer = io.BytesIO()
+    with zipfile.ZipFile(archive_buffer, "w") as archive:
+        archive.writestr(Path(dll_name).name, dll_bytes)
+    return archive_buffer.getvalue()
 
 
 class FailingIndexSaveRepository(FileSystemDLLRepository):
@@ -122,7 +108,7 @@ class FailingRollbackWriteRepository(FailingIndexSaveRepository):
     """Repository variant whose rollback restoration write fails."""
 
     def _atomic_write_bytes(self, file_path: Path, content: bytes) -> None:
-        if content == b"original content":
+        if content.endswith(b"original content"):
             raise OSError("rollback restore failed")
         super()._atomic_write_bytes(file_path, content)
 
@@ -374,7 +360,6 @@ class TestFileSystemDLLRepositorySave:
     def test_save_x86_architecture(
         self,
         repository: FileSystemDLLRepository,
-        sample_dll_content: bytes,
         tmp_path: Path,
     ) -> None:
         """
@@ -386,12 +371,13 @@ class TestFileSystemDLLRepositorySave:
             - Index is updated with x86 architecture
         """
         dll = DLLFile(name="user32.dll", architecture=Architecture.X86)
+        content = _build_pe_payload(Architecture.X86)
 
-        saved_dll = repository.save(dll, sample_dll_content)
+        saved_dll = repository.save(dll, content)
 
         expected_path = tmp_path / "x86" / "user32.dll"
         assert expected_path.exists()
-        assert expected_path.read_bytes() == sample_dll_content
+        assert expected_path.read_bytes() == content
         assert saved_dll.architecture == Architecture.X86
 
     def test_find_rejects_unsafe_name(
@@ -519,7 +505,7 @@ class TestFileSystemDLLRepositorySave:
         with pytest.raises(RepositoryError, match="index write failed"):
             failing_repository.save(
                 DLLFile(name="restore.dll", architecture=Architecture.X64),
-                b"new content",
+                _build_pe_payload(Architecture.X64) + b"new content",
             )
 
         assert saved_path.read_bytes() == sample_dll_content
@@ -564,7 +550,7 @@ class TestFileSystemDLLRepositorySave:
             - Index is updated with new metadata
         """
         # Save initial version
-        original_content = b"MZ\x90\x00original content"
+        original_content = _build_pe_payload(Architecture.X64) + b"original content"
         repository.save(dll_file_entity, original_content)
 
         # Save updated version
@@ -592,9 +578,9 @@ class TestFileSystemDLLRepositorySave:
         dll2 = DLLFile(name="user32.dll", architecture=Architecture.X64)
         dll3 = DLLFile(name="gdi32.dll", architecture=Architecture.X86)
 
-        content1 = b"MZ\x90\x00content1" + sample_dll_content
-        content2 = b"MZ\x90\x00content2" + sample_dll_content
-        content3 = b"MZ\x90\x00content3" + sample_dll_content
+        content1 = _build_pe_payload(Architecture.X64) + b"content1"
+        content2 = _build_pe_payload(Architecture.X64) + b"content2"
+        content3 = _build_pe_payload(Architecture.X86) + b"content3"
 
         repository.save(dll1, content1)
         repository.save(dll2, content2)
@@ -611,6 +597,36 @@ class TestFileSystemDLLRepositorySave:
         assert found_dll1 is not None
         assert found_dll2 is not None
         assert found_dll3 is not None
+
+    def test_save_accepts_zip_containing_requested_dll(
+        self,
+        repository: FileSystemDLLRepository,
+        tmp_path: Path,
+    ) -> None:
+        dll = DLLFile(name="zipped.dll", architecture=Architecture.X64)
+        zip_payload = _build_zip_payload(
+            "zipped.dll",
+            _build_pe_payload(Architecture.X64),
+        )
+
+        saved = repository.save(dll, zip_payload)
+
+        saved_path = Path(_require_str(saved.file_path))
+        assert saved_path == tmp_path / "x64" / "zipped.dll"
+        assert saved_path.read_bytes() == zip_payload
+
+    def test_save_rejects_non_dll_payload(
+        self,
+        repository: FileSystemDLLRepository,
+        tmp_path: Path,
+    ) -> None:
+        dll = DLLFile(name="bad.dll", architecture=Architecture.X64)
+
+        with pytest.raises(RepositoryError, match="non-DLL payload"):
+            repository.save(dll, b"not a PE DLL")
+
+        assert not (tmp_path / "x64" / "bad.dll").exists()
+        assert repository.find_by_name("bad.dll", Architecture.X64) is None
 
 
 class TestFileSystemDLLRepositoryFindByName:
@@ -675,7 +691,7 @@ class TestFileSystemDLLRepositoryFindByName:
         dll_x86 = DLLFile(name="common.dll", architecture=Architecture.X86, version="2.0")
 
         repository.save(dll_x64, sample_dll_content)
-        repository.save(dll_x86, sample_dll_content)
+        repository.save(dll_x86, _build_pe_payload(Architecture.X86))
 
         found = repository.find_by_name("common.dll")
 
@@ -749,7 +765,7 @@ def test_save_raises_repository_error_on_write(
     target_path.mkdir()
 
     with pytest.raises(RepositoryError):
-        repository.save(dll, b"data")
+        repository.save(dll, _build_pe_payload(Architecture.X64))
 
 
 def test_save_wraps_payload_os_error(tmp_download_dir: Path) -> None:
@@ -757,7 +773,7 @@ def test_save_wraps_payload_os_error(tmp_download_dir: Path) -> None:
     dll = DLLFile(name="writefail.dll", architecture=Architecture.X64)
 
     with pytest.raises(RepositoryError, match="Failed to save DLL"):
-        repository.save(dll, b"data")
+        repository.save(dll, _build_pe_payload(Architecture.X64))
 
 
 def test_failed_rollback_write_is_logged_without_masking_index_error(
@@ -766,7 +782,7 @@ def test_failed_rollback_write_is_logged_without_masking_index_error(
     repository = FileSystemDLLRepository(tmp_download_dir)
     saved = repository.save(
         DLLFile(name="rollbacklog.dll", architecture=Architecture.X64),
-        b"original content",
+        _build_pe_payload(Architecture.X64) + b"original content",
     )
     saved_path = Path(_require_str(saved.file_path))
 
@@ -774,10 +790,10 @@ def test_failed_rollback_write_is_logged_without_masking_index_error(
     with pytest.raises(RepositoryError, match="index write failed"):
         failing_repository.save(
             DLLFile(name="rollbacklog.dll", architecture=Architecture.X64),
-            b"new content",
+            _build_pe_payload(Architecture.X64) + b"new content",
         )
 
-    assert saved_path.read_bytes() == b"new content"
+    assert saved_path.read_bytes().endswith(b"new content")
 
 
 def test_delete_returns_false_on_exception(
@@ -788,7 +804,7 @@ def test_delete_returns_false_on_exception(
     """
     repository = FileSystemDLLRepository(tmp_download_dir)
     dll = DLLFile(name="deletefail.dll", architecture=Architecture.X64)
-    saved = repository.save(dll, b"data")
+    saved = repository.save(dll, _build_pe_payload(Architecture.X64))
     saved_path = Path(saved.file_path or "")
     saved_path.unlink()
     saved_path.mkdir()
@@ -811,7 +827,7 @@ def test_delete_without_file_path_removes_expected_payload(
     repository = FileSystemDLLRepository(tmp_download_dir)
     saved = repository.save(
         DLLFile(name="victim.dll", architecture=Architecture.X64),
-        b"victim content",
+        _build_pe_payload(Architecture.X64) + b"victim content",
     )
     saved_path = Path(_require_str(saved.file_path))
 
@@ -826,11 +842,11 @@ def test_delete_rejects_mismatched_internal_file_path(
     repository = FileSystemDLLRepository(tmp_download_dir)
     first = repository.save(
         DLLFile(name="first.dll", architecture=Architecture.X64),
-        b"first content",
+        _build_pe_payload(Architecture.X64) + b"first content",
     )
     second = repository.save(
         DLLFile(name="second.dll", architecture=Architecture.X64),
-        b"second content",
+        _build_pe_payload(Architecture.X64) + b"second content",
     )
     first_path = Path(_require_str(first.file_path))
     second_path = Path(_require_str(second.file_path))
@@ -844,8 +860,8 @@ def test_delete_rejects_mismatched_internal_file_path(
     )
 
     assert result is False
-    assert first_path.read_bytes() == b"first content"
-    assert second_path.read_bytes() == b"second content"
+    assert first_path.read_bytes().endswith(b"first content")
+    assert second_path.read_bytes().endswith(b"second content")
     assert repository.find_by_name("first.dll", Architecture.X64) is not None
     assert repository.find_by_name("second.dll", Architecture.X64) is not None
 
@@ -1136,6 +1152,37 @@ def test_find_by_name_rejects_tampered_indexed_payload(
     assert repository.find_by_name("tampered.dll", Architecture.X64) is None
 
 
+def test_find_by_name_rejects_indexed_payload_that_is_not_a_dll(
+    tmp_path: Path,
+) -> None:
+    repository = FileSystemDLLRepository(tmp_path)
+    payload = b"not a PE DLL"
+    payload_path = tmp_path / "x64" / "bad.dll"
+    payload_path.write_bytes(payload)
+    index_data = {
+        "files": {
+            "x64/bad.dll": {
+                "name": "bad.dll",
+                "version": None,
+                "architecture": "x64",
+                "file_hash": hashlib.sha256(payload).hexdigest(),
+                "file_path": str(payload_path),
+                "download_url": None,
+                "file_size": len(payload),
+                "security_status": "not_scanned",
+                "vt_detection_ratio": None,
+                "vt_scan_date": None,
+                "created_at": None,
+            }
+        }
+    }
+    (tmp_path / ".dll_index.json").write_text(json.dumps(index_data))
+
+    assert repository.find_by_name("bad.dll", Architecture.X64) is None
+    assert repository.find_by_hash(hashlib.sha256(payload).hexdigest()) is None
+    assert repository.list_all() == []
+
+
 def test_find_by_name_rejects_mismatched_index_metadata(
     repository: FileSystemDLLRepository,
     sample_dll_content: bytes,
@@ -1382,8 +1429,8 @@ class TestFileSystemDLLRepositoryFindByHash:
         dll1 = DLLFile(name="file1.dll", architecture=Architecture.X64)
         dll2 = DLLFile(name="file2.dll", architecture=Architecture.X64)
 
-        content1 = b"MZ\x90\x00unique content 1"
-        content2 = b"MZ\x90\x00unique content 2"
+        content1 = _build_pe_payload(Architecture.X64) + b"unique content 1"
+        content2 = _build_pe_payload(Architecture.X64) + b"unique content 2"
 
         saved1 = repository.save(dll1, content1)
         saved2 = repository.save(dll2, content2)
@@ -1608,7 +1655,7 @@ class TestFileSystemDLLRepositoryExists:
             - Returns True if found in any architecture
         """
         dll = DLLFile(name="common.dll", architecture=Architecture.X86)
-        repository.save(dll, sample_dll_content)
+        repository.save(dll, _build_pe_payload(Architecture.X86))
 
         assert repository.exists("common.dll") is True
 
@@ -1650,7 +1697,7 @@ class TestFileSystemDLLRepositoryListAll:
         dll3 = DLLFile(name="file3.dll", architecture=Architecture.X64)
 
         repository.save(dll1, sample_dll_content)
-        repository.save(dll2, sample_dll_content)
+        repository.save(dll2, _build_pe_payload(Architecture.X86))
         repository.save(dll3, sample_dll_content)
 
         all_dlls = repository.list_all()
@@ -1892,8 +1939,8 @@ class TestFileSystemDLLRepositoryRealWorldScenarios:
         dll_x64 = DLLFile(name="multiarch.dll", architecture=Architecture.X64, version="1.0")
         dll_x86 = DLLFile(name="multiarch.dll", architecture=Architecture.X86, version="2.0")
 
-        content_x64 = b"MZ\x90\x00x64 content"
-        content_x86 = b"MZ\x90\x00x86 content"
+        content_x64 = _build_pe_payload(Architecture.X64) + b"x64 content"
+        content_x86 = _build_pe_payload(Architecture.X86) + b"x86 content"
 
         repository.save(dll_x64, content_x64)
         repository.save(dll_x86, content_x86)
@@ -1933,7 +1980,7 @@ class TestFileSystemDLLRepositoryRealWorldScenarios:
 
         # Update (use replace since DLLFile is frozen)
         updated_dll = replace(dll, version="2.0")
-        updated_content = b"MZ\x90\x00updated content"
+        updated_content = _build_pe_payload(Architecture.X64) + b"updated content"
         updated = repository.save(updated_dll, updated_content)
 
         found_updated = repository.find_by_name("lifecycle.dll", Architecture.X64)
@@ -1967,7 +2014,12 @@ class TestFileSystemDLLRepositoryRealWorldScenarios:
                 name=f"file_{i:03d}.dll",
                 architecture=Architecture.X64 if i % 2 == 0 else Architecture.X86,
             )
-            repository.save(dll, sample_dll_content)
+            content = (
+                sample_dll_content
+                if dll.architecture == Architecture.X64
+                else _build_pe_payload(Architecture.X86)
+            )
+            repository.save(dll, content)
 
         # Verify all are listed
         all_dlls = repository.list_all()

@@ -8,8 +8,10 @@ import json
 import logging
 import os
 import tempfile
+import zipfile
 from dataclasses import replace
 from datetime import datetime
+from io import BytesIO
 from pathlib import Path
 from typing import TypedDict
 
@@ -233,6 +235,7 @@ class FileSystemDLLRepository(IDLLRepository):
         try:
             # Determine file path
             file_path = self._get_file_path(dll_file.name, dll_file.architecture)
+            self._validate_payload_content(dll_file, content)
             self._validate_repository_write_path(file_path)
             self._validate_repository_write_path(self._index_path)
             previous_content = file_path.read_bytes() if file_path.exists() else None
@@ -358,6 +361,71 @@ class FileSystemDLLRepository(IDLLRepository):
             logger.warning("Skipping unreadable fallback DLL payload: %s", exc)
             return False
         return FileSystemDLLRepository._content_is_pe_dll(content, architecture)
+
+    @classmethod
+    def _validate_payload_content(cls, dll_file: DLLFile, content: bytes) -> None:
+        """Reject repository payloads that are neither a DLL nor a valid DLL ZIP."""
+        if cls._content_matches_dll_payload(
+            dll_file.name,
+            dll_file.architecture,
+            content,
+        ):
+            return
+        raise RepositoryError(
+            "Refusing to save non-DLL payload: content must be a PE DLL or a ZIP "
+            "containing the requested DLL"
+        )
+
+    @classmethod
+    def _content_matches_dll_payload(
+        cls,
+        dll_name: str,
+        expected_architecture: Architecture,
+        content: bytes,
+    ) -> bool:
+        """Return True for direct DLL bytes or a ZIP carrying the requested DLL."""
+        if cls._content_is_pe_dll(content, expected_architecture):
+            return True
+        return cls._zip_payload_contains_valid_dll(
+            dll_name,
+            expected_architecture,
+            content,
+        )
+
+    @classmethod
+    def _zip_payload_contains_valid_dll(
+        cls,
+        dll_name: str,
+        expected_architecture: Architecture,
+        content: bytes,
+    ) -> bool:
+        """Return True when ZIP content contains the requested PE DLL member."""
+        archive_buffer = BytesIO(content)
+        if not zipfile.is_zipfile(archive_buffer):
+            return False
+
+        expected_name = dll_name.lower()
+        try:
+            with zipfile.ZipFile(BytesIO(content)) as archive:
+                for member in archive.infolist():
+                    if member.is_dir():
+                        continue
+                    member_name = member.filename.rsplit("/", 1)[-1].lower()
+                    if member_name != expected_name:
+                        continue
+                    member_content = archive.read(member)
+                    return bool(member_content) and cls._content_is_pe_dll(
+                        member_content,
+                        expected_architecture,
+                    )
+        except (
+            OSError,
+            RuntimeError,
+            NotImplementedError,
+            zipfile.BadZipFile,
+        ):
+            return False
+        return False
 
     @staticmethod
     def _content_is_pe_dll(
@@ -711,8 +779,9 @@ class FileSystemDLLRepository(IDLLRepository):
             return None
         return file_path
 
-    @staticmethod
+    @classmethod
     def _indexed_payload_content_matches(
+        cls,
         file_path: Path,
         dll_file: DLLFile,
         *,
@@ -733,6 +802,13 @@ class FileSystemDLLRepository(IDLLRepository):
             return False
         if dll_file.file_size is not None and dll_file.file_size != len(content):
             logger.warning("Skipping DLL index entry with mismatched size: %s", file_path)
+            return False
+        if not cls._content_matches_dll_payload(
+            dll_file.name,
+            dll_file.architecture,
+            content,
+        ):
+            logger.warning("Skipping DLL index entry with non-DLL payload: %s", file_path)
             return False
         return True
 

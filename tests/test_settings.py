@@ -1156,6 +1156,17 @@ def test_settings_validate_rejects_boolean_numeric_fields() -> None:
 
 
 @pytest.mark.unit
+def test_settings_validate_rejects_fractional_integer_fields() -> None:
+    retry_settings = Settings(http_max_retries=cast(int, 1.5))
+    threshold_settings = Settings(malicious_threshold=cast(int, 5.5))
+
+    with pytest.raises(ValueError, match="http_max_retries must be an integer"):
+        retry_settings.validate()
+    with pytest.raises(ValueError, match="malicious_threshold must be an integer"):
+        threshold_settings.validate()
+
+
+@pytest.mark.unit
 def test_settings_validate_negative_malicious_threshold_raises_error() -> None:
     """
     Test validation rejects invalid malicious threshold.

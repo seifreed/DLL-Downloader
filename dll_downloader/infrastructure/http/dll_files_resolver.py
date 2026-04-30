@@ -180,7 +180,7 @@ class DllFilesResolver:
         if parsed_href.scheme and parsed_href.scheme not in {"http", "https"}:
             return False
         if not parsed_href.netloc:
-            return True
+            return parsed_href.scheme == ""
         parsed_base = urlparse(self.base_url)
         if parsed_href.netloc.lower() != parsed_base.netloc.lower():
             return False

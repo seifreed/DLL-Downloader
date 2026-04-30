@@ -339,6 +339,11 @@ class UnknownSecurityScanner(StubSecurityScanner):
         return replace(dll_file, security_status=SecurityStatus.UNKNOWN)
 
 
+class NotScannedSecurityScanner(StubSecurityScanner):
+    def scan_dll(self, dll_file: DLLFile) -> DLLFile:
+        return replace(dll_file, security_status=SecurityStatus.NOT_SCANNED)
+
+
 def _require_dll_file(response_dll_file: DLLFile | None) -> DLLFile:
     """Narrow optional DLLFile values in tests."""
     assert response_dll_file is not None
@@ -1807,6 +1812,29 @@ def test_download_dll_use_case_unknown_scan_status_returns_failure() -> None:
     response = use_case.execute(
         DownloadDLLRequest(
             dll_name="unknownscan.dll",
+            architecture=Architecture.X64,
+            scan_before_save=True,
+        )
+    )
+
+    assert response.success is False
+    assert response.error_message == "Download failed: Security scan did not complete"
+    assert repository.list_all() == []
+
+
+@pytest.mark.unit
+def test_download_dll_use_case_not_scanned_status_returns_failure() -> None:
+    repository = InMemoryRepository()
+    use_case = DownloadDLLUseCase(
+        repository=repository,
+        http_client=StubHTTPClient(),
+        download_base_url="https://dll.website/download",
+        scanner=NotScannedSecurityScanner(),
+    )
+
+    response = use_case.execute(
+        DownloadDLLRequest(
+            dll_name="notscanned.dll",
             architecture=Architecture.X64,
             scan_before_save=True,
         )

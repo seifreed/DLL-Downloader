@@ -4,6 +4,7 @@
 # Claude/Codex assistant files
 .claude/
 **/CLAUDE.md
+AGENTS.md
 
 # Local tooling
 .qlty/
