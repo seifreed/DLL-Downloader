@@ -2,6 +2,7 @@
 HTTP client adapter built on top of the shared requests transport.
 """
 
+import logging
 from collections.abc import Mapping
 
 from ...domain.services.http_client import HTTPFileInfo
@@ -25,6 +26,7 @@ from .user_agents import (
     UserAgentProvider,
 )
 
+logger = logging.getLogger(__name__)
 __all__ = ["HTTPClientError", "HTTPResponse", "RequestsHTTPClient"]
 
 
@@ -130,7 +132,7 @@ class RequestsHTTPClient:
                 status_code=response.status_code,
                 url=url,
             )
-        return response.content.decode("utf-8", errors="replace")
+        return self._decode_text(response.content, response.headers)
 
     def download(
         self,
@@ -158,14 +160,28 @@ class RequestsHTTPClient:
             self._close_response(response)
 
     @staticmethod
+    def _decode_text(content: bytes, headers: dict[str, str]) -> str:
+        content_type = header_value(headers, "content-type") or ""
+        charset = "utf-8"
+        for part in content_type.split(";"):
+            part = part.strip()
+            if part.lower().startswith("charset="):
+                charset = part.split("=", 1)[1].strip()
+                break
+        try:
+            return content.decode(charset)
+        except (LookupError, UnicodeDecodeError):
+            return content.decode("utf-8", errors="replace")
+
+    @staticmethod
     def _close_response(response: HTTPResponseProtocol) -> None:
         close_response = getattr(response, "close", None)
         if not callable(close_response):
             return
         try:
             close_response()
-        except HTTP_STREAM_ERROR_TYPES:
-            return
+        except HTTP_STREAM_ERROR_TYPES as exc:
+            logger.warning("Failed to close response: %s", exc)
 
     def head(self, url: str) -> dict[str, str]:
         response = self._transport.execute("HEAD", url, allow_redirects=True)

@@ -80,7 +80,7 @@ def read_dll_list_from_file(file_path: str) -> list[str]:
     Raises:
         ValueError: If the file does not exist or is empty.
     """
-    path = Path(file_path)
+    path = Path(file_path).resolve()
     if not path.exists():
         raise ValueError(f"File '{file_path}' not found.")
     if not path.is_file():

@@ -62,10 +62,8 @@ class DownloadBatchConsolePresenter:
     def summary(response: DownloadBatchResponse) -> str:
         return f"\nSummary: {response.success_count} succeeded, {response.failure_count} failed"
 
-    @staticmethod
-    def summary_counts(success_count: int, failure_count: int) -> str:
+    def summary_counts(self, success_count: int, failure_count: int) -> str:
         return f"\nSummary: {success_count} succeeded, {failure_count} failed"
 
-    @staticmethod
-    def boundary_error(error_message: str, failure_count: int = 1) -> str:
+    def boundary_error(self, error_message: str, failure_count: int = 1) -> str:
         return f"[ERROR] Batch download failed: {error_message}"

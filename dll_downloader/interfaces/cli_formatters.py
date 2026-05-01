@@ -3,7 +3,6 @@ CLI format selection and boundary-output helpers.
 """
 
 import argparse
-from typing import cast
 
 from .cli_contracts import BatchPresenter, OutputFormat
 from .cli_output import CLIBoundaryFailure, CLICommandResult, CLISessionResult
@@ -30,13 +29,10 @@ def get_output_format(args: argparse.Namespace) -> OutputFormat:
 def create_batch_presenter(output_format: OutputFormat) -> BatchPresenter:
     """Construct the presenter matching the selected output format."""
     if output_format == OutputFormat.JSON:
-        return cast(BatchPresenter, DownloadBatchJSONPresenter())
+        return DownloadBatchJSONPresenter()
     if output_format == OutputFormat.SARIF:
-        return cast(BatchPresenter, DownloadBatchSARIFPresenter())
-    return cast(
-        BatchPresenter,
-        DownloadBatchConsolePresenter(DownloadConsolePresenter()),
-    )
+        return DownloadBatchSARIFPresenter()
+    return DownloadBatchConsolePresenter(DownloadConsolePresenter())
 
 
 def create_cli_service(output_format: OutputFormat) -> CLIApplicationService:

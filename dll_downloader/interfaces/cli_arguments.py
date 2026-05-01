@@ -118,10 +118,13 @@ def parse_arguments(
 
 def detect_requested_output_format(argv: list[str]) -> OutputFormat:
     """Detect structured output flags before full argument parsing."""
-    if any(_matches_output_flag(argument, "--json") for argument in argv):
-        return OutputFormat.JSON
-    if any(_matches_output_flag(argument, "--sarif") for argument in argv):
-        return OutputFormat.SARIF
+    for argument in argv:
+        if argument == "--":
+            break
+        if _matches_output_flag(argument, "--json"):
+            return OutputFormat.JSON
+        if _matches_output_flag(argument, "--sarif"):
+            return OutputFormat.SARIF
     return OutputFormat.CONSOLE
 
 

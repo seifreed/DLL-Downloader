@@ -433,11 +433,9 @@ class VirusTotalScanner(ISecurityScanner):
         detection_ratio = f"{total_positives}/{total}" if total > 0 else None
 
         scan_timestamp = attributes.get("last_analysis_date")
-        scan_date = (
-            datetime.fromtimestamp(float(scan_timestamp))
-            if isinstance(scan_timestamp, (int, float))
-            else datetime.now()
-        )
+        scan_date: datetime | None = None
+        if isinstance(scan_timestamp, (int, float)):
+            scan_date = datetime.fromtimestamp(float(scan_timestamp))
 
         detections = self._extract_engine_detections(data)
 

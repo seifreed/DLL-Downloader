@@ -141,7 +141,7 @@ class FileSystemDLLRepository(IDLLRepository):
             return {"files": {}}
 
         try:
-            with open(self._index_path) as f:
+            with open(self._index_path, encoding="utf-8") as f:
                 raw_data = json.load(f)
                 if not isinstance(raw_data, dict):
                     raise ValueError("Index file must contain a JSON object")
@@ -240,8 +240,12 @@ class FileSystemDLLRepository(IDLLRepository):
         )
         temp_path = Path(temp_name)
         try:
-            with os.fdopen(fd, "wb") as temp_file:
-                temp_file.write(content)
+            try:
+                with os.fdopen(fd, "wb") as temp_file:
+                    temp_file.write(content)
+            except OSError:
+                os.close(fd)
+                raise
             temp_path.replace(file_path)
         except OSError:
             temp_path.unlink(missing_ok=True)
@@ -489,10 +493,6 @@ class FileSystemDLLRepository(IDLLRepository):
         expected_architecture: Architecture = Architecture.UNKNOWN,
     ) -> Architecture | None:
         """Return the architecture of the requested DLL member in a ZIP payload."""
-        archive_buffer = BytesIO(content)
-        if not zipfile.is_zipfile(archive_buffer):
-            return None
-
         expected_name = dll_name.lower()
         try:
             with zipfile.ZipFile(BytesIO(content)) as archive:
@@ -827,7 +827,7 @@ class FileSystemDLLRepository(IDLLRepository):
             return set()
 
         try:
-            with open(self._index_path) as f:
+            with open(self._index_path, encoding="utf-8") as f:
                 raw_data = json.load(f)
         except (OSError, json.JSONDecodeError):
             return set()
@@ -1222,7 +1222,9 @@ class FileSystemDLLRepository(IDLLRepository):
             raise ValueError("Index entry 'security_status' must be a string")
         if not _is_sha256_hash(file_hash):
             raise ValueError("Index entry 'file_hash' must be a SHA256 hex string")
-        if file_size is not None and not isinstance(file_size, int):
+        if file_size is not None and (
+            not isinstance(file_size, int) or isinstance(file_size, bool)
+        ):
             raise ValueError("Index entry 'file_size' must be an integer or null")
 
         return {

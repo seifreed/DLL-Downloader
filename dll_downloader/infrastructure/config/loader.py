@@ -48,7 +48,7 @@ class _JSONSettingsSource:
         path = Path(config_path)
         if path.exists() and not path.is_file():
             raise OSError(f"Configuration path is not a regular file: {config_path}")
-        with path.open() as file_handle:
+        with path.open(encoding="utf-8") as file_handle:
             config_data = json.load(file_handle)
         if not isinstance(config_data, Mapping):
             raise ValueError("Configuration file must contain a JSON object")
@@ -77,11 +77,14 @@ class _VTTomlSettingsSource:
             if home_override
             else Path("~/.vt.toml").expanduser()
         )
-        if not vt_path.exists() or not vt_path.is_file():
+        try:
+            if not vt_path.exists() or not vt_path.is_file():
+                return None
+        except OSError:
             return None
 
         try:
-            contents = vt_path.read_text()
+            contents = vt_path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             return None
 
@@ -228,13 +231,23 @@ class SettingsLoader:
             "malicious_threshold",
             "suspicious_threshold",
         }:
-            return int(value)
+            try:
+                return int(value)
+            except ValueError:
+                raise ValueError(
+                    f"Environment variable for {attr_name} must be an integer, got: {value!r}"
+                ) from None
         if attr_name in {
             "virustotal_timeout",
             "http_retry_backoff_seconds",
             "http_retry_jitter_seconds",
         }:
-            return float(value)
+            try:
+                return float(value)
+            except ValueError:
+                raise ValueError(
+                    f"Environment variable for {attr_name} must be a float, got: {value!r}"
+                ) from None
         if attr_name == "user_agent_pool":
             return tuple(
                 item.strip()
@@ -333,7 +346,13 @@ class SettingsLoader:
         attr_name: str,
         value: str | int | float | bool | tuple[str, ...] | None,
     ) -> bool:
-        if not isinstance(value, int) or isinstance(value, bool):
+        if isinstance(value, bool):
+            return False
+        if isinstance(value, float):
+            if not value.is_integer():
+                return False
+            value = int(value)
+        if not isinstance(value, int):
             return False
         if attr_name == "http_timeout":
             mapped["http_timeout"] = value

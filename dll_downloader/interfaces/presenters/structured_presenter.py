@@ -90,6 +90,7 @@ class DownloadBatchJSONPresenter:
                 "kind": "boundary",
                 "message": error_message,
             },
+            "failure_count": failure_count,
         }
         return json.dumps(payload, sort_keys=True)
 

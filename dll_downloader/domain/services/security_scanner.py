@@ -31,7 +31,7 @@ class ScanResult:
     status: SecurityStatus
     detection_ratio: str | None = None
     detections: dict[str, str] = field(default_factory=dict)
-    scan_date: datetime = field(default_factory=datetime.now)
+    scan_date: datetime | None = None
     permalink: str | None = None
     error_message: str | None = None
 

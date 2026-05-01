@@ -8,6 +8,16 @@ from random import Random, SystemRandom
 from time import sleep
 
 import requests
+from requests import exceptions as requests_exceptions
+
+_NON_RETRYABLE_EXCEPTIONS: tuple[type[requests.RequestException], ...] = (
+    requests_exceptions.InvalidSchema,
+    requests_exceptions.MissingSchema,
+    requests_exceptions.InvalidURL,
+    requests.URLRequired,
+    requests_exceptions.InvalidHeader,
+    requests.TooManyRedirects,
+)
 
 
 @dataclass
@@ -30,6 +40,7 @@ class RetryPolicy:
             raise ValueError("backoff_seconds cannot be negative")
         if self.jitter_seconds < 0:
             raise ValueError("jitter_seconds cannot be negative")
+
     def should_retry_status(self, status_code: int, attempt: int) -> bool:
         """Return whether a response status should be retried."""
         return (
@@ -43,7 +54,8 @@ class RetryPolicy:
         attempt: int,
     ) -> bool:
         """Return whether a transport exception should be retried."""
-        del exc
+        if isinstance(exc, _NON_RETRYABLE_EXCEPTIONS):
+            return False
         return attempt < self.max_attempts
 
     def pause_before_retry(self, attempt: int) -> None:

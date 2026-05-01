@@ -131,6 +131,7 @@ TECHNICAL_ADAPTER_IMPORT_ALLOWLIST: dict[str, tuple[str, ...]] = {
         "dll_downloader.infrastructure.http.transport",
         "dll_downloader.infrastructure.http.user_agents",
         "http_session",
+        "logging",
         "request_headers",
         "retry_policy",
         "transport",
