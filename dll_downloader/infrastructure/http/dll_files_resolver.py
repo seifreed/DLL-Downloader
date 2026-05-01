@@ -193,7 +193,7 @@ class DllFilesResolver:
     def _context_architecture(self, context: str) -> Architecture | None:
         explicit_architectures = self._explicit_context_architectures(context)
         if len(explicit_architectures) == 1:
-            return explicit_architectures.pop()
+            return next(iter(explicit_architectures))
         if len(explicit_architectures) > 1:
             return None
 

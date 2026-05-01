@@ -4,13 +4,14 @@ File System DLL Repository Implementation
 Implements the IDLLRepository interface using the local filesystem for storage.
 """
 
+import copy
 import json
 import logging
 import os
 import tempfile
 import zipfile
 from dataclasses import replace
-from datetime import datetime
+from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
 from typing import TypedDict
@@ -239,12 +240,15 @@ class FileSystemDLLRepository(IDLLRepository):
             prefix=f".{file_path.name}.",
         )
         temp_path = Path(temp_name)
+        fd_opened = False
         try:
             try:
                 with os.fdopen(fd, "wb") as temp_file:
+                    fd_opened = True
                     temp_file.write(content)
             except OSError:
-                os.close(fd)
+                if not fd_opened:
+                    os.close(fd)
                 raise
             temp_path.replace(file_path)
         except OSError:
@@ -400,7 +404,7 @@ class FileSystemDLLRepository(IDLLRepository):
             content = file_path.read_bytes()
         except OSError as exc:
             logger.warning("Skipping unreadable fallback DLL payload: %s", exc)
-            return False
+            raise RepositoryError(f"Cannot read fallback DLL payload {file_path}: {exc}") from exc
         return cls._content_matches_dll_payload(dll_name, architecture, content)
 
     @classmethod
@@ -829,7 +833,8 @@ class FileSystemDLLRepository(IDLLRepository):
         try:
             with open(self._index_path, encoding="utf-8") as f:
                 raw_data = json.load(f)
-        except (OSError, json.JSONDecodeError):
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.warning("Failed to load raw index keys: %s", exc)
             return set()
         if not isinstance(raw_data, dict):
             return set()
@@ -950,7 +955,7 @@ class FileSystemDLLRepository(IDLLRepository):
     ) -> tuple[IndexData, bool]:
         """Remove delete target metadata before unlinking the payload."""
         index = self._load_index()
-        original_index: IndexData = {"files": dict(index["files"])}
+        original_index: IndexData = copy.deepcopy(index)
         key = self._get_file_key(dll_file.name, dll_file.architecture)
         if key not in index["files"]:
             return original_index, False
@@ -1049,7 +1054,7 @@ class FileSystemDLLRepository(IDLLRepository):
             security_status=security_status,
             vt_detection_ratio=vt_detection_ratio,
             vt_scan_date=vt_scan_date,
-            created_at=created_at,
+            created_at=created_at if created_at is not None else datetime.now(tz=UTC),
         )
 
     def _try_deserialize_dll(self, data: IndexEntry) -> DLLFile | None:
@@ -1189,10 +1194,12 @@ class FileSystemDLLRepository(IDLLRepository):
         architecture: Architecture
     ) -> DLLFile:
         """Create a DLLFile entity from an existing file on disk."""
-        # Calculate hash
-        with open(file_path, "rb") as f:
-            content = f.read()
-            file_hash = calculate_sha256(content)
+        try:
+            with open(file_path, "rb") as f:
+                content = f.read()
+        except OSError as exc:
+            raise RepositoryError(f"Failed to read DLL file {file_path}: {exc}") from exc
+        file_hash = calculate_sha256(content)
 
         return DLLFile(
             name=name,
@@ -1220,8 +1227,8 @@ class FileSystemDLLRepository(IDLLRepository):
             raise ValueError("Index entry 'architecture' must be a string")
         if not isinstance(security_status, str):
             raise ValueError("Index entry 'security_status' must be a string")
-        if not _is_sha256_hash(file_hash):
-            raise ValueError("Index entry 'file_hash' must be a SHA256 hex string")
+        if file_hash is not None and not _is_sha256_hash(file_hash):
+            raise ValueError("Index entry 'file_hash' must be a SHA256 hex string or null")
         if file_size is not None and (
             not isinstance(file_size, int) or isinstance(file_size, bool)
         ):

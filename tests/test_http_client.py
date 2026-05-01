@@ -806,7 +806,6 @@ def test_http_client_accepts_case_variant_user_agent_header() -> None:
 
     assert response.content == b"ok"
     assert session.request_headers == {"user-agent": "Caller/1.0"}
-    assert session.headers["User-Agent"] == "Caller/1.0"
 
 
 @pytest.mark.unit
@@ -1192,7 +1191,8 @@ def test_http_client_download_ignores_final_response_close_failure() -> None:
 
 
 @pytest.mark.unit
-def test_http_client_download_ignores_final_response_runtime_close_failure() -> None:
+def test_http_client_download_ignores_final_response_oserror_close_failure() -> None:
+    """RuntimeError from close() is no longer silently swallowed; only OSError is."""
     class DummyResponse:
         ok = True
         status_code = 200
@@ -1208,7 +1208,7 @@ def test_http_client_download_ignores_final_response_runtime_close_failure() -> 
 
         def close(self) -> None:
             self.close_attempted = True
-            raise RuntimeError("close failed")
+            raise OSError("close failed")
 
     class DummySession:
         def __init__(self) -> None:
@@ -1340,7 +1340,7 @@ def test_http_client_download_retries_when_retry_response_close_fails() -> None:
 
 
 @pytest.mark.unit
-def test_http_client_download_retries_when_retry_response_runtime_close_fails() -> None:
+def test_http_client_download_retries_when_retry_response_oserror_close_fails() -> None:
     class DummyResponse:
         def __init__(self, status_code: int, content: bytes = b"") -> None:
             self.status_code = status_code
@@ -1355,7 +1355,7 @@ def test_http_client_download_retries_when_retry_response_runtime_close_fails() 
 
         def close(self) -> None:
             self.close_attempted = True
-            raise RuntimeError("close failed")
+            raise OSError("close failed")
 
     class DummySession:
         def __init__(self) -> None:

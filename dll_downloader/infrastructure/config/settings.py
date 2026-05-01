@@ -58,6 +58,14 @@ def _validate_string(value: object, field_name: str) -> None:
         raise ValueError(f"{field_name} must be a non-empty string")
 
 
+def _validate_https_url(value: object, field_name: str) -> None:
+    _validate_string(value, field_name)
+    if not isinstance(value, str):
+        return
+    if not value.lower().startswith("https://"):
+        raise ValueError(f"{field_name} must use HTTPS")
+
+
 def _validate_log_level(value: object) -> None:
     if not isinstance(value, str):
         raise ValueError("log_level must be a string")
@@ -112,7 +120,7 @@ class Settings:
         """Validate the current settings."""
         _validate_optional_string(self.virustotal_api_key, "virustotal_api_key")
         _validate_string(self.download_directory, "download_directory")
-        _validate_string(self.download_base_url, "download_base_url")
+        _validate_https_url(self.download_base_url, "download_base_url")
         _validate_optional_string(self.user_agent, "user_agent")
         _validate_user_agent_pool(self.user_agent_pool)
         _validate_bool(self.verify_ssl, "verify_ssl")

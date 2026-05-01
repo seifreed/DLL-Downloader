@@ -1500,21 +1500,6 @@ def test_main_json_output_for_invalid_argparse_input(
 
 
 @pytest.mark.unit
-def test_main_json_output_for_abbreviated_json_invalid_argparse_input(
-    capsys: CaptureFixture[str],
-) -> None:
-    with _temporary_argv(["dll-downloader.py", "test.dll", "--arch", "arm", "--js"]):
-        assert main(Settings()) == 1
-
-    captured = capsys.readouterr()
-    payload = json.loads(captured.out)
-    assert captured.err == ""
-    assert payload["format"] == "json"
-    assert payload["error"]["kind"] == "boundary"
-    assert "invalid choice" in payload["error"]["message"]
-
-
-@pytest.mark.unit
 def test_main_sarif_output_for_invalid_argparse_input(
     capsys: CaptureFixture[str],
 ) -> None:

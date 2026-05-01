@@ -60,7 +60,6 @@ class HTTPSessionResource:
             session = cast(HTTPSessionProtocol, requests.Session())
             session.headers.update(self._headers)
             self._session = session
-        assert self._session is not None
         return self._session
 
     @property

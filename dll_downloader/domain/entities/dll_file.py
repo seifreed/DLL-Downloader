@@ -6,7 +6,7 @@ Represents a DLL file with its metadata and security information.
 
 import re
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 
 _SAFE_DLL_NAME_PATTERN = re.compile(r"[A-Za-z0-9_.-]+")
@@ -91,7 +91,7 @@ class DLLFile:
     security_status: SecurityStatus = SecurityStatus.NOT_SCANNED
     vt_detection_ratio: str | None = None
     vt_scan_date: datetime | None = None
-    created_at: datetime = field(default_factory=datetime.now)
+    created_at: datetime = field(default_factory=lambda: datetime.now(tz=UTC))
 
     def __post_init__(self) -> None:
         """Validate entity after initialization."""

@@ -11,7 +11,7 @@ properties, and business logic.
 """
 
 from dataclasses import replace
-from datetime import datetime
+from datetime import UTC, datetime
 
 import pytest
 
@@ -171,9 +171,9 @@ def test_dll_file_creation_sets_timestamp() -> None:
     Expected Behavior:
         created_at is set to a datetime close to now.
     """
-    before = datetime.now()
+    before = datetime.now(tz=UTC)
     dll = DLLFile(name="test.dll")
-    after = datetime.now()
+    after = datetime.now(tz=UTC)
 
     assert before <= dll.created_at <= after
 

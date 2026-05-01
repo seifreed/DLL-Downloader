@@ -159,14 +159,25 @@ class RequestsHTTPClient:
         finally:
             self._close_response(response)
 
-    @staticmethod
-    def _decode_text(content: bytes, headers: dict[str, str]) -> str:
+    _TEXT_CHARSETS = frozenset({
+        "utf-8", "utf-16", "utf-16-le", "utf-16-be",
+        "utf-32", "utf-32-le", "utf-32-be",
+        "ascii", "latin-1", "iso-8859-1", "iso-8859-15",
+        "cp1252", "cp1250", "cp1251",
+        "shift_jis", "euc-jp", "euc-kr", "gb2312", "gbk", "gb18030",
+        "big5", "iso-2022-jp",
+    })
+
+    @classmethod
+    def _decode_text(cls, content: bytes, headers: dict[str, str]) -> str:
         content_type = header_value(headers, "content-type") or ""
         charset = "utf-8"
         for part in content_type.split(";"):
             part = part.strip()
             if part.lower().startswith("charset="):
-                charset = part.split("=", 1)[1].strip()
+                candidate = part.split("=", 1)[1].strip().lower()
+                if candidate in cls._TEXT_CHARSETS:
+                    charset = candidate
                 break
         try:
             return content.decode(charset)
@@ -203,5 +214,5 @@ class RequestsHTTPClient:
             "content_length": length_value,
             "last_modified": header_value(headers, "last-modified"),
             "etag": header_value(headers, "etag"),
-            "accept_ranges": accept_ranges is not None and accept_ranges.lower() == "bytes",
+            "accept_ranges": bool(accept_ranges is not None and accept_ranges.lower() == "bytes"),
         }

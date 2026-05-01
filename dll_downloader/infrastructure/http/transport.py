@@ -74,9 +74,6 @@ class HTTPClientError(HTTPServiceError):
 HTTP_STREAM_ERROR_TYPES: tuple[type[Exception], ...] = (
     requests.RequestException,
     OSError,
-    RuntimeError,
-    TypeError,
-    ValueError,
 )
 
 
@@ -146,7 +143,7 @@ class RequestsTransport:
 
             return response
 
-        raise AssertionError("unreachable transport retry state")
+        raise RuntimeError("unreachable transport retry state")
 
     def _resolve_request_method(
         self,
@@ -171,10 +168,8 @@ class RequestsTransport:
         headers: Mapping[str, str] | None,
     ) -> dict[str, str]:
         request_headers = self._header_builder.build(headers)
-        assert request_headers is not None
-        user_agent = header_value(request_headers, "User-Agent")
-        if user_agent is not None:
-            self.session.headers["User-Agent"] = user_agent
+        if request_headers is None:
+            request_headers = {}
         return request_headers
 
     def _request_error(

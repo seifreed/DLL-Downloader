@@ -8,7 +8,7 @@ for malware analysis and threat detection.
 import logging
 from collections.abc import Mapping
 from dataclasses import replace
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 import requests
@@ -39,7 +39,10 @@ class HashNotFoundError(VirusTotalError):
 
 def _safe_json(response: HTTPResponseProtocol) -> dict[str, object]:
     """Normalize loosely typed HTTP JSON payloads into mappings."""
-    payload = response.json()
+    try:
+        payload = response.json()
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise VirusTotalError(f"Invalid JSON in VirusTotal response: {exc}") from exc
     if not isinstance(payload, Mapping):
         raise TypeError("VirusTotal response body must be a JSON object")
     normalized: dict[str, object] = {}
@@ -199,7 +202,8 @@ class VirusTotalScanner(ISecurityScanner):
 
         response: HTTPResponseProtocol | None = None
         try:
-            files = {'file': (file_path.split('/')[-1], content)}
+            filename = Path(file_path).name
+            files = {'file': (filename, content)}
             response = self.session.post(
                 f"{self.VT_API_URL}/files",
                 files=files,
@@ -223,8 +227,6 @@ class VirusTotalScanner(ISecurityScanner):
             OSError,
             requests.RequestException,
             RuntimeError,
-            ValueError,
-            TypeError,
         ) as e:
             logger.error(f"Failed to upload file to VirusTotal: {e}")
             raise VirusTotalError(f"File upload failed: {e}") from e
@@ -268,7 +270,7 @@ class VirusTotalScanner(ISecurityScanner):
             return self._parse_response(file_hash, _safe_json(response))
         except HashNotFoundError:
             raise
-        except (requests.RequestException, RuntimeError, TypeError, ValueError) as e:
+        except (requests.RequestException, RuntimeError) as e:
             logger.error(f"Failed to query VirusTotal: {e}")
             raise VirusTotalError(f"Hash lookup failed: {e}") from e
         finally:
@@ -338,7 +340,7 @@ class VirusTotalScanner(ISecurityScanner):
 
             return dict(_safe_json(response))
 
-        except (requests.RequestException, RuntimeError, TypeError, ValueError) as e:
+        except (requests.RequestException, RuntimeError) as e:
             logger.error(f"Failed to get detailed report: {e}")
             raise VirusTotalError(f"Report retrieval failed: {e}") from e
         finally:
@@ -352,8 +354,8 @@ class VirusTotalScanner(ISecurityScanner):
             return
         try:
             close_response()
-        except (OSError, requests.RequestException, RuntimeError):
-            return
+        except (OSError, requests.RequestException) as exc:
+            logger.warning("Failed to close VirusTotal response: %s", exc)
 
     def _determine_security_status(
         self, total_positives: int, total: int
@@ -435,7 +437,7 @@ class VirusTotalScanner(ISecurityScanner):
         scan_timestamp = attributes.get("last_analysis_date")
         scan_date: datetime | None = None
         if isinstance(scan_timestamp, (int, float)):
-            scan_date = datetime.fromtimestamp(float(scan_timestamp))
+            scan_date = datetime.fromtimestamp(float(scan_timestamp), tz=UTC)
 
         detections = self._extract_engine_detections(data)
 

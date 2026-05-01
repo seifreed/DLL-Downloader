@@ -171,6 +171,8 @@ def execute_boundary_command(
     """
     try:
         result = run_command(command)
+    except (KeyboardInterrupt, SystemExit):
+        raise
     except Exception as exc:
         return boundary_failure_factory(command, exc)
 

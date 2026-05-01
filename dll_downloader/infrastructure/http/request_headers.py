@@ -17,9 +17,9 @@ class RequestHeaderBuilder:
         """Return default headers for a new session."""
         return {"User-Agent": self._user_agent_provider.next_user_agent()}
 
-    def build(self, headers: Mapping[str, str] | None = None) -> dict[str, str] | None:
+    def build(self, headers: Mapping[str, str] | None = None) -> dict[str, str]:
         """Merge caller headers with a selected User-Agent."""
         request_headers = dict(headers) if headers else {}
         if not any(header.lower() == "user-agent" for header in request_headers):
             request_headers["User-Agent"] = self._user_agent_provider.next_user_agent()
-        return request_headers or None
+        return request_headers
