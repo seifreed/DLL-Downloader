@@ -87,7 +87,7 @@ def read_dll_list_from_file(file_path: str) -> list[str]:
         raise ValueError(f"Failed to read file '{file_path}': not a regular file")
 
     try:
-        with path.open() as f:
+        with path.open(encoding="utf-8") as f:
             dll_names = [line.strip() for line in f if line.strip()]
     except OSError as exc:
         raise ValueError(f"Failed to read file '{file_path}': {exc}") from exc
@@ -203,7 +203,7 @@ def main(settings: Settings | None = None) -> int:
     if settings is None:
         try:
             settings = load_settings()
-        except ValueError as exc:
+        except (OSError, ValueError) as exc:
             emit_cli_input_error(
                 service,
                 create_batch_presenter(output_format).boundary_error(str(exc)),

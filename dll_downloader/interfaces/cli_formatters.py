@@ -39,7 +39,12 @@ def create_cli_service(output_format: OutputFormat) -> CLIApplicationService:
     """Create a CLI application service configured for one output format."""
     from ..runtime import create_application
 
-    return CLIApplicationService(create_batch_presenter(output_format), create_application)
+    is_structured = output_format in (OutputFormat.JSON, OutputFormat.SARIF)
+    return CLIApplicationService(
+        create_batch_presenter(output_format),
+        create_application,
+        is_structured=is_structured,
+    )
 
 
 def emit_cli_input_error(
@@ -51,6 +56,9 @@ def emit_cli_input_error(
         CLICommandResult(
             stdout_lines=[],
             session=CLISessionResult(success_count=0, failure_count=1, exit_code=1),
-            boundary_failure=CLIBoundaryFailure(message=message),
+            boundary_failure=CLIBoundaryFailure(
+                message=message,
+                is_structured=service._is_structured,
+            ),
         )
     )

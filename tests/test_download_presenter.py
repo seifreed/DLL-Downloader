@@ -51,7 +51,7 @@ def test_download_batch_presenter_summary_and_boundary_error() -> None:
     )
 
     assert summary == "\nSummary: 1 succeeded, 1 failed"
-    assert presenter.boundary_error("boom") == "[ERROR] Batch download failed: boom"
+    assert presenter.boundary_error("boom") == "[ERROR] Batch download failed (1 failed): boom"
 
 
 @pytest.mark.unit

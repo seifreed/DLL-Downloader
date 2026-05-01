@@ -265,7 +265,7 @@ def test_virustotal_safe_json_rejects_non_string_keys() -> None:
         def iter_content(self, chunk_size: int = 1) -> Any:
             return iter(())
 
-    with pytest.raises(TypeError, match="response keys must be strings"):
+    with pytest.raises(VirusTotalError, match="response keys must be strings"):
         from dll_downloader.infrastructure.services.virustotal import _safe_json
 
         _safe_json(DummyResponse())
@@ -526,16 +526,13 @@ def test_virustotal_scanner_scan_dll_without_hash() -> None:
         Verify handling of DLL entities missing file hash.
 
     Expected Behavior:
-        - Returns original DLL unchanged
-        - Logs warning
+        - Raises VirusTotalError
     """
     scanner = VirusTotalScanner(api_key="test_key")
     dll = DLLFile(name="test.dll", file_hash=None)
 
-    result = scanner.scan_dll(dll)
-
-    assert result is dll  # Same object returned
-    assert result.security_status == SecurityStatus.NOT_SCANNED
+    with pytest.raises(VirusTotalError, match="Cannot scan DLL without file hash"):
+        scanner.scan_dll(dll)
 
 
 @pytest.mark.unit

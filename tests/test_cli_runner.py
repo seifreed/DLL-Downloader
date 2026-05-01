@@ -1,4 +1,3 @@
-import json
 from typing import cast
 
 import pytest
@@ -148,7 +147,7 @@ def test_download_cli_service_returns_rendered_lines() -> None:
 
 
 @pytest.mark.unit
-def test_download_cli_service_returns_boundary_failure() -> None:
+def test_download_cli_service_handles_unexpected_exception_as_failure() -> None:
     service = DownloadCLIService(FailingUseCase(), StubPresenter())
 
     result = service.run_with_error_handling(
@@ -163,13 +162,11 @@ def test_download_cli_service_returns_boundary_failure() -> None:
     )
 
     assert result.session.exit_code == 1
-    assert result.boundary_failure is not None
-    assert result.boundary_failure.message == "error:boom"
-    assert result.boundary_failure.traceback_text is not None
+    assert result.session.failure_count == 1
 
 
 @pytest.mark.unit
-def test_download_cli_service_boundary_failure_preserves_batch_failure_count() -> None:
+def test_download_cli_service_handles_unexpected_exception_in_sarif_batch() -> None:
     service = DownloadCLIService(FailingUseCase(), DownloadBatchSARIFPresenter())
 
     result = service.run_with_error_handling(
@@ -183,9 +180,7 @@ def test_download_cli_service_boundary_failure_preserves_batch_failure_count() -
     )
 
     assert result.session.failure_count == 3
-    assert result.boundary_failure is not None
-    payload = json.loads(result.boundary_failure.message)
-    assert payload["runs"][0]["properties"]["failureCount"] == 3
+    assert result.boundary_failure is None
 
 
 @pytest.mark.unit
@@ -208,8 +203,8 @@ def test_cli_application_service_emits_stdout_and_stderr() -> None:
         )
     )
 
-    assert writer.stdout == ["one", "two", "problem"]
-    assert writer.stderr == ["traceback"]
+    assert writer.stdout == ["one", "two"]
+    assert writer.stderr == ["problem", "traceback"]
 
 
 @pytest.mark.unit

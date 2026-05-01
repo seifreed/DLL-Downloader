@@ -44,11 +44,11 @@ def _safe_json(response: HTTPResponseProtocol) -> dict[str, object]:
     except (ValueError, UnicodeDecodeError) as exc:
         raise VirusTotalError(f"Invalid JSON in VirusTotal response: {exc}") from exc
     if not isinstance(payload, Mapping):
-        raise TypeError("VirusTotal response body must be a JSON object")
+        raise VirusTotalError("VirusTotal response body must be a JSON object")
     normalized: dict[str, object] = {}
     for key, value in payload.items():
         if not isinstance(key, str):
-            raise TypeError("VirusTotal response keys must be strings")
+            raise VirusTotalError("VirusTotal response keys must be strings")
         normalized[key] = value
     return normalized
 
@@ -288,8 +288,7 @@ class VirusTotalScanner(ISecurityScanner):
             Updated DLLFile with security information
         """
         if not dll_file.file_hash:
-            logger.warning("Cannot scan DLL without file hash")
-            return dll_file
+            raise VirusTotalError(f"Cannot scan DLL without file hash: {dll_file.name}")
 
         try:
             result = self.scan_hash(dll_file.file_hash)
@@ -425,9 +424,9 @@ class VirusTotalScanner(ISecurityScanner):
         if not isinstance(stats, dict):
             stats = {}
 
-        malicious = stats.get('malicious', 0)
-        suspicious = stats.get('suspicious', 0)
-        total = sum(v for v in stats.values() if isinstance(v, (int, float)))
+        malicious = int(stats.get('malicious', 0) or 0)
+        suspicious = int(stats.get('suspicious', 0) or 0)
+        total = int(sum(v for v in stats.values() if isinstance(v, (int, float))))
         total_positives = malicious + suspicious
 
         status = self._determine_security_status(total_positives, total)

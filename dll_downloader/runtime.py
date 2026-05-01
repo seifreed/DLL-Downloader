@@ -78,6 +78,9 @@ def process_downloads(
     debug: bool = False,
 ) -> tuple[int, int]:
     """Execute a batch download outside the CLI entrypoint."""
+    from .interfaces.cli_output import (
+        emit_command_result,
+    )
     from .interfaces.cli_runner import CLIBatchDownloadCommand
 
     runner = _create_batch_cli_service(use_case)
@@ -92,12 +95,7 @@ def process_downloads(
         )
     )
     writer = _create_output_writer()
-    for line in result.stdout_lines:
-        writer.write(line)
-    if result.boundary_failure is not None:
-        writer.write(result.boundary_failure.message)
-        if result.boundary_failure.traceback_text:
-            writer.write(result.boundary_failure.traceback_text, error=True)
+    emit_command_result(writer, result)
     return result.session.success_count, result.session.failure_count
 
 

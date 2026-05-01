@@ -1,6 +1,4 @@
-"""
-CLI-focused orchestration helpers.
-"""
+"""CLI-focused orchestration helpers."""
 
 import argparse
 import logging
@@ -101,9 +99,11 @@ class DownloadCLIService:
         self,
         item_use_case: SupportsDownloadExecution,
         presenter: BatchPresenter,
+        is_structured: bool = False,
     ) -> None:
         self._batch_use_case = DownloadBatchUseCase(item_use_case)
         self._presenter = presenter
+        self._is_structured = is_structured
 
     def run(self, command: CLIBatchDownloadCommand) -> CLIBatchDownloadResult:
         architecture_label = (
@@ -143,6 +143,7 @@ class DownloadCLIService:
                     failure_count=len(command.dll_names),
                 ),
                 traceback_text=traceback.format_exc() if command.debug else None,
+                is_structured=self._is_structured,
             ),
         )
 
@@ -211,10 +212,12 @@ class CLIApplicationService:
         presenter: BatchPresenter,
         application_builder: "ApplicationBuilder",
         writer: OutputWriter | None = None,
+        is_structured: bool = False,
     ) -> None:
         self._presenter = presenter
         self._application_builder = application_builder
         self._writer = writer or ConsoleOutputWriter()
+        self._is_structured = is_structured
 
     def create_invocation(
         self,
@@ -286,7 +289,7 @@ class CLIApplicationService:
         application: DownloadApplication,
         invocation: CLIInvocation,
     ) -> CLISessionResult:
-        service = DownloadCLIService(application.use_case, self._presenter)
+        service = DownloadCLIService(application.use_case, self._presenter, is_structured=self._is_structured)
         try:
             result = service.run_with_error_handling(
                 CLIBatchDownloadCommand(

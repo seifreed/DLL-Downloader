@@ -49,5 +49,39 @@ def test_emit_command_result_without_traceback_text() -> None:
         ),
     )
 
-    assert writer.stdout == ["problem"]
+    assert writer.stderr == ["problem"]
+    assert writer.stdout == []
+
+
+@pytest.mark.unit
+def test_emit_command_result_structured_failure_goes_to_stdout() -> None:
+    writer = RecordingWriter()
+
+    emit_command_result(
+        writer,
+        CLICommandResult(
+            stdout_lines=[],
+            session=CLISessionResult(success_count=0, failure_count=1, exit_code=1),
+            boundary_failure=CLIBoundaryFailure(message='{"error":"bad"}', is_structured=True),
+        ),
+    )
+
+    assert writer.stdout == ['{"error":"bad"}']
     assert writer.stderr == []
+
+
+@pytest.mark.unit
+def test_emit_command_result_console_failure_goes_to_stderr() -> None:
+    writer = RecordingWriter()
+
+    emit_command_result(
+        writer,
+        CLICommandResult(
+            stdout_lines=[],
+            session=CLISessionResult(success_count=0, failure_count=1, exit_code=1),
+            boundary_failure=CLIBoundaryFailure(message="[ERROR] something failed", is_structured=False),
+        ),
+    )
+
+    assert writer.stderr == ["[ERROR] something failed"]
+    assert writer.stdout == []

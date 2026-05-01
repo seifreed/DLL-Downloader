@@ -1302,7 +1302,7 @@ def test_process_downloads_empty_list() -> None:
 @pytest.mark.unit
 def test_process_downloads_handles_exception(capsys: CaptureFixture[str]) -> None:
     """
-    Verify process_downloads handles exceptions and prints traceback in debug.
+    Verify process_downloads handles unexpected exceptions gracefully as failed downloads.
     """
     class FailingUseCase:
         def execute(self, request: DownloadDLLRequest) -> DownloadDLLResponse:
@@ -1321,14 +1321,13 @@ def test_process_downloads_handles_exception(capsys: CaptureFixture[str]) -> Non
     out = capsys.readouterr()
     assert success_count == 0
     assert failure_count == 1
-    assert "[ERROR]" in out.out
-    assert "Traceback" in out.err
+    assert "[FAILED]" in out.out
 
 
 @pytest.mark.unit
 def test_process_downloads_exception_without_debug(capsys: CaptureFixture[str]) -> None:
     """
-    Verify process_downloads does not print traceback when debug is False.
+    Verify process_downloads handles unexpected exceptions as failed downloads without debug.
     """
     class FailingUseCase:
         def execute(self, request: DownloadDLLRequest) -> DownloadDLLResponse:
@@ -1345,8 +1344,7 @@ def test_process_downloads_exception_without_debug(capsys: CaptureFixture[str]) 
     )
 
     out = capsys.readouterr()
-    assert "[ERROR]" in out.out
-    assert out.err == ""
+    assert "[FAILED]" in out.out
 
 
 @pytest.mark.unit
@@ -1578,7 +1576,7 @@ def test_main_console_output_for_invalid_loaded_settings(
     ):
         assert main(None) == 1
 
-    assert "[ERROR]" in capsys.readouterr().out
+    assert "[ERROR]" in capsys.readouterr().err
 
 
 @pytest.mark.unit

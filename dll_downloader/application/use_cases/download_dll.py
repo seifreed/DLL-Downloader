@@ -49,6 +49,8 @@ _PE_MAX_SECTIONS = 96
 _PE_MACHINE_ARCHITECTURES = {
     0x014C: Architecture.X86,
     0x8664: Architecture.X64,
+    0x01C0: Architecture.ARM,
+    0xAA64: Architecture.ARM64,
 }
 _INVALID_PE_MESSAGE = "Downloaded content is not a valid DLL (missing PE signature)"
 _ZIP_MEMBER_READ_ERRORS = (
@@ -386,14 +388,15 @@ class DownloadDLLUseCase:
     @staticmethod
     def _security_warning_for_status(dll_file: DLLFile) -> str | None:
         """Return the user-facing warning for known risky scan statuses."""
+        ratio = dll_file.vt_detection_ratio or "unknown"
         if dll_file.security_status == SecurityStatus.MALICIOUS:
             return (
-                f"WARNING: VirusTotal detection ratio: {dll_file.vt_detection_ratio}. "
+                f"WARNING: VirusTotal detection ratio: {ratio}. "
                 "This file may be malicious!"
             )
         if dll_file.security_status == SecurityStatus.SUSPICIOUS:
             return (
-                f"CAUTION: VirusTotal detection ratio: {dll_file.vt_detection_ratio}. "
+                f"CAUTION: VirusTotal detection ratio: {ratio}. "
                 "Some engines flagged this file."
             )
         return None
@@ -692,7 +695,7 @@ class DownloadDLLUseCase:
 
     @staticmethod
     def _expected_optional_magic(architecture: Architecture) -> int:
-        if architecture == Architecture.X64:
+        if architecture in (Architecture.X64, Architecture.ARM64):
             return _PE_OPTIONAL_HEADER_MAGIC_PE32_PLUS
         return _PE_OPTIONAL_HEADER_MAGIC_PE32
 

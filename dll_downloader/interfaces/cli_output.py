@@ -37,6 +37,7 @@ class CLIBoundaryFailure:
 
     message: str
     traceback_text: str | None = None
+    is_structured: bool = False
 
 
 @dataclass(frozen=True)
@@ -54,6 +55,7 @@ def emit_command_result(writer: OutputWriter, result: CLICommandResult) -> None:
         writer.write(line)
     if result.boundary_failure is None:
         return
-    writer.write(result.boundary_failure.message)
+    use_stderr = not result.boundary_failure.is_structured
+    writer.write(result.boundary_failure.message, error=use_stderr)
     if result.boundary_failure.traceback_text:
         writer.write(result.boundary_failure.traceback_text, error=True)

@@ -6,6 +6,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Protocol
 
+from ...application.errors import DownloadExecutionError
 from ...domain.entities.dll_file import Architecture, normalize_dll_name
 from .download_dll import DownloadDLLRequest, DownloadDLLResponse
 
@@ -76,15 +77,27 @@ class DownloadBatchUseCase:
                     )
                 )
                 continue
-            response = self._download_use_case.execute(
-                DownloadDLLRequest(
-                    dll_name=normalized_name,
-                    architecture=request.architecture,
-                    scan_before_save=request.scan_before_save,
-                    force_download=request.force_download,
-                    extract_archive=request.extract_archive,
+            try:
+                response = self._download_use_case.execute(
+                    DownloadDLLRequest(
+                        dll_name=normalized_name,
+                        architecture=request.architecture,
+                        scan_before_save=request.scan_before_save,
+                        force_download=request.force_download,
+                        extract_archive=request.extract_archive,
+                    )
                 )
-            )
+            except DownloadExecutionError as exc:
+                response = DownloadDLLResponse(
+                    success=False,
+                    error_message=str(exc),
+                )
+            except Exception as exc:
+                logger.error("Unexpected error downloading %s: %s", normalized_name, exc)
+                response = DownloadDLLResponse(
+                    success=False,
+                    error_message=f"Unexpected error: {exc}",
+                )
             items.append(DownloadBatchItem(dll_name=normalized_name, response=response))
 
         return DownloadBatchResponse(items=items)

@@ -11,7 +11,7 @@ import os
 import tempfile
 import zipfile
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import datetime
 from io import BytesIO
 from pathlib import Path
 from typing import TypedDict
@@ -404,7 +404,7 @@ class FileSystemDLLRepository(IDLLRepository):
             content = file_path.read_bytes()
         except OSError as exc:
             logger.warning("Skipping unreadable fallback DLL payload: %s", exc)
-            raise RepositoryError(f"Cannot read fallback DLL payload {file_path}: {exc}") from exc
+            return False
         return cls._content_matches_dll_payload(dll_name, architecture, content)
 
     @classmethod
@@ -1043,7 +1043,7 @@ class FileSystemDLLRepository(IDLLRepository):
             else None
         )
 
-        return DLLFile(
+        dll_file = DLLFile(
             name=name,
             version=version,
             architecture=architecture,
@@ -1054,8 +1054,11 @@ class FileSystemDLLRepository(IDLLRepository):
             security_status=security_status,
             vt_detection_ratio=vt_detection_ratio,
             vt_scan_date=vt_scan_date,
-            created_at=created_at if created_at is not None else datetime.now(tz=UTC),
         )
+        if created_at is not None:
+            dll_file = replace(dll_file, created_at=created_at)
+
+        return dll_file
 
     def _try_deserialize_dll(self, data: IndexEntry) -> DLLFile | None:
         """Return a DLL entity from index data, skipping corrupt entries."""
