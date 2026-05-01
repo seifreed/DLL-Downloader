@@ -938,7 +938,7 @@ def test_download_dll_use_case_fails_when_zip_reader_is_invalid() -> None:
     )
 
     assert response.success is False
-    assert response.error_message == "Download failed: Downloaded archive is not a valid ZIP file"
+    assert response.error_message == "Download failed: Downloaded content is not a valid DLL (missing PE signature)"
 
 
 @pytest.mark.unit
@@ -1022,18 +1022,14 @@ def test_download_dll_use_case_non_extract_request_bypasses_extracted_cache(
 ) -> None:
     repository = InMemoryRepository()
     http_client = StubHTTPClient()
+    extracted_bytes = _build_pe_payload(Architecture.X64, b"extracted")
     extracted_path = tmp_path / "test.dll"
-    extracted_path.write_bytes(_build_pe_payload(Architecture.X64, b"extracted"))
+    extracted_path.write_bytes(extracted_bytes)
     repository._storage[repository._make_key("test.dll", Architecture.X64)] = DLLFile(
         name="test.dll",
         architecture=Architecture.X64,
         file_path=str(extracted_path),
     )
-    zip_bytes = _build_zip_payload(
-        "test.dll",
-        _build_pe_payload(Architecture.X64, b"zip-cache-contract"),
-    )
-    http_client.add_response("https://dll.website/download/x64/test.dll", zip_bytes)
 
     use_case = DownloadDLLUseCase(
         repository=repository,
@@ -1051,9 +1047,10 @@ def test_download_dll_use_case_non_extract_request_bypasses_extracted_cache(
     )
 
     assert response.success is True
-    assert response.was_cached is False
+    assert response.was_cached is True
     dll_file = _require_dll_file(response.dll_file)
-    assert repository.get_content(dll_file) == zip_bytes
+    assert dll_file.file_path == str(extracted_path)
+    assert Path(dll_file.file_path).read_bytes() == extracted_bytes
 
 
 @pytest.mark.unit
@@ -1668,7 +1665,7 @@ def test_download_dll_use_case_fails_when_payload_is_not_zip() -> None:
 
     assert response.success is False
     assert response.error_message == (
-        "Download failed: Downloaded archive is not a valid ZIP file"
+        "Download failed: Downloaded content is not a valid DLL (missing PE signature)"
     )
 
 
@@ -1697,7 +1694,7 @@ def test_download_dll_use_case_fails_when_pk_content_is_not_valid_zip() -> None:
 
     assert response.success is False
     assert response.error_message == (
-        "Download failed: Downloaded archive is not a valid ZIP file"
+        "Download failed: Downloaded content is not a valid DLL (missing PE signature)"
     )
 
 
@@ -1873,7 +1870,7 @@ def test_download_dll_use_case_fails_when_extract_is_enabled_but_payload_is_not_
 
     assert response.success is False
     assert response.error_message == (
-        "Download failed: Downloaded archive is not a valid ZIP file"
+        "Download failed: Downloaded content is not a valid DLL (missing PE signature)"
     )
 
 
@@ -2046,6 +2043,37 @@ def test_download_dll_use_case_cached_scan_error_returns_failure(
 
     assert response.success is False
     assert response.error_message == "Download failed: scanner down"
+
+
+@pytest.mark.unit
+def test_download_dll_use_case_accepts_raw_pe_dll_without_zip() -> None:
+    """Verify a raw PE DLL (not in ZIP) is accepted directly."""
+    repository = InMemoryRepository()
+    http_client = StubHTTPClient()
+    dll_bytes = _build_pe_payload(Architecture.X64, b"raw dll content")
+    http_client.add_response(
+        "https://dll.website/download/x64/test.dll",
+        dll_bytes,
+    )
+
+    use_case = DownloadDLLUseCase(
+        repository=repository,
+        http_client=http_client,
+        download_base_url="https://dll.website/download",
+    )
+
+    response = use_case.execute(
+        DownloadDLLRequest(
+            dll_name="test.dll",
+            architecture=Architecture.X64,
+            scan_before_save=False,
+        )
+    )
+
+    assert response.success is True
+    dll_file = _require_dll_file(response.dll_file)
+    assert repository.get_content(dll_file) == dll_bytes
+    assert dll_file.file_size == len(dll_bytes)
 
 
 @pytest.mark.unit

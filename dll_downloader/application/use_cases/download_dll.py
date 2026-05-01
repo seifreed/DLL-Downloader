@@ -5,6 +5,7 @@ Orchestrates the process of downloading a DLL file, optionally scanning it
 for security threats, and storing it in the repository.
 """
 
+import logging
 import zipfile
 from dataclasses import dataclass, replace
 from io import BytesIO
@@ -28,6 +29,7 @@ from ...domain.services.download_resolver import IDownloadURLResolver
 from ...domain.services.security_scanner import ISecurityScanner
 from ..errors import ArchiveExtractionError, DownloadExecutionError
 
+logger = logging.getLogger(__name__)
 _PE_POINTER_OFFSET = 0x3C
 _PE_SIGNATURE = b"PE\x00\x00"
 _PE_COFF_HEADER_SIZE = 20
@@ -217,6 +219,12 @@ class DownloadDLLUseCase:
                 raise DownloadExecutionError(str(exc)) from exc
             if existing:
                 if not self._cached_payload_satisfies_request(existing, request):
+                    logger.warning(
+                        "Cached payload for %s (%s) does not match request mode, "
+                        "re-downloading",
+                        request.dll_name,
+                        request.architecture.value,
+                    )
                     return None
                 return self._build_cached_response(existing, request)
         return None
@@ -330,7 +338,11 @@ class DownloadDLLUseCase:
                 return False
             return True
 
-        return False
+        try:
+            self._validate_dll_architecture(content, request.architecture)
+        except DownloadExecutionError:
+            return False
+        return True
 
     def _normalize_request(self, request: DownloadDLLRequest) -> DownloadDLLRequest:
         """Normalize user-provided request values before touching dependencies."""
@@ -444,9 +456,13 @@ class DownloadDLLUseCase:
         request: DownloadDLLRequest,
     ) -> bytes:
         """Validate downloaded content and optionally extract a DLL from a ZIP payload."""
-        is_zip_archive = zipfile.is_zipfile(BytesIO(content))
+        try:
+            is_zip_archive = zipfile.is_zipfile(BytesIO(content))
+        except (ValueError, OSError):
+            is_zip_archive = False
         if not is_zip_archive:
-            raise ArchiveExtractionError("Downloaded archive is not a valid ZIP file")
+            self._validate_dll_architecture(content, request.architecture)
+            return content
 
         try:
             if not request.extract_archive:
@@ -540,8 +556,7 @@ class DownloadDLLUseCase:
         )
         machine_offset = pe_offset + len(_PE_SIGNATURE)
         if (
-            pe_offset < 0
-            or len(content) < machine_offset + _PE_COFF_HEADER_SIZE
+            len(content) < machine_offset + _PE_COFF_HEADER_SIZE
             or content[pe_offset:machine_offset] != _PE_SIGNATURE
         ):
             raise DownloadExecutionError(_INVALID_PE_MESSAGE)

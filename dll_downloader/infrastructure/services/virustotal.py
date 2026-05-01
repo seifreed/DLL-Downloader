@@ -420,7 +420,7 @@ class VirusTotalScanner(ISecurityScanner):
 
         malicious = stats.get('malicious', 0)
         suspicious = stats.get('suspicious', 0)
-        total = sum(stats.values())
+        total = sum(v for v in stats.values() if isinstance(v, (int, float)))
         total_positives = malicious + suspicious
 
         status = self._determine_security_status(total_positives, total)
