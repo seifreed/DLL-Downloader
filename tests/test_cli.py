@@ -1366,7 +1366,7 @@ def test_process_downloads_rejects_unsafe_batch_name(
     out = capsys.readouterr()
     assert success_count == 0
     assert failure_count == 1
-    assert "[ERROR]" in out.out
+    assert "[FAILED]" in out.out
     assert "DLL name" in out.out
 
 

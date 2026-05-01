@@ -1035,7 +1035,7 @@ class FileSystemDLLRepository(IDLLRepository):
         created_at = (
             datetime.fromisoformat(created_at_raw)
             if isinstance(created_at_raw, str)
-            else datetime.now()
+            else None
         )
 
         return DLLFile(

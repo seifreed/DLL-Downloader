@@ -90,8 +90,7 @@ class ISecurityScanner(ABC):
             ScanResult with the analysis results
 
         Raises:
-            ScannerError: If the lookup fails
-            FileNotFoundError: If no results exist for this hash
+            ScannerError: If the lookup fails or no results exist for this hash
         """
         pass
 

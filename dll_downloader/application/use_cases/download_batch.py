@@ -2,11 +2,14 @@
 Batch download use case.
 """
 
+import logging
 from dataclasses import dataclass, field
 from typing import Protocol
 
 from ...domain.entities.dll_file import Architecture, normalize_dll_name
 from .download_dll import DownloadDLLRequest, DownloadDLLResponse
+
+logger = logging.getLogger(__name__)
 
 
 class SupportsDownloadExecution(Protocol):
@@ -57,12 +60,22 @@ class DownloadBatchUseCase:
         self._download_use_case = download_use_case
 
     def execute(self, request: DownloadBatchRequest) -> DownloadBatchResponse:
-        normalized_names = [
-            normalize_dll_name(dll_name)
-            for dll_name in request.dll_names
-        ]
         items: list[DownloadBatchItem] = []
-        for normalized_name in normalized_names:
+        for dll_name in request.dll_names:
+            try:
+                normalized_name = normalize_dll_name(dll_name)
+            except ValueError as exc:
+                logger.warning("Skipping invalid DLL name in batch: %s", exc)
+                items.append(
+                    DownloadBatchItem(
+                        dll_name=dll_name,
+                        response=DownloadDLLResponse(
+                            success=False,
+                            error_message=str(exc),
+                        ),
+                    )
+                )
+                continue
             response = self._download_use_case.execute(
                 DownloadDLLRequest(
                     dll_name=normalized_name,

@@ -2511,7 +2511,7 @@ def test_download_batch_use_case_orchestrates_multiple_downloads() -> None:
 
 
 @pytest.mark.unit
-def test_download_batch_use_case_validates_all_names_before_download() -> None:
+def test_download_batch_use_case_skips_invalid_names_with_failure_items() -> None:
     repository = InMemoryRepository()
     http_client = StubHTTPClient()
     single_use_case = DownloadDLLUseCase(
@@ -2521,13 +2521,16 @@ def test_download_batch_use_case_validates_all_names_before_download() -> None:
     )
     batch_use_case = DownloadBatchUseCase(single_use_case)
 
-    with pytest.raises(ValueError, match="DLL name"):
-        batch_use_case.execute(
-            DownloadBatchRequest(
-                dll_names=["good.dll", "../bad", "other.dll"],
-                architecture=Architecture.X64,
-                scan_before_save=False,
-            )
+    response = batch_use_case.execute(
+        DownloadBatchRequest(
+            dll_names=["good.dll", "../bad", "other.dll"],
+            architecture=Architecture.X64,
+            scan_before_save=False,
         )
+    )
 
-    assert repository.list_all() == []
+    assert len(response.items) == 3
+    bad_item = response.items[1]
+    assert bad_item.dll_name == "../bad"
+    assert bad_item.response.success is False
+    assert "DLL name" in (bad_item.response.error_message or "")

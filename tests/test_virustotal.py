@@ -31,6 +31,7 @@ from dll_downloader.infrastructure.http_session import (
     HTTPSessionResource,
 )
 from dll_downloader.infrastructure.services.virustotal import (
+    HashNotFoundError,
     VirusTotalError,
     VirusTotalScanner,
 )
@@ -46,7 +47,7 @@ def _resource_with_session(session: HTTPSessionProtocol) -> HTTPSessionResource:
 
 class HashNotFoundScanner(VirusTotalScanner):
     def scan_hash(self, file_hash: str) -> ScanResult:
-        raise FileNotFoundError(file_hash)
+        raise HashNotFoundError(file_hash)
 
 
 class HashErrorScanner(VirusTotalScanner):
@@ -838,6 +839,7 @@ def test_scan_file_fifo_path_does_not_block(tmp_path: Path) -> None:
     os.mkfifo(fifo_path)
     code = f"""
 from dll_downloader.infrastructure.services.virustotal import (
+    HashNotFoundError,
     VirusTotalError,
     VirusTotalScanner,
 )
@@ -1033,7 +1035,7 @@ def test_scan_file_upload_runtime_json_error_raises_virustotal_error(
 @pytest.mark.unit
 def test_scan_hash_404_raises() -> None:
     """
-    Verify scan_hash raises FileNotFoundError on 404.
+    Verify scan_hash raises HashNotFoundError on 404.
     """
     class DummyResponse:
         def __init__(self, status_code: int) -> None:
@@ -1062,7 +1064,7 @@ def test_scan_hash_404_raises() -> None:
         session_resource=_resource_with_session(cast(HTTPSessionProtocol, DummySession())),
     )
 
-    with pytest.raises(FileNotFoundError):
+    with pytest.raises(HashNotFoundError):
         scanner.scan_hash("hash")
 
 
@@ -1099,7 +1101,7 @@ def test_scan_hash_passes_configured_timeout() -> None:
         session_resource=_resource_with_session(cast(HTTPSessionProtocol, session)),
     )
 
-    with pytest.raises(FileNotFoundError):
+    with pytest.raises(HashNotFoundError):
         scanner.scan_hash("hash")
 
     assert session.get_timeout == 7.25

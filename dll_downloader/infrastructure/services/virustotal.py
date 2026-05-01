@@ -32,6 +32,11 @@ class VirusTotalError(SecurityServiceError):
     pass
 
 
+class HashNotFoundError(VirusTotalError):
+    """Exception raised when a hash has no VirusTotal results."""
+    pass
+
+
 def _safe_json(response: HTTPResponseProtocol) -> dict[str, object]:
     """Normalize loosely typed HTTP JSON payloads into mappings."""
     payload = response.json()
@@ -189,7 +194,7 @@ class VirusTotalScanner(ISecurityScanner):
 
         try:
             return self.scan_hash(file_hash)
-        except FileNotFoundError:
+        except HashNotFoundError:
             pass
 
         response: HTTPResponseProtocol | None = None
@@ -238,7 +243,7 @@ class VirusTotalScanner(ISecurityScanner):
             ScanResult with cached analysis results
 
         Raises:
-            FileNotFoundError: If no results exist for this hash
+            HashNotFoundError: If no results exist for this hash
             VirusTotalError: If the lookup fails
         """
         if not self.is_available:
@@ -255,13 +260,13 @@ class VirusTotalScanner(ISecurityScanner):
                 timeout=self._timeout,
             )
             if response.status_code == 404:
-                raise FileNotFoundError(f"No results found for hash: {file_hash}")
+                raise HashNotFoundError(f"No results found for hash: {file_hash}")
             if response.status_code != 200:
                 raise VirusTotalError(
                     f"API request failed with status {response.status_code}"
                 )
             return self._parse_response(file_hash, _safe_json(response))
-        except FileNotFoundError:
+        except HashNotFoundError:
             raise
         except (requests.RequestException, RuntimeError, TypeError, ValueError) as e:
             logger.error(f"Failed to query VirusTotal: {e}")
@@ -295,7 +300,7 @@ class VirusTotalScanner(ISecurityScanner):
                 vt_scan_date=result.scan_date,
             )
 
-        except FileNotFoundError as exc:
+        except HashNotFoundError as exc:
             logger.info(f"No VT results for {dll_file.name}, file not previously scanned")
             raise VirusTotalError(
                 f"No VirusTotal results found for {dll_file.name}"
@@ -347,7 +352,7 @@ class VirusTotalScanner(ISecurityScanner):
             return
         try:
             close_response()
-        except (OSError, requests.RequestException, RuntimeError, TypeError, ValueError):
+        except (OSError, requests.RequestException, RuntimeError):
             return
 
     def _determine_security_status(
