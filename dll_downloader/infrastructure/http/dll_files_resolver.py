@@ -152,7 +152,8 @@ class DllFilesResolver:
         return any(
             self._context_has_architecture_hint(link_text)
             or self._context_has_architecture_hint(context)
-            for _, link_text, context in candidates
+            or self._href_has_architecture_hint(href)
+            for href, link_text, context in candidates
         )
 
     def _extract_link_context(self, html: str, href: str, link_text: str) -> str:
@@ -171,6 +172,10 @@ class DllFilesResolver:
         lower_html = html.lower()
         start = lower_html.rfind(_SECTION_START, 0, position)
         if start == -1:
+            return link_text
+
+        previous_end = lower_html.rfind(_SECTION_END, 0, position)
+        if previous_end > start:
             return link_text
 
         end = lower_html.find(_SECTION_END, position)
@@ -222,6 +227,12 @@ class DllFilesResolver:
                 or re.search(r"(^|[/_.-])32([/_.-]|$)", path)
             )
         return False
+
+    def _href_has_architecture_hint(self, href: str) -> bool:
+        return self._href_matches_architecture(
+            href,
+            Architecture.X64,
+        ) or self._href_matches_architecture(href, Architecture.X86)
 
     def _context_has_architecture_hint(self, context: str) -> bool:
         return self._context_has_bits_hint(context, "32") or self._context_has_bits_hint(

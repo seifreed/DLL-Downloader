@@ -1,4 +1,4 @@
-
+import json
 from typing import cast
 
 import pytest
@@ -33,6 +33,9 @@ from dll_downloader.interfaces.cli_runner import (
     DownloadCLIService,
     cleanup_runtime_resources,
 )
+from dll_downloader.interfaces.presenters.structured_presenter import (
+    DownloadBatchSARIFPresenter,
+)
 
 
 class RecordingWriter:
@@ -54,7 +57,7 @@ class StubPresenter:
     def summary_counts(self, success_count: int, failure_count: int) -> str:
         return f"summary:{success_count}:{failure_count}"
 
-    def boundary_error(self, error_message: str) -> str:
+    def boundary_error(self, error_message: str, failure_count: int = 1) -> str:
         return f"error:{error_message}"
 
 
@@ -163,6 +166,26 @@ def test_download_cli_service_returns_boundary_failure() -> None:
     assert result.boundary_failure is not None
     assert result.boundary_failure.message == "error:boom"
     assert result.boundary_failure.traceback_text is not None
+
+
+@pytest.mark.unit
+def test_download_cli_service_boundary_failure_preserves_batch_failure_count() -> None:
+    service = DownloadCLIService(FailingUseCase(), DownloadBatchSARIFPresenter())
+
+    result = service.run_with_error_handling(
+        CLIBatchDownloadCommand(
+            dll_names=["good.dll", "bad.dll", "other.dll"],
+            architecture=Architecture.X64,
+            scan_enabled=False,
+            force_download=False,
+            extract_archive=False,
+        )
+    )
+
+    assert result.session.failure_count == 3
+    assert result.boundary_failure is not None
+    payload = json.loads(result.boundary_failure.message)
+    assert payload["runs"][0]["properties"]["failureCount"] == 3
 
 
 @pytest.mark.unit

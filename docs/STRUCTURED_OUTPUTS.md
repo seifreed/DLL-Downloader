@@ -49,6 +49,8 @@ Boundary failures use:
 
 - Uses SARIF `2.1.0`
 - Stores the local contract version in `runs[0].properties.structuredOutputVersion`
+- Boundary failures store the affected batch size in
+  `runs[0].properties.failureCount`.
 - Uses stable rule ids:
   - `dll-downloader/download-failed`
   - `dll-downloader/download-succeeded`

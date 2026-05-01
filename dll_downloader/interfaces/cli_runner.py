@@ -138,7 +138,10 @@ class DownloadCLIService:
                 exit_code=1,
             ),
             boundary_failure=CLIBoundaryFailure(
-                message=self._presenter.boundary_error(str(exc)),
+                message=self._presenter.boundary_error(
+                    str(exc),
+                    failure_count=len(command.dll_names),
+                ),
                 traceback_text=traceback.format_exc() if command.debug else None,
             ),
         )

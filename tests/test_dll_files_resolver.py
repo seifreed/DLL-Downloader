@@ -331,6 +331,25 @@ def test_extract_download_link_uses_case_insensitive_section_context() -> None:
 
 
 @pytest.mark.unit
+def test_extract_download_link_does_not_inherit_closed_section_context() -> None:
+    resolver = DllFilesResolver(
+        http_client=StubTextHTTPClient({}),
+        base_url="http://example.com",
+    )
+    html = """
+    <section>
+      <p>Architecture: 64-bit</p>
+    </section>
+    <a href="/download/x86/file.dll.html">Download</a>
+    """
+
+    assert resolver._extract_download_link(html, Architecture.X64) is None
+    assert resolver._extract_download_link(html, Architecture.X86) == (
+        "/download/x86/file.dll.html"
+    )
+
+
+@pytest.mark.unit
 def test_extract_download_link_uses_link_text_for_sibling_architecture_links() -> None:
     resolver = DllFilesResolver(
         http_client=StubTextHTTPClient({}),

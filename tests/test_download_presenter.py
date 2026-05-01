@@ -153,7 +153,7 @@ def test_download_batch_sarif_presenter_renders_valid_log() -> None:
 def test_download_batch_sarif_presenter_renders_boundary_error_log() -> None:
     presenter = DownloadBatchSARIFPresenter()
 
-    payload = json.loads(presenter.boundary_error("bad input"))
+    payload = json.loads(presenter.boundary_error("bad input", failure_count=3))
 
     assert payload["runs"][0]["results"][0]["ruleId"] == (
         "dll-downloader/boundary-failure"
@@ -162,6 +162,7 @@ def test_download_batch_sarif_presenter_renders_boundary_error_log() -> None:
         STRUCTURED_OUTPUT_VERSION
     )
     assert payload["runs"][0]["results"][0]["message"]["text"] == "bad input"
+    assert payload["runs"][0]["properties"]["failureCount"] == 3
 
 
 @pytest.mark.unit

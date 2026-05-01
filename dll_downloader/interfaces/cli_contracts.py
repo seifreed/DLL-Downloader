@@ -31,7 +31,7 @@ class BatchPresenter(Protocol):
     def summary_counts(self, success_count: int, failure_count: int) -> str | None:
         """Render a final summary line when the format uses a separate summary."""
 
-    def boundary_error(self, error_message: str) -> str:
+    def boundary_error(self, error_message: str, failure_count: int = 1) -> str:
         """Render a boundary failure line."""
 
 

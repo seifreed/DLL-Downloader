@@ -19,6 +19,8 @@ This document is the current source of truth for the runtime architecture.
 - `application` depends on domain contracts, not concrete adapters.
 - `infrastructure` implements ports and owns production wiring in `infrastructure/composition.py`.
 - `interfaces/cli.py` is an entrypoint adapter, not a library façade.
+- CLI boundary presenters receive the affected failure count so structured
+  outputs can preserve session totals for batch-level failures.
 - Programmatic integration uses `dll_downloader.api`.
 - `Settings` is a data model only; loading lives in `SettingsLoader` and the public `load_settings()` wrapper.
 - `SettingsLoader.load()` validates the final merged runtime settings before production wiring consumes them.

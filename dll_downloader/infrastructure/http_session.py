@@ -70,6 +70,9 @@ class HTTPSessionResource:
 
     def close(self) -> None:
         """Close and discard the current session if present."""
-        if self._session is not None:
-            self._session.close()
-            self._session = None
+        session = self._session
+        if session is not None:
+            try:
+                session.close()
+            finally:
+                self._session = None

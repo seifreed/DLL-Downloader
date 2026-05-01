@@ -540,6 +540,34 @@ def test_requests_http_client_close_method() -> None:
 
 
 @pytest.mark.unit
+def test_session_resource_discards_session_when_close_fails() -> None:
+    class FailingCloseSession:
+        def __init__(self) -> None:
+            self.headers: dict[str, str] = {}
+
+        def get(self, *args: Any, **kwargs: Any) -> Any:
+            raise NotImplementedError
+
+        def head(self, *args: Any, **kwargs: Any) -> Any:
+            raise NotImplementedError
+
+        def post(self, *args: Any, **kwargs: Any) -> Any:
+            raise NotImplementedError
+
+        def close(self) -> None:
+            raise OSError("close failed")
+
+    resource = HTTPSessionResource(
+        session=cast(HTTPSessionProtocol, FailingCloseSession())
+    )
+
+    with pytest.raises(OSError, match="close failed"):
+        resource.close()
+
+    assert resource.has_session is False
+
+
+@pytest.mark.unit
 def test_requests_http_client_context_manager() -> None:
     """
     Test context manager protocol for automatic cleanup.

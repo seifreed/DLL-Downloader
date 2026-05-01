@@ -80,7 +80,7 @@ class DownloadBatchJSONPresenter:
     def summary_counts(self, success_count: int, failure_count: int) -> str | None:
         return None
 
-    def boundary_error(self, error_message: str) -> str:
+    def boundary_error(self, error_message: str, failure_count: int = 1) -> str:
         payload = {
             "format": "json",
             "schema_version": STRUCTURED_OUTPUT_VERSION,
@@ -122,7 +122,7 @@ class DownloadBatchSARIFPresenter:
     def summary_counts(self, success_count: int, failure_count: int) -> str | None:
         return None
 
-    def boundary_error(self, error_message: str) -> str:
+    def boundary_error(self, error_message: str, failure_count: int = 1) -> str:
         payload = self._build_log(
             results=[
                 {
@@ -134,7 +134,7 @@ class DownloadBatchSARIFPresenter:
             ],
             properties={
                 "successCount": 0,
-                "failureCount": 1,
+                "failureCount": failure_count,
                 "structuredOutputVersion": STRUCTURED_OUTPUT_VERSION,
             },
         )
