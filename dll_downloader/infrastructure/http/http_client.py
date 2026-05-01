@@ -175,7 +175,7 @@ class RequestsHTTPClient:
         for part in content_type.split(";"):
             part = part.strip()
             if part.lower().startswith("charset="):
-                candidate = part.split("=", 1)[1].strip().lower()
+                candidate = part.split("=", 1)[1].strip().strip('"').strip("'").lower()
                 if candidate in cls._TEXT_CHARSETS:
                     charset = candidate
                 break

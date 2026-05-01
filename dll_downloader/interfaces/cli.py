@@ -43,17 +43,22 @@ _LOG_LEVELS = {
     "NOTSET": logging.NOTSET,
 }
 
+_ARCH_STRING_MAP = {
+    "x86": Architecture.X86,
+    "x64": Architecture.X64,
+    "arm": Architecture.ARM,
+    "arm64": Architecture.ARM64,
+}
+
 
 def set_debug_mode(enabled: bool) -> None:
     """
-    Set debug mode environment variable and logging level.
+    Set debug mode environment variable.
 
     Args:
         enabled: Whether to enable debug mode.
     """
     os.environ['DEBUG_MODE'] = '1' if enabled else '0'
-    if enabled:
-        logging.getLogger().setLevel(logging.DEBUG)
 
 
 def apply_logging_settings(settings: Settings, debug_enabled: bool) -> None:
@@ -89,7 +94,7 @@ def read_dll_list_from_file(file_path: str) -> list[str]:
     try:
         with path.open(encoding="utf-8") as f:
             dll_names = [line.strip() for line in f if line.strip()]
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         raise ValueError(f"Failed to read file '{file_path}': {exc}") from exc
 
     if not dll_names:
@@ -105,15 +110,18 @@ def get_architecture(arch_str: str) -> Architecture:
     Convert architecture string to Architecture enum.
 
     Args:
-        arch_str: Architecture string ('x86' or 'x64')
+        arch_str: Architecture string ('x86', 'x64', 'arm', or 'arm64')
 
     Returns:
         Architecture enum value
+
+    Raises:
+        ValueError: If the architecture string is not recognized.
     """
-    return {
-        'x86': Architecture.X86,
-        'x64': Architecture.X64,
-    }.get(arch_str, Architecture.X64)
+    result = _ARCH_STRING_MAP.get(arch_str)
+    if result is None:
+        raise ValueError(f"Unsupported architecture: {arch_str!r}")
+    return result
 
 
 def format_response(response: DownloadDLLResponse, dll_name: str) -> None:
@@ -161,7 +169,7 @@ def _run_cli_session(
             settings,
             read_dll_list_from_file,
         )
-    except (OSError, ValueError) as exc:
+    except Exception as exc:
         emit_cli_input_error(
             service,
             create_batch_presenter(output_format).boundary_error(str(exc)),
@@ -210,7 +218,15 @@ def main(settings: Settings | None = None) -> int:
             )
             return 1
 
-    apply_logging_settings(settings, args.debug)
+    try:
+        apply_logging_settings(settings, args.debug)
+    except (OSError, ValueError) as exc:
+        emit_cli_input_error(
+            service,
+            create_batch_presenter(output_format).boundary_error(str(exc)),
+        )
+        return 1
+
     return _run_cli_session(service, output_format, args, parser, settings)
 
 

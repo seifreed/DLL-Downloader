@@ -6,6 +6,7 @@ for security threats, and storing it in the repository.
 """
 
 import logging
+import zlib
 import zipfile
 from dataclasses import dataclass, replace
 from io import BytesIO
@@ -50,6 +51,8 @@ _PE_MACHINE_ARCHITECTURES = {
     0x014C: Architecture.X86,
     0x8664: Architecture.X64,
     0x01C0: Architecture.ARM,
+    0x01C2: Architecture.ARM,
+    0x01C4: Architecture.ARM,
     0xAA64: Architecture.ARM64,
 }
 _INVALID_PE_MESSAGE = "Downloaded content is not a valid DLL (missing PE signature)"
@@ -57,6 +60,7 @@ _ZIP_MEMBER_READ_ERRORS = (
     RuntimeError,
     NotImplementedError,
     zipfile.BadZipFile,
+    zlib.error,
 )
 
 
@@ -413,7 +417,8 @@ class DownloadDLLUseCase:
             Complete download URL
         """
         arch_path = architecture.value if architecture != Architecture.UNKNOWN else "x64"
-        return f"{self._download_base_url}/{arch_path}/{dll_name}"
+        base = self._download_base_url.rstrip("/")
+        return f"{base}/{arch_path}/{dll_name}"
 
     def _calculate_hash(self, content: bytes) -> str:
         """
@@ -437,6 +442,8 @@ class DownloadDLLUseCase:
                 )
             except (DownloadResolutionError, HTTPServiceError, ValueError) as exc:
                 raise DownloadExecutionError(str(exc)) from exc
+            except Exception as exc:
+                raise DownloadExecutionError(str(exc)) from exc
         return self._build_download_url(request.dll_name, request.architecture)
 
     def _download_content(self, download_url: str) -> bytes:
@@ -444,6 +451,8 @@ class DownloadDLLUseCase:
         try:
             return self._http_client.download(download_url)
         except (HTTPServiceError, ValueError) as exc:
+            raise DownloadExecutionError(str(exc)) from exc
+        except Exception as exc:
             raise DownloadExecutionError(str(exc)) from exc
 
     def _save_dll(self, dll_file: DLLFile, content: bytes) -> DLLFile:
@@ -472,7 +481,7 @@ class DownloadDLLUseCase:
                 self._validate_zip_contains_valid_dll(content, request)
                 return content
             return self._extract_valid_dll_from_zip(content, request)
-        except (RuntimeError, NotImplementedError, zipfile.BadZipFile) as exc:
+        except (RuntimeError, NotImplementedError, zipfile.BadZipFile, zlib.error) as exc:
             raise ArchiveExtractionError("Downloaded archive is not a valid ZIP file") from exc
 
     def _validate_zip_contains_valid_dll(
@@ -503,14 +512,14 @@ class DownloadDLLUseCase:
             expected_name = request.dll_name.lower()
             requested_members = [
                 member for member in matching_members
-                if member.filename.rsplit("/", 1)[-1].lower() == expected_name
+                if member.filename.replace("\\", "/").rsplit("/", 1)[-1].lower() == expected_name
             ]
             if not requested_members:
                 raise ArchiveExtractionError(
                     f"ZIP archive does not contain requested DLL {request.dll_name}"
                 )
 
-            validation_error: DownloadExecutionError | None = None
+            validation_errors: list[DownloadExecutionError] = []
             read_error: Exception | None = None
             empty_member_found = False
             for member in requested_members:
@@ -528,12 +537,12 @@ class DownloadDLLUseCase:
                         request.architecture,
                     )
                 except DownloadExecutionError as exc:
-                    validation_error = exc
+                    validation_errors.append(exc)
                     continue
                 return extracted_content
 
-            if validation_error is not None:
-                raise validation_error
+            if validation_errors:
+                raise validation_errors[-1]
             if read_error is not None:
                 raise ArchiveExtractionError(
                     "Downloaded archive is not a valid ZIP file"
@@ -683,14 +692,12 @@ class DownloadDLLUseCase:
             )
             if virtual_address == 0 or (virtual_size == 0 and raw_size == 0):
                 continue
-            if raw_size == 0:
-                return True
             if (
-                raw_pointer < minimum_raw_pointer
-                or raw_pointer + raw_size > len(content)
+                raw_size > 0
+                and raw_pointer >= minimum_raw_pointer
+                and raw_pointer + raw_size <= len(content)
             ):
-                continue
-            return True
+                return True
         return False
 
     @staticmethod

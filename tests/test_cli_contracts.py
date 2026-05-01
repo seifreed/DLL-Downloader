@@ -23,11 +23,16 @@ class RecordingReader:
 def test_parse_architecture_supports_known_values() -> None:
     assert parse_architecture("x86") == Architecture.X86
     assert parse_architecture("x64") == Architecture.X64
+    assert parse_architecture("arm") == Architecture.ARM
+    assert parse_architecture("arm64") == Architecture.ARM64
 
 
 @pytest.mark.unit
-def test_parse_architecture_defaults_to_x64() -> None:
-    assert parse_architecture("arm64") == Architecture.X64
+def test_parse_architecture_rejects_unknown_values() -> None:
+    with pytest.raises(ValueError, match="Unsupported architecture"):
+        parse_architecture("unknown")
+    with pytest.raises(ValueError, match="Unsupported architecture"):
+        parse_architecture("")
 
 
 @pytest.mark.unit

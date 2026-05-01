@@ -19,6 +19,9 @@ STRUCTURED_OUTPUT_VERSION = "1.0"
 def _serialize_datetime(value: datetime | None) -> str | None:
     if value is None:
         return None
+    if value.tzinfo is None:
+        from datetime import timezone
+        value = value.replace(tzinfo=timezone.utc)
     return value.isoformat()
 
 

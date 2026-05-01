@@ -1550,19 +1550,30 @@ def test_download_dll_use_case_loadable_section_edges() -> None:
     invalid_raw_section[12:16] = (0x1000).to_bytes(4, "little")
     invalid_raw_section[16:20] = (4).to_bytes(4, "little")
     invalid_raw_section[20:24] = (1).to_bytes(4, "little")
+    valid_raw_section = bytearray(80)
+    valid_raw_section[:5] = b".text"
+    valid_raw_section[8:12] = (1).to_bytes(4, "little")
+    valid_raw_section[12:16] = (0x1000).to_bytes(4, "little")
+    valid_raw_section[16:20] = (4).to_bytes(4, "little")
+    valid_raw_section[20:24] = (40).to_bytes(4, "little")
 
     assert not DownloadDLLUseCase._has_loadable_section(
         bytes(blank_section),
         section_table_offset,
         1,
     )
-    assert DownloadDLLUseCase._has_loadable_section(
+    assert not DownloadDLLUseCase._has_loadable_section(
         bytes(virtual_only_section),
         section_table_offset,
         1,
     )
     assert not DownloadDLLUseCase._has_loadable_section(
         bytes(invalid_raw_section),
+        section_table_offset,
+        1,
+    )
+    assert DownloadDLLUseCase._has_loadable_section(
+        bytes(valid_raw_section),
         section_table_offset,
         1,
     )

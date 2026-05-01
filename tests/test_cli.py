@@ -747,21 +747,23 @@ def test_get_architecture_x64() -> None:
 @pytest.mark.unit
 def test_get_architecture_default() -> None:
     """
-    Test that any non-x86 value defaults to x64.
+    Test that known architectures map correctly and unknown values raise.
 
     Purpose:
-        Verify default architecture fallback behavior.
+        Verify architecture parsing maps known values and rejects unknown ones.
 
     Expected Behavior:
-        Unknown values default to X64.
+        Known strings map to their enum; unknown strings raise ValueError.
     """
-    result1 = get_architecture("arm")
-    result2 = get_architecture("unknown")
-    result3 = get_architecture("")
+    assert get_architecture("x86") == Architecture.X86
+    assert get_architecture("x64") == Architecture.X64
+    assert get_architecture("arm") == Architecture.ARM
+    assert get_architecture("arm64") == Architecture.ARM64
 
-    assert result1 == Architecture.X64
-    assert result2 == Architecture.X64
-    assert result3 == Architecture.X64
+    with pytest.raises(ValueError, match="Unsupported architecture"):
+        get_architecture("unknown")
+    with pytest.raises(ValueError, match="Unsupported architecture"):
+        get_architecture("")
 
 
 # ============================================================================

@@ -46,6 +46,10 @@ _PE_MAX_SECTIONS = 96
 _PE_MACHINE_ARCHITECTURES = {
     0x014C: Architecture.X86,
     0x8664: Architecture.X64,
+    0x01C0: Architecture.ARM,
+    0x01C2: Architecture.ARM,
+    0x01C4: Architecture.ARM,
+    0xAA64: Architecture.ARM64,
 }
 _ZIP_MEMBER_READ_ERRORS = (
     OSError,
@@ -160,10 +164,10 @@ class FileSystemDLLRepository(IDLLRepository):
                         )
                 return {"files": normalized_files}
         except (OSError, json.JSONDecodeError) as e:
-            logger.warning(f"Failed to load index: {e}")
+            logger.warning("Failed to load index: %s", e)
             return {"files": {}}
         except ValueError as e:
-            logger.warning(f"Invalid index structure: {e}")
+            logger.warning("Invalid index structure: %s", e)
             return {"files": {}}
 
     def _save_index(self, index: IndexData) -> None:
@@ -174,7 +178,7 @@ class FileSystemDLLRepository(IDLLRepository):
                 json.dumps(index, indent=2, default=str).encode("utf-8"),
             )
         except OSError as e:
-            logger.error(f"Failed to save index: {e}")
+            logger.error("Failed to save index: %s", e)
             raise RepositoryError(f"Failed to save index: {e}") from e
 
     def _get_file_key(self, name: str, architecture: Architecture) -> str:
@@ -304,7 +308,7 @@ class FileSystemDLLRepository(IDLLRepository):
             return dll_file
 
         except OSError as e:
-            logger.error(f"Failed to save DLL {dll_file.name}: {e}")
+            logger.error("Failed to save DLL %s: %s", dll_file.name, e)
             raise RepositoryError(f"Failed to save DLL: {e}") from e
 
     def _rollback_payload_write(
@@ -318,7 +322,7 @@ class FileSystemDLLRepository(IDLLRepository):
                 file_path.unlink(missing_ok=True)
                 return
             self._atomic_write_bytes(file_path, previous_content)
-        except OSError as exc:
+        except (OSError, RepositoryError) as exc:
             logger.error("Failed to roll back payload write for %s: %s", file_path, exc)
 
     def find_by_name(
@@ -667,19 +671,17 @@ class FileSystemDLLRepository(IDLLRepository):
             )
             if virtual_address == 0 or (virtual_size == 0 and raw_size == 0):
                 continue
-            if raw_size == 0:
-                return True
             if (
-                raw_pointer < minimum_raw_pointer
-                or raw_pointer + raw_size > len(content)
+                raw_size > 0
+                and raw_pointer >= minimum_raw_pointer
+                and raw_pointer + raw_size <= len(content)
             ):
-                continue
-            return True
+                return True
         return False
 
     @staticmethod
     def _expected_optional_magic(architecture: Architecture) -> int:
-        if architecture == Architecture.X64:
+        if architecture in (Architecture.X64, Architecture.ARM64):
             return _PE_OPTIONAL_HEADER_MAGIC_PE32_PLUS
         return _PE_OPTIONAL_HEADER_MAGIC_PE32
 
@@ -879,11 +881,11 @@ class FileSystemDLLRepository(IDLLRepository):
                 original_index=original_index,
             )
 
-            logger.info(f"Deleted DLL: {delete_target.name}")
+            logger.info("Deleted DLL: %s", delete_target.name)
             return True
 
         except (OSError, RepositoryError) as e:
-            logger.error(f"Failed to delete DLL {dll_file.name}: {e}")
+            logger.error("Failed to delete DLL %s: %s", dll_file.name, e)
             return False
 
     def _resolve_delete_target(self, dll_file: DLLFile) -> DLLFile | None:
@@ -987,7 +989,11 @@ class FileSystemDLLRepository(IDLLRepository):
         try:
             self._save_index(original_index)
         except RepositoryError as exc:
-            logger.error("Failed to roll back DLL index after delete failure: %s", exc)
+            logger.warning(
+                "Failed to roll back DLL index after delete failure; "
+                "orphaned index entries may exist: %s",
+                exc,
+            )
 
     def exists(self, name: str, architecture: Architecture | None = None) -> bool:
         """
@@ -1064,7 +1070,7 @@ class FileSystemDLLRepository(IDLLRepository):
         """Return a DLL entity from index data, skipping corrupt entries."""
         try:
             return self._deserialize_dll(data)
-        except (TypeError, ValueError) as e:
+        except (TypeError, ValueError, KeyError) as e:
             logger.warning("Skipping invalid DLL index entry: %s", e)
             return None
 

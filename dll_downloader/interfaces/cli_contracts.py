@@ -42,12 +42,20 @@ class DLLListReader(Protocol):
         """Return normalized raw entries read from disk."""
 
 
+_ARCH_STRING_MAP = {
+    "x86": Architecture.X86,
+    "x64": Architecture.X64,
+    "arm": Architecture.ARM,
+    "arm64": Architecture.ARM64,
+}
+
+
 def parse_architecture(arch_str: str) -> Architecture:
     """Normalize CLI architecture strings to the domain enum."""
-    return {
-        "x86": Architecture.X86,
-        "x64": Architecture.X64,
-    }.get(arch_str, Architecture.X64)
+    result = _ARCH_STRING_MAP.get(arch_str)
+    if result is None:
+        raise ValueError(f"Unsupported architecture: {arch_str!r}")
+    return result
 
 
 def resolve_dll_names(

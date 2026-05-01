@@ -174,17 +174,25 @@ class VirusTotalScanner(ISecurityScanner):
             VirusTotalError: If the scan fails
         """
         if not self.is_available:
+            try:
+                content = Path(file_path).read_bytes()
+                computed_hash = calculate_sha256(content)
+            except OSError:
+                computed_hash = ""
             return ScanResult(
-                file_hash="",
+                file_hash=computed_hash,
                 status=SecurityStatus.UNKNOWN,
                 error_message=_API_KEY_MISSING
             )
 
         path = Path(file_path)
-        if path.exists() and not path.is_file():
-            raise VirusTotalError(
-                f"File upload failed: path is not a regular file: {file_path}"
-            )
+        try:
+            if path.is_symlink() or not path.is_file():
+                raise VirusTotalError(
+                    f"File upload failed: path is not a regular file: {file_path}"
+                )
+        except OSError as e:
+            raise VirusTotalError(f"File upload failed: {e}") from e
 
         try:
             with path.open('rb') as f:
@@ -426,7 +434,7 @@ class VirusTotalScanner(ISecurityScanner):
 
         malicious = int(stats.get('malicious', 0) or 0)
         suspicious = int(stats.get('suspicious', 0) or 0)
-        total = int(sum(v for v in stats.values() if isinstance(v, (int, float))))
+        total = int(sum(v for v in stats.values() if isinstance(v, int) and not isinstance(v, bool)))
         total_positives = malicious + suspicious
 
         status = self._determine_security_status(total_positives, total)
