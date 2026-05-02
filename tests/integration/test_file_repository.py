@@ -284,7 +284,7 @@ class TestFileSystemDLLRepositoryInitialization:
         assert existing_file.exists()
         assert existing_file.read_bytes() == b"MZ\x90\x00existing content"
 
-    def test_load_index_returns_empty_for_invalid_top_level_json(
+    def test_load_index_raises_for_invalid_top_level_json(
         self,
         tmp_path: Path,
     ) -> None:
@@ -294,9 +294,10 @@ class TestFileSystemDLLRepositoryInitialization:
 
         repository = FileSystemDLLRepository(repo_path)
 
-        assert repository._load_index() == {"files": {}}
+        with pytest.raises(RepositoryError):
+            repository._load_index()
 
-    def test_load_index_returns_empty_for_invalid_files_shape(
+    def test_load_index_raises_for_invalid_files_shape(
         self,
         tmp_path: Path,
     ) -> None:
@@ -306,7 +307,8 @@ class TestFileSystemDLLRepositoryInitialization:
 
         repository = FileSystemDLLRepository(repo_path)
 
-        assert repository._load_index() == {"files": {}}
+        with pytest.raises(RepositoryError):
+            repository._load_index()
 
 
 class TestFileSystemDLLRepositorySave:
@@ -2297,23 +2299,22 @@ class TestFileSystemDLLRepositoryIndexPersistence:
         tmp_path: Path,
     ) -> None:
         """
-        Verify that corrupted index files are handled without crashing.
+        Verify that corrupted index files raise RepositoryError.
 
         Expected Behavior:
             - Repository initializes successfully
-            - Corrupted index is treated as empty
-            - New index is created on save
+            - Corrupted index raises RepositoryError on access
         """
         # Create repository with corrupted index
         index_path = tmp_path / ".dll_index.json"
         index_path.write_text("{corrupted json content")
 
-        # Should not raise exception
+        # Should not raise exception during init
         repo = FileSystemDLLRepository(tmp_path)
 
-        # Should return empty list
-        all_dlls = repo.list_all()
-        assert all_dlls == []
+        # Corrupted JSON should raise RepositoryError on access
+        with pytest.raises(RepositoryError):
+            repo.list_all()
 
     def test_invalid_index_entries_are_skipped_when_listing(
         self,

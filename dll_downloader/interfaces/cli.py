@@ -13,10 +13,10 @@ from pathlib import Path
 
 from ..api import Settings
 from ..application.use_cases.download_dll import DownloadDLLResponse
-from ..domain.entities.dll_file import Architecture
+from ..domain.entities.dll_file import Architecture, normalize_dll_name
 from ..runtime import load_settings
 from .cli_arguments import ArgumentParseFailure, parse_arguments, parse_main_arguments
-from .cli_contracts import OutputFormat
+from .cli_contracts import OutputFormat, parse_architecture
 from .cli_formatters import (
     create_batch_presenter,
     create_cli_service,
@@ -41,13 +41,6 @@ _LOG_LEVELS = {
     "INFO": logging.INFO,
     "DEBUG": logging.DEBUG,
     "NOTSET": logging.NOTSET,
-}
-
-_ARCH_STRING_MAP = {
-    "x86": Architecture.X86,
-    "x64": Architecture.X64,
-    "arm": Architecture.ARM,
-    "arm64": Architecture.ARM64,
 }
 
 
@@ -85,19 +78,22 @@ def read_dll_list_from_file(file_path: str) -> list[str]:
     Raises:
         ValueError: If the file does not exist or is empty.
     """
-    path = Path(file_path).resolve()
+    raw_path = Path(file_path)
+    if raw_path.is_symlink():
+        raise ValueError(f"Refusing to read DLL list from symlink: '{file_path}'")
+    path = raw_path.resolve()
     if not path.exists():
         raise ValueError(f"File '{file_path}' not found.")
-    if path.is_symlink():
-        raise ValueError(f"Refusing to read DLL list from symlink: '{file_path}'")
     if not path.is_file():
         raise ValueError(f"Failed to read file '{file_path}': not a regular file")
 
     try:
         with path.open(encoding="utf-8") as f:
-            dll_names = [line.strip() for line in f if line.strip()]
+            dll_names = [normalize_dll_name(line.strip()) for line in f if line.strip()]
     except (OSError, UnicodeDecodeError) as exc:
         raise ValueError(f"Failed to read file '{file_path}': {exc}") from exc
+    except ValueError as exc:
+        raise ValueError(f"Invalid DLL name in '{file_path}': {exc}") from exc
 
     if not dll_names:
         raise ValueError(
@@ -120,10 +116,7 @@ def get_architecture(arch_str: str) -> Architecture:
     Raises:
         ValueError: If the architecture string is not recognized.
     """
-    result = _ARCH_STRING_MAP.get(arch_str)
-    if result is None:
-        raise ValueError(f"Unsupported architecture: {arch_str!r}")
-    return result
+    return parse_architecture(arch_str)
 
 
 def format_response(response: DownloadDLLResponse, dll_name: str) -> None:
@@ -194,6 +187,14 @@ def main(settings: Settings | None = None) -> int:
     Returns:
         Exit code (0 for success, 1 for failure)
     """
+    try:
+        return _main_inner(settings)
+    except KeyboardInterrupt:
+        return 130
+
+
+def _main_inner(settings: Settings | None) -> int:
+    """Inner entry point that raises on interrupt."""
     parsed = parse_main_arguments()
     if isinstance(parsed, ArgumentParseFailure):
         service = create_cli_service(parsed.output_format)

@@ -58,7 +58,7 @@ def emit_cli_input_error(
             session=CLISessionResult(success_count=0, failure_count=1, exit_code=1),
             boundary_failure=CLIBoundaryFailure(
                 message=message,
-                is_structured=service._is_structured,
+                is_structured=service.is_structured,
             ),
         )
     )

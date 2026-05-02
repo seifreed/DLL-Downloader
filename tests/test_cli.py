@@ -1487,7 +1487,7 @@ def test_main_json_output_for_invalid_argparse_input(
     capsys: CaptureFixture[str],
 ) -> None:
     with _temporary_argv(
-        ["dll-downloader.py", "test.dll", "--arch", "arm", "--json"]
+        ["dll-downloader.py", "test.dll", "--arch", "riscv", "--json"]
     ):
         assert main(Settings()) == 1
 
@@ -1504,7 +1504,7 @@ def test_main_sarif_output_for_invalid_argparse_input(
     capsys: CaptureFixture[str],
 ) -> None:
     with _temporary_argv(
-        ["dll-downloader.py", "test.dll", "--arch", "arm", "--sarif"]
+        ["dll-downloader.py", "test.dll", "--arch", "riscv", "--sarif"]
     ):
         assert main(Settings()) == 1
 

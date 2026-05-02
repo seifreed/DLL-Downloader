@@ -217,6 +217,11 @@ class CLIApplicationService:
         self._writer = writer or ConsoleOutputWriter()
         self._is_structured = is_structured
 
+    @property
+    def is_structured(self) -> bool:
+        """Whether structured (JSON/SARIF) output mode is active."""
+        return self._is_structured
+
     def create_invocation(
         self,
         args: argparse.Namespace,

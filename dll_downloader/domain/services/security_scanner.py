@@ -31,6 +31,18 @@ class ScanResult:
     status: SecurityStatus
     detection_ratio: str | None = None
     detections: dict[str, str] = field(default_factory=dict)
+
+    def __hash__(self) -> int:
+        detections_tuple = tuple(sorted(self.detections.items()))
+        return hash((
+            self.file_hash,
+            self.status,
+            self.detection_ratio,
+            detections_tuple,
+            self.scan_date,
+            self.permalink,
+            self.error_message,
+        ))
     scan_date: datetime | None = None
     permalink: str | None = None
     error_message: str | None = None

@@ -25,6 +25,12 @@ from ..http_session import (
 
 logger = logging.getLogger(__name__)
 _API_KEY_MISSING = "VirusTotal API key not configured"
+_VT_UPLOAD_MAX_BYTES = 32 * 1024 * 1024  # 32 MiB
+
+
+def _is_valid_hash(value: str) -> bool:
+    """Return True when value looks like a hex hash suitable for URL path segments."""
+    return bool(value) and all(c in "0123456789abcdefABCDEF" for c in value)
 
 
 class VirusTotalError(SecurityServiceError):
@@ -35,6 +41,20 @@ class VirusTotalError(SecurityServiceError):
 class HashNotFoundError(VirusTotalError):
     """Exception raised when a hash has no VirusTotal results."""
     pass
+
+
+def _safe_int(value: object) -> int:
+    """Safely coerce API values to int, handling float-like strings."""
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        try:
+            return int(float(value))
+        except (ValueError, OverflowError):
+            return 0
+    return 0
 
 
 def _safe_json(response: HTTPResponseProtocol) -> dict[str, object]:
@@ -196,7 +216,11 @@ class VirusTotalScanner(ISecurityScanner):
 
         try:
             with path.open('rb') as f:
-                content = f.read()
+                content = f.read(_VT_UPLOAD_MAX_BYTES)
+                if len(content) >= _VT_UPLOAD_MAX_BYTES:
+                    raise VirusTotalError(
+                        f"File exceeds { _VT_UPLOAD_MAX_BYTES // (1024 * 1024)} MiB upload limit"
+                    )
         except OSError as e:
             logger.error("Failed to upload file to VirusTotal: %s", e)
             raise VirusTotalError(f"File upload failed: {e}") from e
@@ -262,6 +286,9 @@ class VirusTotalScanner(ISecurityScanner):
                 status=SecurityStatus.UNKNOWN,
                 error_message=_API_KEY_MISSING
             )
+
+        if not _is_valid_hash(file_hash):
+            raise VirusTotalError(f"Invalid file hash: {file_hash!r}")
 
         response: HTTPResponseProtocol | None = None
         try:
@@ -430,8 +457,8 @@ class VirusTotalScanner(ISecurityScanner):
         if not isinstance(stats, dict):
             stats = {}
 
-        malicious = int(stats.get('malicious', 0) or 0)
-        suspicious = int(stats.get('suspicious', 0) or 0)
+        malicious = _safe_int(stats.get('malicious', 0))
+        suspicious = _safe_int(stats.get('suspicious', 0))
         total = int(sum(v for v in stats.values() if isinstance(v, int) and not isinstance(v, bool)))
         total_positives = malicious + suspicious
 

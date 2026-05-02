@@ -92,9 +92,7 @@ class DownloadBatchUseCase:
                     success=False,
                     error_message=str(exc),
                 )
-            except BaseException as exc:
-                if isinstance(exc, (KeyboardInterrupt, SystemExit)):
-                    raise
+            except Exception as exc:
                 logger.error("Unexpected error downloading %s: %s", normalized_name, exc)
                 response = DownloadDLLResponse(
                     success=False,

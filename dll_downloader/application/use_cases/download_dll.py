@@ -258,12 +258,16 @@ class DownloadDLLUseCase:
         if not cached_dll.file_path:
             return scanned_dll
 
+        cache_path = Path(cached_dll.file_path)
+        if cache_path.is_symlink() or not cache_path.is_file():
+            logger.warning("Cached DLL path is invalid or a symlink: %s", cached_dll.file_path)
+            return scanned_dll
+
         try:
-            content = Path(cached_dll.file_path).read_bytes()
+            content = cache_path.read_bytes()
         except OSError as exc:
-            raise DownloadExecutionError(
-                f"Failed to read cached DLL for metadata update: {exc}"
-            ) from exc
+            logger.warning("Failed to read cached DLL for metadata update: %s", exc)
+            return scanned_dll
         return self._save_dll(scanned_dll, content)
 
     @classmethod
@@ -276,6 +280,8 @@ class DownloadDLLUseCase:
         if not dll_file.file_path:
             return False
         cache_path = Path(dll_file.file_path)
+        if cache_path.is_symlink():
+            return False
         if not cache_path.is_file():
             return False
         try:
@@ -305,6 +311,8 @@ class DownloadDLLUseCase:
             return False
 
         cache_path = Path(dll_file.file_path)
+        if cache_path.is_symlink():
+            return False
         if not cache_path.is_file():
             return False
 
@@ -424,9 +432,7 @@ class DownloadDLLUseCase:
                 )
             except (DownloadResolutionError, HTTPServiceError, ValueError) as exc:
                 raise DownloadExecutionError(str(exc)) from exc
-            except BaseException as exc:
-                if isinstance(exc, (KeyboardInterrupt, SystemExit)):
-                    raise
+            except Exception as exc:
                 raise DownloadExecutionError(str(exc)) from exc
         return self._build_download_url(request.dll_name, request.architecture)
 
@@ -436,9 +442,7 @@ class DownloadDLLUseCase:
             return self._http_client.download(download_url)
         except (HTTPServiceError, ValueError) as exc:
             raise DownloadExecutionError(str(exc)) from exc
-        except BaseException as exc:
-            if isinstance(exc, (KeyboardInterrupt, SystemExit)):
-                raise
+        except Exception as exc:
             raise DownloadExecutionError(str(exc)) from exc
 
     def _save_dll(self, dll_file: DLLFile, content: bytes) -> DLLFile:

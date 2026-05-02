@@ -1062,7 +1062,7 @@ def test_scan_hash_404_raises() -> None:
     )
 
     with pytest.raises(HashNotFoundError):
-        scanner.scan_hash("hash")
+        scanner.scan_hash("a" * 64)
 
 
 @pytest.mark.unit
@@ -1099,7 +1099,7 @@ def test_scan_hash_passes_configured_timeout() -> None:
     )
 
     with pytest.raises(HashNotFoundError):
-        scanner.scan_hash("hash")
+        scanner.scan_hash("a" * 64)
 
     assert session.get_timeout == 7.25
 
@@ -1190,7 +1190,7 @@ def test_scan_hash_non_200_raises() -> None:
     )
 
     with pytest.raises(VirusTotalError):
-        scanner.scan_hash("hash")
+        scanner.scan_hash("a" * 64)
 
 
 @pytest.mark.unit
@@ -1219,7 +1219,7 @@ def test_scan_hash_request_exception_raises() -> None:
     )
 
     with pytest.raises(VirusTotalError):
-        scanner.scan_hash("hash")
+        scanner.scan_hash("a" * 64)
 
 
 @pytest.mark.unit

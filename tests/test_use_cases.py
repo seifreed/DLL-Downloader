@@ -1264,7 +1264,7 @@ def test_persist_cached_scan_result_without_path_returns_scanned_metadata() -> N
 
 
 @pytest.mark.unit
-def test_persist_cached_scan_result_rejects_missing_payload(
+def test_persist_cached_scan_result_returns_scanned_dll_when_payload_missing(
     tmp_path: Path,
 ) -> None:
     use_case = DownloadDLLUseCase(
@@ -1279,8 +1279,8 @@ def test_persist_cached_scan_result_rejects_missing_payload(
     )
     scanned_dll = replace(cached_dll, security_status=SecurityStatus.CLEAN)
 
-    with pytest.raises(DownloadExecutionError, match="Failed to read cached DLL"):
-        use_case._persist_cached_scan_result(cached_dll, scanned_dll)
+    result = use_case._persist_cached_scan_result(cached_dll, scanned_dll)
+    assert result is scanned_dll
 
 
 @pytest.mark.unit

@@ -59,7 +59,7 @@ def add_standard_arguments(parser: argparse.ArgumentParser) -> None:
 
     parser.add_argument(
         "--arch",
-        choices=["x86", "x64"],
+        choices=["x86", "x64", "arm", "arm64"],
         default="x64",
         help="Target architecture (default: x64)",
     )

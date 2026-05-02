@@ -159,11 +159,11 @@ class FileSystemDLLRepository(IDLLRepository):
                         )
                 return {"files": normalized_files}
         except (OSError, json.JSONDecodeError) as e:
-            logger.warning("Failed to load index: %s", e)
-            return {"files": {}}
+            logger.error("Failed to load index: %s", e)
+            raise RepositoryError(f"Failed to load index: {e}") from e
         except ValueError as e:
-            logger.warning("Invalid index structure: %s", e)
-            return {"files": {}}
+            logger.error("Invalid index structure: %s", e)
+            raise RepositoryError(f"Invalid index structure: {e}") from e
 
     def _save_index(self, index: IndexData) -> None:
         """Save the DLL index to disk."""
@@ -248,12 +248,17 @@ class FileSystemDLLRepository(IDLLRepository):
                 with os.fdopen(fd, "wb") as temp_file:
                     fd_opened = True
                     temp_file.write(content)
-            except OSError:
+            except BaseException:
                 if not fd_opened:
                     os.close(fd)
                 raise
+            if file_path.exists():
+                try:
+                    os.chmod(temp_name, file_path.stat().st_mode)
+                except OSError:
+                    pass
             temp_path.replace(file_path)
-        except OSError:
+        except BaseException:
             temp_path.unlink(missing_ok=True)
             raise
 
@@ -279,7 +284,10 @@ class FileSystemDLLRepository(IDLLRepository):
             self._validate_payload_content(dll_file, content)
             self._validate_repository_write_path(file_path)
             self._validate_repository_write_path(self._index_path)
-            previous_content = file_path.read_bytes() if file_path.exists() else None
+            try:
+                previous_content = file_path.read_bytes()
+            except FileNotFoundError:
+                previous_content = None
 
             # Write content to disk
             self._atomic_write_bytes(file_path, content)
@@ -919,17 +927,20 @@ class FileSystemDLLRepository(IDLLRepository):
                 file_path = None
 
         vt_scan_date_raw = data["vt_scan_date"]
-        vt_scan_date = (
-            datetime.fromisoformat(vt_scan_date_raw)
-            if isinstance(vt_scan_date_raw, str)
-            else None
-        )
+        vt_scan_date: datetime | None = None
+        if isinstance(vt_scan_date_raw, str):
+            try:
+                vt_scan_date = datetime.fromisoformat(vt_scan_date_raw)
+            except (ValueError, OverflowError):
+                logger.warning("Skipping invalid vt_scan_date: %s", vt_scan_date_raw)
+
         created_at_raw = data["created_at"]
-        created_at = (
-            datetime.fromisoformat(created_at_raw)
-            if isinstance(created_at_raw, str)
-            else None
-        )
+        created_at: datetime | None = None
+        if isinstance(created_at_raw, str):
+            try:
+                created_at = datetime.fromisoformat(created_at_raw)
+            except (ValueError, OverflowError):
+                logger.warning("Skipping invalid created_at: %s", created_at_raw)
 
         dll_file = DLLFile(
             name=name,

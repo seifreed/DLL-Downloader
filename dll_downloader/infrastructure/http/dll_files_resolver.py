@@ -264,7 +264,6 @@ class DllFilesResolver:
                 if parsed.scheme == "" and parsed.netloc:
                     query = f"?{parsed.query}" if parsed.query else ""
                     return f"https://{parsed.netloc}{parsed.path}{query}"
-                return href
         for href, _ in self._iter_links(html):
             if self._is_base_zip_link(href):
                 return urljoin(self.base_url, href)

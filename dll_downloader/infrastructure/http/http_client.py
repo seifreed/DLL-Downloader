@@ -110,6 +110,12 @@ class RequestsHTTPClient:
         response = self._transport.execute("GET", url, headers=headers)
         try:
             content = response.content
+            if len(content) > self._max_download_bytes:
+                raise HTTPClientError(
+                    f"GET response exceeds size limit {self._max_download_bytes}",
+                    status_code=response.status_code,
+                    url=response.url or url,
+                )
             return HTTPResponse(
                 status_code=response.status_code,
                 content=content,
@@ -164,7 +170,11 @@ class RequestsHTTPClient:
                             url=url,
                         )
                 except ValueError:
-                    pass
+                    raise HTTPClientError(
+                        f"Invalid Content-Length header: {content_length!r}",
+                        status_code=response.status_code,
+                        url=url,
+                    )
             chunks: list[bytes] = []
             total_bytes = 0
             for chunk in response.iter_content(chunk_size=8192):

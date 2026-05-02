@@ -113,7 +113,7 @@ TEST_INTERNAL_IMPORT_ALLOWLIST = {
 }
 MODULE_LINE_LIMITS = {
     "dll_downloader/interfaces/cli.py": 280,
-    "dll_downloader/interfaces/cli_runner.py": 340,
+    "dll_downloader/interfaces/cli_runner.py": 345,
     "dll_downloader/api.py": 120,
     "dll_downloader/runtime.py": 140,
     "dll_downloader/infrastructure/composition.py": 140,

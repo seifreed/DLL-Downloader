@@ -25,7 +25,7 @@ class DownloadConsolePresenter:
                 lines.append(f"     Path: {dll_file.file_path}")
                 if dll_file.file_hash:
                     lines.append(f"     SHA256: {dll_file.file_hash}")
-                if dll_file.file_size:
+                if dll_file.file_size is not None:
                     lines.append(f"     Size: {dll_file.file_size / 1024:.2f} KB")
 
         if response.security_warning:
