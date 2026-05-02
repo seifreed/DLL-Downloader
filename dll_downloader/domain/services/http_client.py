@@ -73,12 +73,17 @@ class IHTTPClient(ITextHTTPClient, Protocol):
         """
         ...
 
-    def get_file_info(self, url: str) -> HTTPFileInfo:
+    def get_file_info(
+        self,
+        url: str,
+        headers: Mapping[str, str] | None = None,
+    ) -> HTTPFileInfo:
         """
         Get file metadata from a URL without downloading.
 
         Args:
             url: The URL to check
+            headers: Optional HTTP headers
 
         Returns:
             Structured file information

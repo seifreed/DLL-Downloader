@@ -15,18 +15,17 @@ class DownloadConsolePresenter:
 
         dll_file = response.dll_file
         lines: list[str] = []
+        if not dll_file:
+            return f"[FAILED] {dll_name}: file info missing"
         if response.was_cached:
-            if not dll_file:
-                return f"[FAILED] {dll_name}: cached file info missing"
             lines.append(f"[CACHED] {dll_name} already exists at: {dll_file.file_path}")
         else:
             lines.append(f"[OK] Downloaded: {dll_name}")
-            if dll_file:
-                lines.append(f"     Path: {dll_file.file_path}")
-                if dll_file.file_hash:
-                    lines.append(f"     SHA256: {dll_file.file_hash}")
-                if dll_file.file_size is not None:
-                    lines.append(f"     Size: {dll_file.file_size / 1024:.2f} KB")
+            lines.append(f"     Path: {dll_file.file_path}")
+            if dll_file.file_hash:
+                lines.append(f"     SHA256: {dll_file.file_hash}")
+            if dll_file.file_size is not None:
+                lines.append(f"     Size: {dll_file.file_size / 1024:.2f} KB")
 
         if response.security_warning:
             lines.append(f"     {response.security_warning}")
@@ -57,10 +56,6 @@ class DownloadBatchConsolePresenter:
             lines.append(self.progress_line(item.dll_name, architecture_label))
             lines.append(self.render_item(item.response, item.dll_name))
         return lines
-
-    @staticmethod
-    def summary(response: DownloadBatchResponse) -> str:
-        return f"\nSummary: {response.success_count} succeeded, {response.failure_count} failed"
 
     def summary_counts(self, success_count: int, failure_count: int) -> str:
         return f"\nSummary: {success_count} succeeded, {failure_count} failed"

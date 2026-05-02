@@ -136,12 +136,11 @@ class FileSystemDLLRepository(IDLLRepository):
         lock_path = self._base_path / ".dll_index.lock"
         fd = -1
         try:
-            fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
+            fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
             fcntl.flock(fd, fcntl.LOCK_EX)
             yield
         except OSError as exc:
-            logger.warning("Failed to acquire index lock, proceeding without lock: %s", exc)
-            yield
+            raise RepositoryError(f"Failed to acquire index lock: {exc}") from exc
         finally:
             if fd >= 0:
                 with contextlib.suppress(OSError):
@@ -164,7 +163,13 @@ class FileSystemDLLRepository(IDLLRepository):
             index_size = os.path.getsize(self._index_path)
             if index_size > self._INDEX_MAX_BYTES:
                 raise ValueError(f"Index file exceeds size limit ({index_size} bytes)")
-            with open(self._index_path, encoding="utf-8") as f:
+            fd = os.open(str(self._index_path), os.O_RDONLY | os.O_NOFOLLOW)
+        except OSError as e:
+            logger.error("Failed to open index file: %s", e)
+            raise RepositoryError(f"Failed to load index: {e}") from e
+
+        try:
+            with os.fdopen(fd, encoding="utf-8") as f:
                 raw_data = json.load(f)
                 if not isinstance(raw_data, dict):
                     raise ValueError("Index file must contain a JSON object")
@@ -764,7 +769,14 @@ class FileSystemDLLRepository(IDLLRepository):
             return set()
 
         try:
-            with open(self._index_path, encoding="utf-8") as f:
+            index_size = os.path.getsize(self._index_path)
+            if index_size > self._INDEX_MAX_BYTES:
+                logger.warning(
+                    "Skipping raw index keys: file exceeds size limit (%d bytes)", index_size
+                )
+                return set()
+            fd = os.open(str(self._index_path), os.O_RDONLY | os.O_NOFOLLOW)
+            with os.fdopen(fd, encoding="utf-8") as f:
                 raw_data = json.load(f)
         except (OSError, json.JSONDecodeError) as exc:
             logger.warning("Failed to load raw index keys: %s", exc)

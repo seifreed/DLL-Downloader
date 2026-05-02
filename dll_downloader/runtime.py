@@ -2,6 +2,7 @@
 Explicit default-runtime helpers for programmatic use.
 """
 
+import contextlib
 from typing import TYPE_CHECKING
 
 from .api import Settings
@@ -76,6 +77,9 @@ def process_downloads(
     force_download: bool,
     extract_archive: bool,
     debug: bool = False,
+    *,
+    http_client: "CloseableHTTPClient | None" = None,
+    scanner: "CloseableSecurityScanner | None" = None,
 ) -> tuple[int, int]:
     """Execute a batch download outside the CLI entrypoint."""
     from .interfaces.cli_output import (
@@ -96,7 +100,15 @@ def process_downloads(
     )
     writer = _create_output_writer()
     emit_command_result(writer, result)
-    return result.session.success_count, result.session.failure_count
+    try:
+        return result.session.success_count, result.session.failure_count
+    finally:
+        if http_client is not None:
+            with contextlib.suppress(Exception):
+                http_client.close()
+        if scanner is not None:
+            with contextlib.suppress(Exception):
+                scanner.close()
 
 
 __all__ = [

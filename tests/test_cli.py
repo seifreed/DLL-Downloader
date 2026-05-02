@@ -668,8 +668,8 @@ def test_normalize_dll_name_case_insensitive() -> None:
     result2 = normalize_dll_name("test.Dll")
     result3 = normalize_dll_name("test.dll")
 
-    assert result1 == "test.DLL"
-    assert result2 == "test.Dll"
+    assert result1 == "test.dll"
+    assert result2 == "test.dll"
     assert result3 == "test.dll"
 
 
@@ -1100,11 +1100,11 @@ def test_format_response_failure(capsys: CaptureFixture[str]) -> None:
 @pytest.mark.unit
 def test_format_response_success_without_dll_file(capsys: CaptureFixture[str]) -> None:
     """
-    Verify format_response handles success with no dll_file.
+    Verify format_response handles success with no dll_file as a failure.
     """
     response = DownloadDLLResponse(success=True, dll_file=None)
     format_response(response, "ghost.dll")
-    assert "[OK]" in capsys.readouterr().out
+    assert "[FAILED]" in capsys.readouterr().out
 
 
 # ============================================================================

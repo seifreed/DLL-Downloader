@@ -1013,7 +1013,7 @@ def test_get_file_info_invalid_content_length() -> None:
     Verify invalid content-length header is handled safely.
     """
     class InvalidHeadClient(RequestsHTTPClient):
-        def head(self, url: str) -> dict[str, str]:
+        def head(self, url: str, headers: Mapping[str, str] | None = None) -> dict[str, str]:
             return {"content-length": "not-a-number"}
 
     client = InvalidHeadClient()
@@ -1024,7 +1024,7 @@ def test_get_file_info_invalid_content_length() -> None:
 @pytest.mark.unit
 def test_get_file_info_uses_case_insensitive_headers() -> None:
     class UppercaseHeadClient(RequestsHTTPClient):
-        def head(self, url: str) -> dict[str, str]:
+        def head(self, url: str, headers: Mapping[str, str] | None = None) -> dict[str, str]:
             return {
                 "Content-Type": "application/zip",
                 "Content-Length": "123",

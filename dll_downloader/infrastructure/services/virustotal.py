@@ -5,6 +5,7 @@ Implements the ISecurityScanner interface using the VirusTotal API
 for malware analysis and threat detection.
 """
 
+import contextlib
 import logging
 import os
 import stat
@@ -213,29 +214,42 @@ class VirusTotalScanner(ISecurityScanner):
 
         path = Path(file_path)
         try:
-            # Use os.lstat to detect symlinks without following them,
-            # avoiding TOCTOU with the subsequent open() call.
-            if stat.S_ISLNK(os.lstat(path).st_mode):
-                raise VirusTotalError(
-                    f"File upload failed: path is a symlink: {file_path}"
-                )
+            fd = os.open(str(path), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
         except FileNotFoundError:
             raise VirusTotalError(
                 f"File upload failed: path does not exist: {file_path}"
             ) from None
         except OSError as e:
+            if e.errno == 40:  # ELOOP - symlink
+                raise VirusTotalError(
+                    f"File upload failed: path is a symlink: {file_path}"
+                ) from e
             raise VirusTotalError(f"File upload failed: {e}") from e
 
-        if not path.is_file():
-            raise VirusTotalError(
-                f"File upload failed: path is not a regular file: {file_path}"
-            )
-
-        # Read file once to avoid TOCTOU between hashing and upload.
         try:
-            content = path.read_bytes()
+            st = os.fstat(fd)
+            if not stat.S_ISREG(st.st_mode):
+                os.close(fd)
+                fd = -1
+                raise VirusTotalError(
+                    f"File upload failed: path is not a regular file: {file_path}"
+                )
+            file_size = st.st_size
+            if file_size > _VT_UPLOAD_MAX_BYTES:
+                raise VirusTotalError(
+                    f"File exceeds {_VT_UPLOAD_MAX_BYTES // (1024 * 1024)} MiB upload limit"
+                )
+            with os.fdopen(fd, "rb") as f:
+                content = f.read()
+            fd = -1
+        except VirusTotalError:
+            raise
         except OSError as e:
             raise VirusTotalError(f"File upload failed: {e}") from e
+        finally:
+            if fd >= 0:
+                with contextlib.suppress(OSError):
+                    os.close(fd)
 
         if len(content) > _VT_UPLOAD_MAX_BYTES:
             raise VirusTotalError(
@@ -249,6 +263,10 @@ class VirusTotalScanner(ISecurityScanner):
             return self.scan_hash(file_hash)
         except HashNotFoundError:
             pass
+        except VirusTotalError:
+            logger.info(
+                "Hash lookup failed for %s, proceeding with upload", file_hash
+            )
 
         response: HTTPResponseProtocol | None = None
         try:

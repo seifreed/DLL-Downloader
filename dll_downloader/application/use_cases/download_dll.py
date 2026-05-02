@@ -276,7 +276,8 @@ class DownloadDLLUseCase:
         dll_file: DLLFile,
         architecture: Architecture,
     ) -> bool:
-        """Return True when a cached payload is already an extracted PE DLL."""
+        """Return True when a cached payload is an extracted PE DLL or a
+        valid ZIP containing the requested DLL."""
         if not dll_file.file_path:
             return False
         cache_path = Path(dll_file.file_path)
@@ -303,10 +304,31 @@ class DownloadDLLUseCase:
     ) -> bool:
         """Return True when a file-backed cache entry matches the active request."""
         if request.extract_archive:
-            return self._cached_payload_satisfies_extract(
+            if self._cached_payload_satisfies_extract(
                 dll_file,
                 request.architecture,
-            )
+            ):
+                return True
+            # If cache has a ZIP, attempt extraction from the cached ZIP
+            if dll_file.file_path:
+                cache_path = Path(dll_file.file_path)
+                if not cache_path.is_symlink() and cache_path.is_file():
+                    try:
+                        content = cache_path.read_bytes()
+                    except OSError:
+                        return False
+                    if zipfile.is_zipfile(BytesIO(content)):
+                        try:
+                            extracted = self._extract_valid_dll_from_zip(
+                                content, request
+                            )
+                            self._validate_dll_architecture(
+                                extracted, request.architecture
+                            )
+                            return True
+                        except (ArchiveExtractionError, DownloadExecutionError):
+                            return False
+            return False
         if not dll_file.file_path:
             return False
 
@@ -370,6 +392,10 @@ class DownloadDLLUseCase:
             scanned_dll = self._scanner.scan_dll(dll_file)
         except SecurityServiceError as exc:
             raise DownloadExecutionError(str(exc)) from exc
+        except Exception as exc:
+            raise DownloadExecutionError(
+                f"Security scan failed unexpectedly: {exc}"
+            ) from exc
 
         if scanned_dll.security_status in {
             SecurityStatus.UNKNOWN,
@@ -432,8 +458,6 @@ class DownloadDLLUseCase:
                 )
             except (DownloadResolutionError, HTTPServiceError, ValueError) as exc:
                 raise DownloadExecutionError(str(exc)) from exc
-            except Exception as exc:
-                raise DownloadExecutionError(str(exc)) from exc
         return self._build_download_url(request.dll_name, request.architecture)
 
     def _download_content(self, download_url: str) -> bytes:
@@ -441,8 +465,6 @@ class DownloadDLLUseCase:
         try:
             return self._http_client.download(download_url)
         except (HTTPServiceError, ValueError) as exc:
-            raise DownloadExecutionError(str(exc)) from exc
-        except Exception as exc:
             raise DownloadExecutionError(str(exc)) from exc
 
     def _save_dll(self, dll_file: DLLFile, content: bytes) -> DLLFile:
@@ -547,6 +569,14 @@ class DownloadDLLUseCase:
                 if not extracted_content:
                     empty_member_found = True
                     continue
+                if len(extracted_content) > _ZIP_MEMBER_SIZE_LIMIT:
+                    raise ArchiveExtractionError(
+                        "Extracted DLL exceeds size limit"
+                    )
+                if member.file_size > 0 and len(extracted_content) != member.file_size:
+                    raise ArchiveExtractionError(
+                        "Extracted size does not match ZIP metadata, possible ZIP bomb"
+                    )
                 try:
                     self._validate_dll_architecture(
                         extracted_content,

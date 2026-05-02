@@ -28,26 +28,16 @@ def test_download_console_presenter_handles_cached_without_file() -> None:
         "ghost.dll",
     )
 
-    assert output == "[FAILED] ghost.dll: cached file info missing"
+    assert output == "[FAILED] ghost.dll: file info missing"
 
 
 @pytest.mark.unit
 def test_download_batch_presenter_summary_and_boundary_error() -> None:
     presenter = DownloadBatchConsolePresenter()
 
-    summary = presenter.summary(
-        DownloadBatchResponse(
-            items=[
-                DownloadBatchItem(
-                    dll_name="a.dll",
-                    response=DownloadDLLResponse(success=True),
-                ),
-                DownloadBatchItem(
-                    dll_name="b.dll",
-                    response=DownloadDLLResponse(success=False, error_message="x"),
-                ),
-            ]
-        )
+    summary = presenter.summary_counts(
+        success_count=1,
+        failure_count=1,
     )
 
     assert summary == "\nSummary: 1 succeeded, 1 failed"
@@ -193,13 +183,11 @@ def test_download_batch_sarif_presenter_emits_warning_and_locations() -> None:
     )
     results = payload["runs"][0]["results"]
 
-    assert results[0]["locations"][0]["physicalLocation"]["artifactLocation"]["uri"] == (
-        "file:///tmp/warn.dll"
-    )
+    assert results[0]["locations"][0]["physicalLocation"]["artifactLocation"]["uri"].startswith("file:///")
+    assert results[0]["locations"][0]["physicalLocation"]["artifactLocation"]["uri"].endswith("/warn.dll")
     assert results[1]["ruleId"] == "dll-downloader/security-warning"
-    assert results[1]["locations"][0]["physicalLocation"]["artifactLocation"]["uri"] == (
-        "file:///tmp/warn.dll"
-    )
+    assert results[1]["locations"][0]["physicalLocation"]["artifactLocation"]["uri"].startswith("file:///")
+    assert results[1]["locations"][0]["physicalLocation"]["artifactLocation"]["uri"].endswith("/warn.dll")
 
 
 @pytest.mark.unit

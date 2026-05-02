@@ -50,12 +50,13 @@ def create_cli_service(output_format: OutputFormat) -> CLIApplicationService:
 def emit_cli_input_error(
     service: CLIApplicationService,
     message: str,
+    failure_count: int = 1,
 ) -> None:
     """Emit a normalized CLI boundary error for invalid input."""
     service.emit(
         CLICommandResult(
             stdout_lines=[],
-            session=CLISessionResult(success_count=0, failure_count=1, exit_code=1),
+            session=CLISessionResult(success_count=0, failure_count=failure_count, exit_code=1),
             boundary_failure=CLIBoundaryFailure(
                 message=message,
                 is_structured=service.is_structured,

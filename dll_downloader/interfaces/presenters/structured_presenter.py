@@ -23,9 +23,10 @@ def _path_to_uri(file_path: str | None) -> str | None:
     if file_path is None:
         return None
     p = Path(file_path)
-    if p.is_absolute():
-        return p.as_uri()
-    return file_path
+    try:
+        return p.resolve().as_uri()
+    except ValueError:
+        return file_path
 
 
 def _serialize_datetime(value: datetime | None) -> str | None:
@@ -41,19 +42,28 @@ def _serialize_dll_file(dll_file: DLLFile | None) -> dict[str, Any] | None:
     if dll_file is None:
         return None
 
-    return {
+    result: dict[str, Any] = {
         "name": dll_file.name,
-        "version": dll_file.version,
         "architecture": dll_file.architecture.value,
-        "file_hash": dll_file.file_hash,
-        "file_path": dll_file.file_path,
-        "download_url": dll_file.download_url,
-        "file_size": dll_file.file_size,
         "security_status": dll_file.security_status.value,
-        "vt_detection_ratio": dll_file.vt_detection_ratio,
-        "vt_scan_date": _serialize_datetime(dll_file.vt_scan_date),
-        "created_at": _serialize_datetime(dll_file.created_at),
     }
+    if dll_file.version is not None:
+        result["version"] = dll_file.version
+    if dll_file.file_hash is not None:
+        result["file_hash"] = dll_file.file_hash
+    if dll_file.file_path is not None:
+        result["file_path"] = dll_file.file_path
+    if dll_file.download_url is not None:
+        result["download_url"] = dll_file.download_url
+    if dll_file.file_size is not None:
+        result["file_size"] = dll_file.file_size
+    if dll_file.vt_detection_ratio is not None:
+        result["vt_detection_ratio"] = dll_file.vt_detection_ratio
+    if dll_file.vt_scan_date is not None:
+        result["vt_scan_date"] = _serialize_datetime(dll_file.vt_scan_date)
+    if dll_file.created_at is not None:
+        result["created_at"] = _serialize_datetime(dll_file.created_at)
+    return result
 
 
 def _serialize_response(

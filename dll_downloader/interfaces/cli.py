@@ -8,6 +8,7 @@ using Clean Architecture with dependency injection.
 import argparse
 import logging
 import os
+import stat
 import sys
 from pathlib import Path
 
@@ -79,11 +80,14 @@ def read_dll_list_from_file(file_path: str) -> list[str]:
         ValueError: If the file does not exist or is empty.
     """
     raw_path = Path(file_path)
-    if raw_path.is_symlink():
-        raise ValueError(f"Refusing to read DLL list from symlink: '{file_path}'")
-    path = raw_path.resolve()
-    if not path.exists():
-        raise ValueError(f"File '{file_path}' not found.")
+    try:
+        if stat.S_ISLNK(os.lstat(raw_path).st_mode):
+            raise ValueError(f"Refusing to read DLL list from symlink: '{file_path}'")
+    except FileNotFoundError:
+        raise ValueError(f"File '{file_path}' not found.") from None
+    except OSError as exc:
+        raise ValueError(f"Failed to access file '{file_path}': {exc}") from exc
+    path = raw_path.resolve(strict=True)
     if not path.is_file():
         raise ValueError(f"Failed to read file '{file_path}': not a regular file")
 
@@ -223,7 +227,7 @@ def _main_inner(settings: Settings | None) -> int:
 
     try:
         apply_logging_settings(settings, args.debug)
-    except (OSError, ValueError) as exc:
+    except ValueError as exc:
         emit_cli_input_error(
             service,
             create_batch_presenter(output_format).boundary_error(str(exc)),

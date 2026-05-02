@@ -59,7 +59,7 @@ class ScanResult:
             try:
                 return int(self.detection_ratio.split('/')[0])
             except (ValueError, IndexError):
-                return len([d for d in self.detections.values() if d])
+                pass
         return len([d for d in self.detections.values() if d])
 
 

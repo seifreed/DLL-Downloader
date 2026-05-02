@@ -267,9 +267,9 @@ def test_dll_file_extension_case_insensitive() -> None:
     dll1 = DLLFile(name="test.DLL")
     dll2 = DLLFile(name="test.Dll")
 
-    # Original case should be preserved, no duplicate extension added
-    assert dll1.name == "test.DLL"
-    assert dll2.name == "test.Dll"
+    # Names are normalized to lowercase for canonical lookup
+    assert dll1.name == "test.dll"
+    assert dll2.name == "test.dll"
 
 
 # ============================================================================

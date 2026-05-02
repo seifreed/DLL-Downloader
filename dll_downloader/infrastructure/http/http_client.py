@@ -260,27 +260,37 @@ class RequestsHTTPClient:
         except HTTP_STREAM_ERROR_TYPES as exc:
             logger.warning("Failed to close response: %s", exc)
 
-    def head(self, url: str) -> dict[str, str]:
-        response = self._transport.execute("HEAD", url, allow_redirects=True)
+    def head(
+        self,
+        url: str,
+        headers: Mapping[str, str] | None = None,
+    ) -> dict[str, str]:
+        response = self._transport.execute(
+            "HEAD", url, headers=headers, allow_redirects=True
+        )
         try:
             return dict(response.headers)
         finally:
             self._close_response(response)
 
-    def get_file_info(self, url: str) -> HTTPFileInfo:
-        headers = self.head(url)
-        content_length = header_value(headers, "content-length")
+    def get_file_info(
+        self,
+        url: str,
+        headers: Mapping[str, str] | None = None,
+    ) -> HTTPFileInfo:
+        response_headers = self.head(url, headers=headers)
+        content_length = header_value(response_headers, "content-length")
         length_value: int | None = None
         if content_length:
             try:
                 length_value = int(content_length)
             except ValueError:
                 length_value = None
-        accept_ranges = header_value(headers, "accept-ranges")
+        accept_ranges = header_value(response_headers, "accept-ranges")
         return {
-            "content_type": header_value(headers, "content-type"),
+            "content_type": header_value(response_headers, "content-type"),
             "content_length": length_value,
-            "last_modified": header_value(headers, "last-modified"),
-            "etag": header_value(headers, "etag"),
+            "last_modified": header_value(response_headers, "last-modified"),
+            "etag": header_value(response_headers, "etag"),
             "accept_ranges": bool(accept_ranges is not None and accept_ranges.lower() == "bytes"),
         }

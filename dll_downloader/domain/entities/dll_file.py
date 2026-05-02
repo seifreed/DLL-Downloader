@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
 
-_SAFE_DLL_NAME_PATTERN = re.compile(r"[A-Za-z0-9_.-]+")
+_SAFE_DLL_NAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*\.dll", re.IGNORECASE)
 _WINDOWS_RESERVED_NAMES = frozenset({
     "con", "nul", "aux", "prn",
     "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8", "com9",
@@ -30,17 +30,16 @@ def normalize_dll_name(name: str) -> str:
     if not stripped_name:
         raise ValueError("DLL name cannot be empty")
 
-    normalized_name = stripped_name
-    if not normalized_name.lower().endswith('.dll'):
+    normalized_name = stripped_name.lower()
+    if not normalized_name.endswith('.dll'):
         normalized_name = f"{normalized_name}.dll"
 
     base_name = normalized_name[:-4]
     if (
-        base_name in {"", ".", ".."}
-        or "/" in normalized_name
+        "/" in normalized_name
         or "\\" in normalized_name
         or not _SAFE_DLL_NAME_PATTERN.fullmatch(normalized_name)
-        or base_name.lower() in _WINDOWS_RESERVED_NAMES
+        or base_name in _WINDOWS_RESERVED_NAMES
     ):
         raise ValueError("DLL name must be a simple filename")
 
@@ -100,10 +99,7 @@ class DLLFile:
     created_at: datetime = field(default_factory=lambda: datetime.now(tz=UTC))
 
     def __post_init__(self) -> None:
-        """Validate entity after initialization."""
-        if not self.name:
-            raise ValueError("DLL name cannot be empty")
-        # Use object.__setattr__ since frozen=True prevents normal assignment
+        """Validate and normalize entity after initialization."""
         object.__setattr__(self, 'name', normalize_dll_name(self.name))
 
     @property

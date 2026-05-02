@@ -151,6 +151,14 @@ class RequestsTransport:
                 self._retry_policy.pause_before_retry(attempt)
                 continue
 
+            if not getattr(response, 'is_success', lambda: True)() and method_name == "HEAD":
+                self._close_retryable_response(response)
+                raise HTTPClientError(
+                    f"{method_name} request failed with status {response.status_code}",
+                    status_code=response.status_code,
+                    url=response.url or url,
+                )
+
             if (
                 self._allowed_redirect_domains is not None
                 and allow_redirects

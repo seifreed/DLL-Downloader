@@ -160,6 +160,7 @@ TECHNICAL_ADAPTER_IMPORT_ALLOWLIST: dict[str, tuple[str, ...]] = {
         "os",
         "stat",
         "collections.abc",
+        "contextlib",
         "dataclasses",
         "datetime",
         "pathlib",

@@ -6,7 +6,6 @@ import logging
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from ...application.errors import DownloadExecutionError
 from ...domain.entities.dll_file import Architecture, normalize_dll_name
 from .download_dll import DownloadDLLRequest, DownloadDLLResponse
 
@@ -62,6 +61,7 @@ class DownloadBatchUseCase:
 
     def execute(self, request: DownloadBatchRequest) -> DownloadBatchResponse:
         items: list[DownloadBatchItem] = []
+        seen_names: set[str] = set()
         for dll_name in request.dll_names:
             try:
                 normalized_name = normalize_dll_name(dll_name)
@@ -77,6 +77,10 @@ class DownloadBatchUseCase:
                     )
                 )
                 continue
+            if normalized_name in seen_names:
+                logger.info("Skipping duplicate DLL name in batch: %s", normalized_name)
+                continue
+            seen_names.add(normalized_name)
             try:
                 response = self._download_use_case.execute(
                     DownloadDLLRequest(
@@ -86,11 +90,6 @@ class DownloadBatchUseCase:
                         force_download=request.force_download,
                         extract_archive=request.extract_archive,
                     )
-                )
-            except DownloadExecutionError as exc:
-                response = DownloadDLLResponse(
-                    success=False,
-                    error_message=str(exc),
                 )
             except Exception as exc:
                 logger.error("Unexpected error downloading %s: %s", normalized_name, exc)
