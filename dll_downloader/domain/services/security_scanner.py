@@ -27,7 +27,7 @@ class ScanResult:
         error_message: Optional error message if scan failed
     """
 
-    file_hash: str
+    file_hash: str | None
     status: SecurityStatus
     detection_ratio: str | None = None
     detections: dict[str, str] = field(default_factory=dict)

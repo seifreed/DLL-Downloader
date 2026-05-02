@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import tempfile
+import zlib
 import zipfile
 from dataclasses import replace
 from datetime import datetime
@@ -25,37 +26,20 @@ from ...domain.entities.dll_file import (
 from ...domain.errors import RepositoryOperationError
 from ...domain.repositories.dll_repository import IDLLRepository
 from ...domain.services import calculate_sha256
+from ...domain.services.pe_validation import (
+    detect_pe_dll_architecture as _detect_pe_dll_architecture,
+    expected_optional_magic as _expected_optional_magic,
+    has_loadable_section as _has_loadable_section,
+    pe_image_layout_is_valid as _pe_image_layout_is_valid,
+)
 
 logger = logging.getLogger(__name__)
-_PE_POINTER_OFFSET = 0x3C
-_PE_SIGNATURE = b"PE\x00\x00"
-_PE_COFF_HEADER_SIZE = 20
-_PE_NUMBER_OF_SECTIONS_OFFSET_FROM_MACHINE = 2
-_PE_SIZE_OF_OPTIONAL_HEADER_OFFSET_FROM_MACHINE = 16
-_PE_CHARACTERISTICS_OFFSET_FROM_MACHINE = 18
-_PE_DLL_CHARACTERISTIC = 0x2000
-_PE_OPTIONAL_HEADER_MAGIC_PE32 = 0x10B
-_PE_OPTIONAL_HEADER_MAGIC_PE32_PLUS = 0x20B
-_PE_SECTION_HEADER_SIZE = 40
-_PE_SECTION_NAME_SIZE = 8
-_PE_SECTION_VIRTUAL_SIZE_OFFSET = 8
-_PE_SECTION_VIRTUAL_ADDRESS_OFFSET = 12
-_PE_SECTION_RAW_SIZE_OFFSET = 16
-_PE_SECTION_RAW_POINTER_OFFSET = 20
-_PE_MAX_SECTIONS = 96
-_PE_MACHINE_ARCHITECTURES = {
-    0x014C: Architecture.X86,
-    0x8664: Architecture.X64,
-    0x01C0: Architecture.ARM,
-    0x01C2: Architecture.ARM,
-    0x01C4: Architecture.ARM,
-    0xAA64: Architecture.ARM64,
-}
 _ZIP_MEMBER_READ_ERRORS = (
     OSError,
     RuntimeError,
     NotImplementedError,
     zipfile.BadZipFile,
+    zlib.error,
 )
 _SHA256_HEX_LENGTH = 64
 _HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
@@ -536,43 +520,7 @@ class FileSystemDLLRepository(IDLLRepository):
     @staticmethod
     def _detect_pe_dll_architecture(content: bytes) -> Architecture | None:
         """Return the concrete architecture when content is a PE DLL."""
-        if not content.startswith(b"MZ"):
-            return None
-        if len(content) < _PE_POINTER_OFFSET + 4:
-            return None
-
-        pe_offset = int.from_bytes(
-            content[_PE_POINTER_OFFSET:_PE_POINTER_OFFSET + 4],
-            "little",
-        )
-        machine_offset = pe_offset + len(_PE_SIGNATURE)
-        if (
-            len(content) < machine_offset + _PE_COFF_HEADER_SIZE
-            or content[pe_offset:machine_offset] != _PE_SIGNATURE
-        ):
-            return None
-
-        machine = int.from_bytes(content[machine_offset:machine_offset + 2], "little")
-        architecture = _PE_MACHINE_ARCHITECTURES.get(machine)
-        if architecture is None:
-            return None
-        if not FileSystemDLLRepository._pe_image_layout_is_valid(
-            content,
-            machine_offset,
-            architecture,
-        ):
-            return None
-
-        characteristics_offset = machine_offset + _PE_CHARACTERISTICS_OFFSET_FROM_MACHINE
-        if len(content) < characteristics_offset + 2:
-            return None
-        characteristics = int.from_bytes(
-            content[characteristics_offset:characteristics_offset + 2],
-            "little",
-        )
-        if characteristics & _PE_DLL_CHARACTERISTIC == 0:
-            return None
-        return architecture
+        return _detect_pe_dll_architecture(content)
 
     @staticmethod
     def _pe_image_layout_is_valid(
@@ -581,49 +529,7 @@ class FileSystemDLLRepository(IDLLRepository):
         architecture: Architecture,
     ) -> bool:
         """Return True when the PE header has an image optional header and sections."""
-        section_count = int.from_bytes(
-            content[
-                machine_offset + _PE_NUMBER_OF_SECTIONS_OFFSET_FROM_MACHINE:
-                machine_offset + _PE_NUMBER_OF_SECTIONS_OFFSET_FROM_MACHINE + 2
-            ],
-            "little",
-        )
-        if section_count < 1 or section_count > _PE_MAX_SECTIONS:
-            return False
-
-        optional_header_size = int.from_bytes(
-            content[
-                machine_offset + _PE_SIZE_OF_OPTIONAL_HEADER_OFFSET_FROM_MACHINE:
-                machine_offset + _PE_SIZE_OF_OPTIONAL_HEADER_OFFSET_FROM_MACHINE + 2
-            ],
-            "little",
-        )
-        optional_header_offset = machine_offset + _PE_COFF_HEADER_SIZE
-        if optional_header_size < 2:
-            return False
-
-        section_table_offset = optional_header_offset + optional_header_size
-        if len(content) < section_table_offset:
-            return False
-
-        optional_magic = int.from_bytes(
-            content[optional_header_offset:optional_header_offset + 2],
-            "little",
-        )
-        if optional_magic != FileSystemDLLRepository._expected_optional_magic(
-            architecture
-        ):
-            return False
-
-        section_table_size = section_count * _PE_SECTION_HEADER_SIZE
-        if len(content) < section_table_offset + section_table_size:
-            return False
-
-        return FileSystemDLLRepository._has_loadable_section(
-            content,
-            section_table_offset,
-            section_count,
-        )
+        return _pe_image_layout_is_valid(content, machine_offset, architecture)
 
     @staticmethod
     def _has_loadable_section(
@@ -631,59 +537,13 @@ class FileSystemDLLRepository(IDLLRepository):
         section_table_offset: int,
         section_count: int,
     ) -> bool:
-        minimum_raw_pointer = section_table_offset + (
-            section_count * _PE_SECTION_HEADER_SIZE
-        )
-        for index in range(section_count):
-            section_offset = section_table_offset + (index * _PE_SECTION_HEADER_SIZE)
-            section_header = content[
-                section_offset:section_offset + _PE_SECTION_HEADER_SIZE
-            ]
-            section_name = section_header[:_PE_SECTION_NAME_SIZE].rstrip(b"\x00")
-            if not section_name:
-                continue
-
-            virtual_size = int.from_bytes(
-                section_header[
-                    _PE_SECTION_VIRTUAL_SIZE_OFFSET:
-                    _PE_SECTION_VIRTUAL_SIZE_OFFSET + 4
-                ],
-                "little",
-            )
-            virtual_address = int.from_bytes(
-                section_header[
-                    _PE_SECTION_VIRTUAL_ADDRESS_OFFSET:
-                    _PE_SECTION_VIRTUAL_ADDRESS_OFFSET + 4
-                ],
-                "little",
-            )
-            raw_size = int.from_bytes(
-                section_header[
-                    _PE_SECTION_RAW_SIZE_OFFSET:_PE_SECTION_RAW_SIZE_OFFSET + 4
-                ],
-                "little",
-            )
-            raw_pointer = int.from_bytes(
-                section_header[
-                    _PE_SECTION_RAW_POINTER_OFFSET:_PE_SECTION_RAW_POINTER_OFFSET + 4
-                ],
-                "little",
-            )
-            if virtual_address == 0 or (virtual_size == 0 and raw_size == 0):
-                continue
-            if (
-                raw_size > 0
-                and raw_pointer >= minimum_raw_pointer
-                and raw_pointer + raw_size <= len(content)
-            ):
-                return True
-        return False
+        """Return True when at least one PE section has on-disk data."""
+        return _has_loadable_section(content, section_table_offset, section_count)
 
     @staticmethod
     def _expected_optional_magic(architecture: Architecture) -> int:
-        if architecture in (Architecture.X64, Architecture.ARM64):
-            return _PE_OPTIONAL_HEADER_MAGIC_PE32_PLUS
-        return _PE_OPTIONAL_HEADER_MAGIC_PE32
+        """Return the PE optional-header magic number for the architecture."""
+        return _expected_optional_magic(architecture)
 
     @classmethod
     def _content_is_pe_dll(

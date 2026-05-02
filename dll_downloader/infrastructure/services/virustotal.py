@@ -178,7 +178,7 @@ class VirusTotalScanner(ISecurityScanner):
                 content = Path(file_path).read_bytes()
                 computed_hash = calculate_sha256(content)
             except OSError:
-                computed_hash = ""
+                computed_hash = None
             return ScanResult(
                 file_hash=computed_hash,
                 status=SecurityStatus.UNKNOWN,
@@ -310,10 +310,8 @@ class VirusTotalScanner(ISecurityScanner):
             )
 
         except HashNotFoundError as exc:
-            logger.info(f"No VT results for {dll_file.name}, file not previously scanned")
-            raise VirusTotalError(
-                f"No VirusTotal results found for {dll_file.name}"
-            ) from exc
+            logger.info("No VT results for %s, file not previously scanned", dll_file.name)
+            raise
 
         except VirusTotalError as e:
             logger.error(f"VT scan failed for {dll_file.name}: {e}")

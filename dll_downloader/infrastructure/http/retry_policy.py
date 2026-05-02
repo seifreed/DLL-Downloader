@@ -67,4 +67,4 @@ class RetryPolicy:
     def next_delay(self, attempt: int) -> float:
         """Return the delay before the next retry attempt."""
         jitter = self.rng.uniform(0.0, self.jitter_seconds) if self.jitter_seconds else 0.0
-        return max(0.0, self.backoff_seconds * attempt + jitter)
+        return max(0.0, self.backoff_seconds * (2 ** (attempt - 1)) + jitter)

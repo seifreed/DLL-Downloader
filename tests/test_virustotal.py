@@ -1230,7 +1230,7 @@ def test_scan_dll_no_results_raises_virustotal_error() -> None:
     scanner = HashNotFoundScanner(api_key="key")
 
     dll = DLLFile(name="a.dll", file_hash="hash")
-    with pytest.raises(VirusTotalError, match="No VirusTotal results"):
+    with pytest.raises(HashNotFoundError):
         scanner.scan_dll(dll)
 
 

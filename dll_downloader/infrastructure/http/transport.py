@@ -112,7 +112,7 @@ class RequestsTransport:
         headers: Mapping[str, str] | None = None,
         *,
         stream: bool = False,
-        allow_redirects: bool = False,
+        allow_redirects: bool = True,
     ) -> HTTPResponseProtocol:
         request_method = self._resolve_request_method(method_name)
 

@@ -42,6 +42,10 @@ from dll_downloader.domain.errors import (
 from dll_downloader.domain.repositories.dll_repository import IDLLRepository
 from dll_downloader.domain.services import calculate_sha256
 from dll_downloader.domain.services.http_client import HTTPFileInfo, IHTTPClient
+from dll_downloader.domain.services.pe_validation import (
+    has_loadable_section,
+    pe_image_layout_is_valid,
+)
 from dll_downloader.domain.services.security_scanner import (
     ISecurityScanner,
     ScanResult,
@@ -1422,7 +1426,8 @@ def test_download_dll_use_case_rejects_zip_member_with_blank_pe_section_table() 
 
     assert response.success is False
     assert response.error_message == (
-        "Download failed: Downloaded content is not a valid DLL (missing PE signature)"
+        "Download failed: Could not extract valid DLL from ZIP: "
+        "Downloaded content is not a valid DLL (missing PE signature)"
     )
     assert repository.list_all() == []
 
@@ -1471,7 +1476,10 @@ def test_download_dll_use_case_rejects_pe_without_dll_characteristic() -> None:
     )
 
     assert response.success is False
-    assert response.error_message == "Download failed: Downloaded PE file is not a DLL"
+    assert response.error_message == (
+        "Download failed: Could not extract valid DLL from ZIP: "
+        "Downloaded PE file is not a DLL"
+    )
     assert repository.list_all() == []
 
 
@@ -1514,22 +1522,22 @@ def test_download_dll_use_case_pe_layout_rejects_invalid_boundaries() -> None:
         payload[20:22] = optional_magic.to_bytes(2, "little")
         return bytes(payload[:payload_size])
 
-    assert not DownloadDLLUseCase._pe_image_layout_is_valid(
+    assert not pe_image_layout_is_valid(
         build_layout_probe(optional_header_size=0),
         0,
         Architecture.X64,
     )
-    assert not DownloadDLLUseCase._pe_image_layout_is_valid(
+    assert not pe_image_layout_is_valid(
         build_layout_probe(total_size=40),
         0,
         Architecture.X64,
     )
-    assert not DownloadDLLUseCase._pe_image_layout_is_valid(
+    assert not pe_image_layout_is_valid(
         build_layout_probe(optional_magic=0x10B),
         0,
         Architecture.X64,
     )
-    assert not DownloadDLLUseCase._pe_image_layout_is_valid(
+    assert not pe_image_layout_is_valid(
         build_layout_probe(optional_header_size=2, total_size=22),
         0,
         Architecture.X64,
@@ -1557,22 +1565,22 @@ def test_download_dll_use_case_loadable_section_edges() -> None:
     valid_raw_section[16:20] = (4).to_bytes(4, "little")
     valid_raw_section[20:24] = (40).to_bytes(4, "little")
 
-    assert not DownloadDLLUseCase._has_loadable_section(
+    assert not has_loadable_section(
         bytes(blank_section),
         section_table_offset,
         1,
     )
-    assert not DownloadDLLUseCase._has_loadable_section(
+    assert not has_loadable_section(
         bytes(virtual_only_section),
         section_table_offset,
         1,
     )
-    assert not DownloadDLLUseCase._has_loadable_section(
+    assert not has_loadable_section(
         bytes(invalid_raw_section),
         section_table_offset,
         1,
     )
-    assert DownloadDLLUseCase._has_loadable_section(
+    assert has_loadable_section(
         bytes(valid_raw_section),
         section_table_offset,
         1,
@@ -1615,7 +1623,8 @@ def test_download_dll_use_case_rejects_mismatched_pe_architecture() -> None:
 
     assert response.success is False
     assert response.error_message == (
-        "Download failed: Downloaded DLL architecture x64 does not match "
+        "Download failed: Could not extract valid DLL from ZIP: "
+        "Downloaded DLL architecture x64 does not match "
         "requested architecture x86"
     )
     assert repository.list_all() == []
@@ -1851,7 +1860,8 @@ def test_download_dll_use_case_fails_when_extracted_content_is_not_pe() -> None:
 
     assert response.success is False
     assert response.error_message == (
-        "Download failed: Downloaded content is not a valid DLL (missing PE signature)"
+        "Download failed: Could not extract valid DLL from ZIP: "
+        "Downloaded content is not a valid DLL (missing PE signature)"
     )
 
 
