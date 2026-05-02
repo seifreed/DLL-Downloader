@@ -6,6 +6,8 @@ for malware analysis and threat detection.
 """
 
 import logging
+import os
+import stat
 from collections.abc import Mapping
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -207,10 +209,28 @@ class VirusTotalScanner(ISecurityScanner):
 
         path = Path(file_path)
         try:
-            if path.is_symlink() or not path.is_file():
+            # Use os.lstat to detect symlinks without following them,
+            # avoiding TOCTOU with the subsequent open() call.
+            if stat.S_ISLNK(os.lstat(path).st_mode):
                 raise VirusTotalError(
-                    f"File upload failed: path is not a regular file: {file_path}"
+                    f"File upload failed: path is a symlink: {file_path}"
                 )
+        except FileNotFoundError:
+            raise VirusTotalError(
+                f"File upload failed: path does not exist: {file_path}"
+            ) from None
+        except OSError as e:
+            raise VirusTotalError(f"File upload failed: {e}") from e
+
+        if not path.is_file():
+            raise VirusTotalError(
+                f"File upload failed: path is not a regular file: {file_path}"
+            )
+
+        # Hash the full file content first for accurate hash lookup,
+        # then read up to the upload limit for submission.
+        try:
+            file_hash = calculate_sha256(path.read_bytes())
         except OSError as e:
             raise VirusTotalError(f"File upload failed: {e}") from e
 
@@ -224,8 +244,6 @@ class VirusTotalScanner(ISecurityScanner):
         except OSError as e:
             logger.error("Failed to upload file to VirusTotal: %s", e)
             raise VirusTotalError(f"File upload failed: {e}") from e
-
-        file_hash = calculate_sha256(content)
 
         try:
             return self.scan_hash(file_hash)
@@ -463,7 +481,7 @@ class VirusTotalScanner(ISecurityScanner):
 
         malicious = _safe_int(stats.get('malicious', 0))
         suspicious = _safe_int(stats.get('suspicious', 0))
-        total = int(sum(v for v in stats.values() if isinstance(v, int) and not isinstance(v, bool)))
+        total = sum(_safe_int(v) for v in stats.values())
         total_positives = malicious + suspicious
 
         status = self._determine_security_status(total_positives, total)

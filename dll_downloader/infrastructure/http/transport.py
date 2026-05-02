@@ -5,6 +5,7 @@ Transport primitives for HTTP adapters.
 import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from urllib.parse import urlparse
 
 import requests
 
@@ -87,12 +88,14 @@ class RequestsTransport:
         header_builder: RequestHeaderBuilder,
         timeout: float,
         verify_ssl: bool,
+        allowed_redirect_domains: set[str] | None = None,
     ) -> None:
         self._session_resource = session_resource
         self._retry_policy = retry_policy
         self._header_builder = header_builder
         self._timeout = timeout
         self._verify_ssl = verify_ssl
+        self._allowed_redirect_domains = allowed_redirect_domains
 
     @property
     def session(self) -> HTTPSessionProtocol:
@@ -140,6 +143,20 @@ class RequestsTransport:
                 self._close_retryable_response(response)
                 self._retry_policy.pause_before_retry(attempt)
                 continue
+
+            if (
+                self._allowed_redirect_domains is not None
+                and allow_redirects
+                and hasattr(response, 'url')
+                and response.url
+            ):
+                final_hostname = urlparse(response.url).hostname or ""
+                if final_hostname and final_hostname not in self._allowed_redirect_domains:
+                    self._close_retryable_response(response)
+                    raise HTTPClientError(
+                        f"Redirect to disallowed domain: {final_hostname}",
+                        url=response.url,
+                    )
 
             return response
 

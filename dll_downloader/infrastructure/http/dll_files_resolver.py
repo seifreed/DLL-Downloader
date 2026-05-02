@@ -107,6 +107,29 @@ class DllFilesResolver:
             if self._is_valid_download_link(href)
         ]
 
+    @staticmethod
+    def _extract_link_context_at(
+        html: str,
+        position: int,
+        link_text: str,
+    ) -> str:
+        if position == -1:
+            return link_text
+
+        lower_html = html.lower()
+        start = lower_html.rfind(_SECTION_START, 0, position)
+        if start == -1:
+            return link_text
+
+        previous_end = lower_html.rfind(_SECTION_END, 0, position)
+        if previous_end > start:
+            return link_text
+
+        end = lower_html.find(_SECTION_END, position)
+        if end == -1:
+            return html[start:]
+        return html[start:end + len(_SECTION_END)]
+
     def _candidate_link_text_match(
         self,
         candidates: list[DownloadLinkCandidate],
@@ -155,33 +178,6 @@ class DllFilesResolver:
             or self._href_has_architecture_hint(href)
             for href, link_text, context in candidates
         )
-
-    def _extract_link_context(self, html: str, href: str, link_text: str) -> str:
-        position = html.find(href)
-        return self._extract_link_context_at(html, position, link_text)
-
-    def _extract_link_context_at(
-        self,
-        html: str,
-        position: int,
-        link_text: str,
-    ) -> str:
-        if position == -1:
-            return link_text
-
-        lower_html = html.lower()
-        start = lower_html.rfind(_SECTION_START, 0, position)
-        if start == -1:
-            return link_text
-
-        previous_end = lower_html.rfind(_SECTION_END, 0, position)
-        if previous_end > start:
-            return link_text
-
-        end = lower_html.find(_SECTION_END, position)
-        if end == -1:
-            return html[start:]
-        return html[start:end + len(_SECTION_END)]
 
     def _context_matches_architecture(
         self,
@@ -294,8 +290,10 @@ class DllFilesResolver:
         parsed_href = urlparse(href)
         return parsed_href.path.lower().endswith(".zip") and self._is_base_url_link(href)
 
+    _TAG_PATTERN = re.compile(r"<[^>]*>")
+
     def _html_text(self, html: str) -> str:
-        return unescape(re.sub(r"<[^>]+>", " ", html)).lower()
+        return unescape(self._TAG_PATTERN.sub(" ", html)).lower()
 
     def _iter_links(self, html: str) -> list[tuple[str, str]]:
         return extract_links(html)

@@ -4,13 +4,17 @@ File System DLL Repository Implementation
 Implements the IDLLRepository interface using the local filesystem for storage.
 """
 
+import contextlib
 import copy
+import fcntl
 import json
 import logging
 import os
+import stat
 import tempfile
 import zipfile
 import zlib
+from contextlib import contextmanager
 from dataclasses import replace
 from datetime import datetime
 from io import BytesIO
@@ -106,6 +110,7 @@ class FileSystemDLLRepository(IDLLRepository):
 
     INDEX_FILENAME = ".dll_index.json"
     _INDEX_MAX_BYTES = 10 * 1024 * 1024  # 10 MiB
+    _ZIP_MEMBER_SIZE_LIMIT = 512 * 1024 * 1024  # 512 MiB
 
     def __init__(self, base_path: Path) -> None:
         """
@@ -125,9 +130,27 @@ class FileSystemDLLRepository(IDLLRepository):
             if arch != Architecture.UNKNOWN:
                 (self._base_path / arch.value).mkdir(exist_ok=True)
 
+    @contextmanager
+    def _with_index_lock(self) -> None:
+        """Acquire an advisory file lock for index read-modify-write safety."""
+        lock_path = self._base_path / ".dll_index.lock"
+        fd = -1
+        try:
+            fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            yield
+        except OSError:
+            yield
+        finally:
+            if fd >= 0:
+                with contextlib.suppress(OSError):
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+                with contextlib.suppress(OSError):
+                    os.close(fd)
+
     def _load_index(self) -> IndexData:
         """Load the DLL index from disk."""
-        if self._index_path.is_symlink():
+        if self._is_symlink(self._index_path):
             logger.warning("Refusing to load DLL index through symlink: %s", self._index_path)
             return {"files": {}}
         if not self._index_path.exists():
@@ -210,6 +233,18 @@ class FileSystemDLLRepository(IDLLRepository):
             return False
         return left_parent == right_parent and left.name.lower() == right.name.lower()
 
+    @staticmethod
+    def _is_symlink(path: Path) -> bool:
+        """Return True when path is any symlink (including dangling).
+
+        Uses os.lstat to detect symlinks without following them,
+        which catches both dangling and valid symlinks.
+        """
+        try:
+            return stat.S_ISLNK(os.lstat(path).st_mode)
+        except OSError:
+            return False
+
     def _validate_repository_write_path(self, file_path: Path) -> None:
         """Reject writes through symlinks or paths escaping the repository root."""
         repository_root = self._base_path.resolve()
@@ -220,7 +255,7 @@ class FileSystemDLLRepository(IDLLRepository):
             raise RepositoryError(
                 f"Refusing to write outside repository: {file_path}"
             ) from exc
-        if file_path.is_symlink():
+        if self._is_symlink(file_path):
             raise RepositoryError(f"Refusing to write through symlink: {file_path}")
         if file_path.exists():
             if not file_path.is_file():
@@ -253,10 +288,16 @@ class FileSystemDLLRepository(IDLLRepository):
                     os.close(fd)
                 raise
             if file_path.exists():
-                try:
+                if self._is_symlink(file_path):
+                    raise RepositoryError(
+                        f"Refusing to replace symlink: {file_path}"
+                    )
+                with contextlib.suppress(OSError):
                     os.chmod(temp_name, file_path.stat().st_mode)
-                except OSError:
-                    pass
+            elif self._is_symlink(file_path):
+                raise RepositoryError(
+                    f"Refusing to write through dangling symlink: {file_path}"
+                )
             temp_path.replace(file_path)
         except BaseException:
             temp_path.unlink(missing_ok=True)
@@ -301,14 +342,15 @@ class FileSystemDLLRepository(IDLLRepository):
             )
 
             # Update index
-            index = self._load_index()
-            key = self._get_file_key(dll_file.name, dll_file.architecture)
-            index["files"][key] = self._serialize_dll(dll_file)
-            try:
-                self._save_index(index)
-            except RepositoryError:
-                self._rollback_payload_write(file_path, previous_content)
-                raise
+            with self._with_index_lock():
+                index = self._load_index()
+                key = self._get_file_key(dll_file.name, dll_file.architecture)
+                index["files"][key] = self._serialize_dll(dll_file)
+                try:
+                    self._save_index(index)
+                except RepositoryError:
+                    self._rollback_payload_write(file_path, previous_content)
+                    raise
 
             logger.debug("Saved DLL %s to %s", dll_file.name, file_path)
             return dll_file
@@ -380,7 +422,7 @@ class FileSystemDLLRepository(IDLLRepository):
         architecture: Architecture,
     ) -> Path | None:
         """Return a disk fallback payload only when its path is repository-owned."""
-        if file_path.is_symlink():
+        if self._is_symlink(file_path):
             logger.warning("Skipping fallback DLL payload with symlink: %s", file_path)
             return None
         if not self._path_location_is_within_repository(file_path):
@@ -513,6 +555,13 @@ class FileSystemDLLRepository(IDLLRepository):
                 for member in archive.infolist():
                     if member.is_dir():
                         continue
+                    if member.file_size > cls._ZIP_MEMBER_SIZE_LIMIT:
+                        logger.warning(
+                            "Skipping ZIP member exceeding size limit: %s (%d bytes)",
+                            member.filename,
+                            member.file_size,
+                        )
+                        continue
                     member_name = member.filename.rsplit("/", 1)[-1].lower()
                     if member_name != expected_name:
                         continue
@@ -630,7 +679,7 @@ class FileSystemDLLRepository(IDLLRepository):
         """Find a valid orphaned repository payload by its actual content hash."""
         for arch in self._iter_architectures(None):
             arch_dir = self._base_path / arch.value
-            if arch_dir.is_symlink() or not arch_dir.is_dir():
+            if self._is_symlink(arch_dir) or not arch_dir.is_dir():
                 continue
             for file_path in self._iter_repository_directory(arch_dir):
                 if file_path.suffix.lower() != ".dll":
@@ -676,7 +725,7 @@ class FileSystemDLLRepository(IDLLRepository):
         dll_files: list[DLLFile] = []
         for arch in self._iter_architectures(None):
             arch_dir = self._base_path / arch.value
-            if arch_dir.is_symlink() or not arch_dir.is_dir():
+            if self._is_symlink(arch_dir) or not arch_dir.is_dir():
                 continue
             for file_path in self._iter_repository_directory(arch_dir):
                 if file_path.suffix.lower() != ".dll":
@@ -708,7 +757,7 @@ class FileSystemDLLRepository(IDLLRepository):
     def _load_raw_index_keys(self) -> set[str]:
         """Return raw index keys so corrupt metadata still blocks disk fallback."""
         if (
-            self._index_path.is_symlink()
+            self._is_symlink(self._index_path)
             or not self._index_path.exists()
             or not self._index_path.is_file()
         ):
@@ -838,15 +887,16 @@ class FileSystemDLLRepository(IDLLRepository):
         dll_file: DLLFile,
     ) -> tuple[IndexData, bool]:
         """Remove delete target metadata before unlinking the payload."""
-        index = self._load_index()
-        original_index: IndexData = copy.deepcopy(index)
-        key = self._get_file_key(dll_file.name, dll_file.architecture)
-        if key not in index["files"]:
-            return original_index, False
+        with self._with_index_lock():
+            index = self._load_index()
+            original_index: IndexData = copy.deepcopy(index)
+            key = self._get_file_key(dll_file.name, dll_file.architecture)
+            if key not in index["files"]:
+                return original_index, False
 
-        del index["files"][key]
-        self._save_index(index)
-        return original_index, True
+            del index["files"][key]
+            self._save_index(index)
+            return original_index, True
 
     def _unlink_payload_for_delete(
         self,
@@ -856,7 +906,7 @@ class FileSystemDLLRepository(IDLLRepository):
         original_index: IndexData,
     ) -> None:
         """Unlink the payload and restore metadata if the filesystem delete fails."""
-        if not file_path.is_symlink() and not file_path.exists():
+        if not self._is_symlink(file_path) and not file_path.exists():
             return
 
         try:
@@ -920,9 +970,9 @@ class FileSystemDLLRepository(IDLLRepository):
 
         if isinstance(file_path, str) and file_path:
             resolved_path = Path(file_path)
-            if resolved_path.is_symlink() or not self._path_is_within_repository(resolved_path):
+            if self._is_symlink(resolved_path) or not self._path_is_within_repository(resolved_path):
                 logger.warning(
-                    "Skipping DLL index entry with unsafe file_path: %s", file_path
+                    "Nullifying DLL index entry with unsafe file_path: %s", file_path
                 )
                 file_path = None
 
@@ -1033,7 +1083,7 @@ class FileSystemDLLRepository(IDLLRepository):
             return None
 
         file_path = Path(dll_file.file_path)
-        if file_path.is_symlink():
+        if self._is_symlink(file_path):
             logger.warning("Skipping DLL index entry with symlink payload: %s", file_path)
             return None
         if not self._path_is_within_repository(file_path):
@@ -1119,6 +1169,14 @@ class FileSystemDLLRepository(IDLLRepository):
 
         name = raw_entry.get("name")
         architecture = raw_entry.get("architecture", "unknown")
+        valid_arch_values = {a.value for a in Architecture}
+        if (
+            not isinstance(architecture, str)
+            or (architecture not in valid_arch_values and architecture != "unknown")
+        ):
+            raise ValueError(
+                f"Index entry 'architecture' must be one of {sorted(valid_arch_values)}"
+            )
         security_status = raw_entry.get("security_status", "not_scanned")
         file_hash = raw_entry.get("file_hash")
         file_size = raw_entry.get("file_size")

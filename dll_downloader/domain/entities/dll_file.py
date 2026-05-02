@@ -10,6 +10,11 @@ from datetime import UTC, datetime
 from enum import Enum
 
 _SAFE_DLL_NAME_PATTERN = re.compile(r"[A-Za-z0-9_.-]+")
+_WINDOWS_RESERVED_NAMES = frozenset({
+    "con", "nul", "aux", "prn",
+    "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8", "com9",
+    "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
+})
 
 
 def normalize_dll_name(name: str) -> str:
@@ -35,6 +40,7 @@ def normalize_dll_name(name: str) -> str:
         or "/" in normalized_name
         or "\\" in normalized_name
         or not _SAFE_DLL_NAME_PATTERN.fullmatch(normalized_name)
+        or base_name.lower() in _WINDOWS_RESERVED_NAMES
     ):
         raise ValueError("DLL name must be a simple filename")
 

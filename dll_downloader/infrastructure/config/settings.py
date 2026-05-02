@@ -64,6 +64,26 @@ def _validate_https_url(value: object, field_name: str) -> None:
         return
     if not value.lower().startswith("https://"):
         raise ValueError(f"{field_name} must use HTTPS")
+    _validate_not_private_url(value, field_name)
+
+
+def _validate_not_private_url(value: str, field_name: str) -> None:
+    """Reject URLs that resolve to private or loopback IP ranges (SSRF protection)."""
+    import ipaddress
+    from urllib.parse import urlparse
+
+    parsed = urlparse(value)
+    hostname = parsed.hostname
+    if not hostname:
+        return
+    try:
+        addr = ipaddress.ip_address(hostname)
+    except ValueError:
+        return  # not an IP literal, allow domain names
+    if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved:
+        raise ValueError(
+            f"{field_name} must not point to a private, loopback, or reserved address"
+        )
 
 
 def _validate_log_level(value: object) -> None:

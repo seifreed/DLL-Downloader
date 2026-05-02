@@ -1481,7 +1481,7 @@ def test_scan_file_accepts_exact_size_limit() -> None:
     """
     from dll_downloader.infrastructure.services.virustotal import _VT_UPLOAD_MAX_BYTES
     exact_limit_bytes = 32 * 1024 * 1024  # exactly 32 MiB
-    assert _VT_UPLOAD_MAX_BYTES == exact_limit_bytes
+    assert exact_limit_bytes == _VT_UPLOAD_MAX_BYTES
     # Verify the fix: reading exact_limit + 1 bytes triggers the size check,
     # but reading exactly _VT_UPLOAD_MAX_BYTES bytes does not.
     content = b"\x00" * exact_limit_bytes

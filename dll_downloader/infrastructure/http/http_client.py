@@ -107,15 +107,21 @@ class RequestsHTTPClient:
         url: str,
         headers: Mapping[str, str] | None = None,
     ) -> HTTPResponse:
-        response = self._transport.execute("GET", url, headers=headers)
+        response = self._transport.execute("GET", url, headers=headers, stream=True)
         try:
-            content = response.content
-            if len(content) > self._max_download_bytes:
-                raise HTTPClientError(
-                    f"GET response exceeds size limit {self._max_download_bytes}",
-                    status_code=response.status_code,
-                    url=response.url or url,
-                )
+            chunks: list[bytes] = []
+            total_bytes = 0
+            for chunk in response.iter_content(chunk_size=8192):
+                if chunk:
+                    total_bytes += len(chunk)
+                    if total_bytes > self._max_download_bytes:
+                        raise HTTPClientError(
+                            f"GET response exceeds size limit {self._max_download_bytes}",
+                            status_code=response.status_code,
+                            url=response.url or url,
+                        )
+                    chunks.append(chunk)
+            content = b"".join(chunks)
             return HTTPResponse(
                 status_code=response.status_code,
                 content=content,
@@ -231,8 +237,12 @@ class RequestsHTTPClient:
                 break
         try:
             return content.decode(charset)
-        except (LookupError, UnicodeDecodeError):
+        except LookupError:
             return content.decode("utf-8", errors="replace")
+        except UnicodeDecodeError:
+            if charset == "utf-8":
+                return content.decode("utf-8", errors="replace")
+            return content.decode(charset, errors="replace")
 
     @staticmethod
     def _close_response(response: HTTPResponseProtocol) -> None:

@@ -489,9 +489,15 @@ class DownloadDLLUseCase:
     ) -> bytes:
         """Extract and validate the preferred DLL member from a ZIP payload."""
         with zipfile.ZipFile(BytesIO(content)) as archive:
+            total_decompressed_size = 0
             for member in archive.infolist():
                 if member.is_dir():
                     continue
+                if member.file_size > _ZIP_MEMBER_SIZE_LIMIT:
+                    raise ArchiveExtractionError(
+                        "ZIP member exceeds size limit"
+                    )
+                # Check compression ratio for potential ZIP bombs
                 if member.compress_size > 0:
                     ratio = member.file_size / member.compress_size
                     if ratio > _ZIP_COMPRESSION_RATIO_LIMIT:
@@ -499,13 +505,16 @@ class DownloadDLLUseCase:
                             "ZIP member has suspicious compression ratio, possible ZIP bomb"
                         )
                 elif member.file_size > 0:
+                    # compress_size == 0 with file_size > 0 is suspicious:
+                    # either forged metadata or stored with zero-reported size
                     raise ArchiveExtractionError(
                         "ZIP member has suspicious compression ratio, possible ZIP bomb"
                     )
-                if member.file_size > _ZIP_MEMBER_SIZE_LIMIT:
-                    raise ArchiveExtractionError(
-                        "ZIP member exceeds size limit"
-                    )
+                total_decompressed_size += member.file_size
+            if total_decompressed_size > _ZIP_MEMBER_SIZE_LIMIT:
+                raise ArchiveExtractionError(
+                    "ZIP total decompressed size exceeds limit"
+                )
             matching_members = [
                 member for member in archive.infolist()
                 if not member.is_dir() and member.filename.lower().endswith(".dll")

@@ -143,6 +143,7 @@ TECHNICAL_ADAPTER_IMPORT_ALLOWLIST: dict[str, tuple[str, ...]] = {
         "collections.abc",
         "dataclasses",
         "requests",
+        "urllib.parse",
         "domain.errors",
         "infrastructure.http_session",
         "dll_downloader.domain.errors",
@@ -156,6 +157,8 @@ TECHNICAL_ADAPTER_IMPORT_ALLOWLIST: dict[str, tuple[str, ...]] = {
     ),
     "dll_downloader/infrastructure/services/virustotal.py": (
         "logging",
+        "os",
+        "stat",
         "collections.abc",
         "dataclasses",
         "datetime",

@@ -523,28 +523,28 @@ def test_extract_download_link_rejects_unsupported_architecture() -> None:
 
 
 @pytest.mark.unit
-def test_extract_link_context_returns_text_when_href_not_found() -> None:
+def test_extract_link_context_at_returns_text_when_position_not_found() -> None:
     resolver = DllFilesResolver(
         http_client=StubTextHTTPClient({}),
         base_url="http://example.com",
     )
 
-    assert resolver._extract_link_context("<html></html>", "/missing", "Download") == (
+    assert resolver._extract_link_context_at("<html></html>", -1, "Download") == (
         "Download"
     )
 
 
 @pytest.mark.unit
-def test_extract_link_context_handles_unclosed_section() -> None:
+def test_extract_link_context_at_handles_unclosed_section() -> None:
     resolver = DllFilesResolver(
         http_client=StubTextHTTPClient({}),
         base_url="http://example.com",
     )
     html = '<section><a href="/download/abc/file.dll.html">Download</a>'
 
-    assert resolver._extract_link_context(
+    assert resolver._extract_link_context_at(
         html,
-        "/download/abc/file.dll.html",
+        html.find("/download/abc/file.dll.html"),
         "Download",
     ) == html
 

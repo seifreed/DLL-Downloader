@@ -56,6 +56,8 @@ class HTMLLinkExtractor(HTMLParser):
 
     def _absolute_position(self) -> int:
         line_number, column_offset = self.getpos()
+        if line_number < 1 or line_number > len(self.line_offsets):
+            return -1
         return self.line_offsets[line_number - 1] + column_offset
 
 

@@ -973,7 +973,7 @@ def test_http_client_get_wraps_body_read_failures_and_closes_response() -> None:
             raise requests.ConnectionError("body read failed")
 
         def iter_content(self, chunk_size: int = 8192) -> Iterator[bytes]:
-            return iter(())
+            raise requests.ConnectionError("body read failed")
 
         def close(self) -> None:
             self.closed = True
@@ -1719,7 +1719,7 @@ def test_decode_text_recognizes_charset_aliases() -> None:
     assert decoded == "café"
 
     # utf8 alias
-    content = "café".encode("utf-8")
+    content = "café".encode()
     headers = {"content-type": "text/html; charset=utf8"}
     decoded = RequestsHTTPClient._decode_text(content, headers)
     assert decoded == "café"
