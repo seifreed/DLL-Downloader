@@ -194,11 +194,11 @@ def test_download_batch_sarif_presenter_emits_warning_and_locations() -> None:
     results = payload["runs"][0]["results"]
 
     assert results[0]["locations"][0]["physicalLocation"]["artifactLocation"]["uri"] == (
-        "/tmp/warn.dll"
+        "file:///tmp/warn.dll"
     )
     assert results[1]["ruleId"] == "dll-downloader/security-warning"
     assert results[1]["locations"][0]["physicalLocation"]["artifactLocation"]["uri"] == (
-        "/tmp/warn.dll"
+        "file:///tmp/warn.dll"
     )
 
 
@@ -255,3 +255,37 @@ def test_download_batch_sarif_presenter_warning_without_file_path() -> None:
     warning_result = payload["runs"][0]["results"][1]
     assert warning_result["ruleId"] == "dll-downloader/security-warning"
     assert "locations" not in warning_result
+
+
+# ---------------------------------------------------------------------------
+# Regression tests for fixed bugs
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_sarif_uses_file_uri_scheme_for_absolute_paths() -> None:
+    """
+    Regression: SARIF artifactLocation.uri must use file:/// scheme for
+    absolute local paths, per SARIF v2.1.0 spec.
+    """
+    presenter = DownloadBatchSARIFPresenter()
+    dll_file = DLLFile(
+        name="test.dll",
+        architecture=Architecture.X64,
+        file_path="/opt/downloads/x64/test.dll",
+    )
+    payload = json.loads(
+        presenter.render_batch(
+            DownloadBatchResponse(
+                items=[
+                    DownloadBatchItem(
+                        dll_name="test.dll",
+                        response=DownloadDLLResponse(success=True, dll_file=dll_file),
+                    )
+                ]
+            ),
+            "x64",
+        )[0]
+    )
+    uri = payload["runs"][0]["results"][0]["locations"][0]["physicalLocation"]["artifactLocation"]["uri"]
+    assert uri.startswith("file:///"), f"Expected file:/// URI, got: {uri}"

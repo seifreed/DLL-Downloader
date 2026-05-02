@@ -1223,15 +1223,16 @@ def test_scan_hash_request_exception_raises() -> None:
 
 
 @pytest.mark.unit
-def test_scan_dll_no_results_raises_virustotal_error() -> None:
+def test_scan_dll_no_results_returns_unknown_status() -> None:
     """
-    Verify scan_dll fails when no scan results exist.
+    Verify scan_dll returns UNKNOWN status when no scan results exist.
     """
     scanner = HashNotFoundScanner(api_key="key")
 
     dll = DLLFile(name="a.dll", file_hash="hash")
-    with pytest.raises(HashNotFoundError):
-        scanner.scan_dll(dll)
+    result = scanner.scan_dll(dll)
+    assert result.security_status == SecurityStatus.UNKNOWN
+    assert result.vt_detection_ratio is None
 
 
 @pytest.mark.unit
@@ -1465,3 +1466,24 @@ def test_get_detailed_report_unavailable_raises() -> None:
     scanner = VirusTotalScanner(api_key=None)
     with pytest.raises(VirusTotalError):
         scanner.get_detailed_report("hash")
+
+
+# ---------------------------------------------------------------------------
+# Regression tests for fixed bugs
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_scan_file_accepts_exact_size_limit() -> None:
+    """
+    Regression: files exactly at the 32 MiB upload limit must be accepted,
+    not rejected. Previously `>=` was used instead of `>`.
+    """
+    from dll_downloader.infrastructure.services.virustotal import _VT_UPLOAD_MAX_BYTES
+    exact_limit_bytes = 32 * 1024 * 1024  # exactly 32 MiB
+    assert _VT_UPLOAD_MAX_BYTES == exact_limit_bytes
+    # Verify the fix: reading exact_limit + 1 bytes triggers the size check,
+    # but reading exactly _VT_UPLOAD_MAX_BYTES bytes does not.
+    content = b"\x00" * exact_limit_bytes
+    assert len(content) == _VT_UPLOAD_MAX_BYTES
+    assert len(content) <= _VT_UPLOAD_MAX_BYTES

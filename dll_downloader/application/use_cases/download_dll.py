@@ -498,6 +498,10 @@ class DownloadDLLUseCase:
                         raise ArchiveExtractionError(
                             "ZIP member has suspicious compression ratio, possible ZIP bomb"
                         )
+                elif member.file_size > 0:
+                    raise ArchiveExtractionError(
+                        "ZIP member has suspicious compression ratio, possible ZIP bomb"
+                    )
                 if member.file_size > _ZIP_MEMBER_SIZE_LIMIT:
                     raise ArchiveExtractionError(
                         "ZIP member exceeds size limit"

@@ -210,11 +210,11 @@ class RequestsHTTPClient:
             self._close_response(response)
 
     _TEXT_CHARSETS = frozenset({
-        "utf-8", "utf-16", "utf-16-le", "utf-16-be",
+        "utf-8", "utf8", "utf-16", "utf-16-le", "utf-16-be",
         "utf-32", "utf-32-le", "utf-32-be",
         "ascii", "latin-1", "iso-8859-1", "iso-8859-15",
-        "cp1252", "cp1250", "cp1251",
-        "shift_jis", "euc-jp", "euc-kr", "gb2312", "gbk", "gb18030",
+        "cp1252", "windows-1252", "cp1250", "windows-1250", "cp1251", "windows-1251",
+        "shift_jis", "shift-jis", "euc-jp", "euc-kr", "gb2312", "gbk", "gb18030",
         "big5", "iso-2022-jp",
     })
 

@@ -2520,7 +2520,7 @@ def test_download_batch_use_case_orchestrates_multiple_downloads() -> None:
 
     response = batch_use_case.execute(
         DownloadBatchRequest(
-            dll_names=["kernel32", "user32.dll"],
+            dll_names=("kernel32", "user32.dll"),
             architecture=Architecture.X64,
             scan_before_save=False,
         )
@@ -2544,7 +2544,7 @@ def test_download_batch_use_case_skips_invalid_names_with_failure_items() -> Non
 
     response = batch_use_case.execute(
         DownloadBatchRequest(
-            dll_names=["good.dll", "../bad", "other.dll"],
+            dll_names=("good.dll", "../bad", "other.dll"),
             architecture=Architecture.X64,
             scan_before_save=False,
         )
@@ -2555,3 +2555,53 @@ def test_download_batch_use_case_skips_invalid_names_with_failure_items() -> Non
     assert bad_item.dll_name == "../bad"
     assert bad_item.response.success is False
     assert "DLL name" in (bad_item.response.error_message or "")
+
+
+# ---------------------------------------------------------------------------
+# Regression tests for fixed bugs
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_zip_bomb_with_zero_compress_size_rejected() -> None:
+    """
+    Regression: ZIP members with compress_size=0 and file_size>0 must be
+    flagged as suspicious (infinite compression ratio), not silently accepted.
+    """
+    from dll_downloader.application.errors import ArchiveExtractionError
+
+    x64_pe = _build_pe_payload(Architecture.X64)
+    archive_buffer = io.BytesIO()
+    with zipfile.ZipFile(archive_buffer, "w", compression=zipfile.ZIP_STORED) as archive:
+        archive.writestr("test.dll", x64_pe)
+    raw = bytearray(archive_buffer.getvalue())
+
+    # Patch compress_size to 0 in both local and central directory headers.
+    # A compress_size of 0 with nonzero file_size indicates an infinite
+    # compression ratio (ZIP bomb signature).
+    local_offset = raw.index(b"PK\x03\x04")
+    raw[local_offset + 18:local_offset + 22] = b"\x00\x00\x00\x00"
+
+    central_offset = raw.index(b"PK\x01\x02")
+    raw[central_offset + 20:central_offset + 24] = b"\x00\x00\x00\x00"
+
+    # Verify patched ZIP is still parseable by zipfile
+    assert zipfile.is_zipfile(io.BytesIO(bytes(raw)))
+
+    # Verify the bug trigger condition exists in the patched archive
+    with zipfile.ZipFile(io.BytesIO(bytes(raw))) as zf:
+        for member in zf.infolist():
+            if member.filename.lower().endswith(".dll"):
+                assert member.compress_size == 0
+                assert member.file_size > 0
+
+    # Exercise the use case code path: _extract_valid_dll_from_zip must
+    # reject the archive with ArchiveExtractionError
+    use_case = DownloadDLLUseCase(
+        repository=InMemoryRepository(),
+        http_client=StubHTTPClient(),
+        download_base_url="https://dll.website/download",
+    )
+    request = DownloadDLLRequest(dll_name="test.dll", extract_archive=True)
+    with pytest.raises(ArchiveExtractionError, match="suspicious compression ratio"):
+        use_case._extract_valid_dll_from_zip(bytes(raw), request)

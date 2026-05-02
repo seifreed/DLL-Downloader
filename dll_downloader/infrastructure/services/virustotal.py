@@ -216,8 +216,8 @@ class VirusTotalScanner(ISecurityScanner):
 
         try:
             with path.open('rb') as f:
-                content = f.read(_VT_UPLOAD_MAX_BYTES)
-                if len(content) >= _VT_UPLOAD_MAX_BYTES:
+                content = f.read(_VT_UPLOAD_MAX_BYTES + 1)
+                if len(content) > _VT_UPLOAD_MAX_BYTES:
                     raise VirusTotalError(
                         f"File exceeds { _VT_UPLOAD_MAX_BYTES // (1024 * 1024)} MiB upload limit"
                     )
@@ -338,7 +338,11 @@ class VirusTotalScanner(ISecurityScanner):
 
         except HashNotFoundError:
             logger.info("No VT results for %s, file not previously scanned", dll_file.name)
-            raise
+            return replace(
+                dll_file,
+                security_status=SecurityStatus.UNKNOWN,
+                vt_detection_ratio=None,
+            )
 
         except VirusTotalError as e:
             logger.error("VT scan failed for %s: %s", dll_file.name, e)

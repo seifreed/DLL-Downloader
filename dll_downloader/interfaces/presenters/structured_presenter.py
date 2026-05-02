@@ -5,6 +5,7 @@ Structured presenters for machine-readable CLI output.
 import json
 import logging
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from ...application.use_cases.download_batch import (
@@ -16,6 +17,15 @@ from ...domain.entities.dll_file import DLLFile
 
 STRUCTURED_OUTPUT_VERSION = "1.0"
 _logger = logging.getLogger(__name__)
+
+
+def _path_to_uri(file_path: str | None) -> str | None:
+    if file_path is None:
+        return None
+    p = Path(file_path)
+    if p.is_absolute():
+        return p.as_uri()
+    return file_path
 
 
 def _serialize_datetime(value: datetime | None) -> str | None:
@@ -213,7 +223,7 @@ class DownloadBatchSARIFPresenter:
             result["locations"] = [
                 {
                     "physicalLocation": {
-                        "artifactLocation": {"uri": response.dll_file.file_path}
+                        "artifactLocation": {"uri": _path_to_uri(response.dll_file.file_path)}
                     }
                 }
             ]
@@ -239,7 +249,7 @@ class DownloadBatchSARIFPresenter:
             result["locations"] = [
                 {
                     "physicalLocation": {
-                        "artifactLocation": {"uri": response.dll_file.file_path}
+                        "artifactLocation": {"uri": _path_to_uri(response.dll_file.file_path)}
                     }
                 }
             ]

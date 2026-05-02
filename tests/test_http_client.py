@@ -1699,3 +1699,75 @@ def test_retry_policy_rejects_negative_backoff() -> None:
 def test_retry_policy_rejects_negative_jitter() -> None:
     with pytest.raises(ValueError, match="jitter_seconds cannot be negative"):
         RetryPolicy(jitter_seconds=-0.1)
+
+
+# ---------------------------------------------------------------------------
+# Regression tests for fixed bugs
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_decode_text_recognizes_charset_aliases() -> None:
+    """
+    Regression: common charset aliases like 'windows-1252', 'utf8',
+    'shift-jis' must be recognized instead of falling back to UTF-8 replace.
+    """
+    # windows-1252 can encode 'é' (U+00E9)
+    content = "café".encode("cp1252")
+    headers = {"content-type": "text/html; charset=windows-1252"}
+    decoded = RequestsHTTPClient._decode_text(content, headers)
+    assert decoded == "café"
+
+    # utf8 alias
+    content = "café".encode("utf-8")
+    headers = {"content-type": "text/html; charset=utf8"}
+    decoded = RequestsHTTPClient._decode_text(content, headers)
+    assert decoded == "café"
+
+    # shift-jis alias - use a character that shift_jis can encode
+    content = "abc".encode("shift_jis")
+    headers = {"content-type": "text/html; charset=shift-jis"}
+    decoded = RequestsHTTPClient._decode_text(content, headers)
+    assert decoded == "abc"
+
+
+@pytest.mark.unit
+def test_session_resource_thread_safe_lazy_creation() -> None:
+    """
+    Regression: HTTPSessionResource.session must be thread-safe to prevent
+    leaked sessions from concurrent lazy creation.
+    """
+    import threading
+
+    resource = HTTPSessionResource()
+    sessions: list[object] = []
+    errors: list[Exception] = []
+
+    def access_session() -> None:
+        try:
+            sessions.append(resource.session)
+        except Exception as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=access_session) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert not errors, f"Thread errors: {errors}"
+    assert resource.has_session is True
+    # All threads must have gotten the same session instance
+    assert all(s is sessions[0] for s in sessions), "Multiple sessions were created"
+
+
+@pytest.mark.unit
+def test_retry_policy_next_delay_returns_float() -> None:
+    """
+    Regression: RetryPolicy.next_delay must return a plain float, not Any,
+    so that mypy does not report no-any-return.
+    """
+    policy = RetryPolicy(max_attempts=3, backoff_seconds=1.0, jitter_seconds=0.5)
+    delay = policy.next_delay(1)
+    assert isinstance(delay, float)
+    assert delay >= 1.0

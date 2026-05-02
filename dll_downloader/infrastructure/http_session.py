@@ -2,6 +2,7 @@
 Shared HTTP session resource for infrastructure adapters.
 """
 
+import threading
 from collections.abc import Iterator, MutableMapping
 from typing import Any, Protocol, cast
 
@@ -52,14 +53,17 @@ class HTTPSessionResource:
     ) -> None:
         self._session: HTTPSessionProtocol | None = session
         self._headers = headers or {}
+        self._lock = threading.Lock()
 
     @property
     def session(self) -> HTTPSessionProtocol:
         """Return a lazily created configured HTTP session."""
         if self._session is None:
-            session = cast(HTTPSessionProtocol, requests.Session())
-            session.headers.update(self._headers)
-            self._session = session
+            with self._lock:
+                if self._session is None:
+                    session = cast(HTTPSessionProtocol, requests.Session())
+                    session.headers.update(self._headers)
+                    self._session = session
         return self._session
 
     @property
@@ -69,9 +73,10 @@ class HTTPSessionResource:
 
     def close(self) -> None:
         """Close and discard the current session if present."""
-        session = self._session
-        if session is not None:
-            try:
-                session.close()
-            finally:
-                self._session = None
+        with self._lock:
+            session = self._session
+            if session is not None:
+                try:
+                    session.close()
+                finally:
+                    self._session = None
