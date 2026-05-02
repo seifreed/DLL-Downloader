@@ -109,6 +109,12 @@ class RequestsHTTPClient:
     ) -> HTTPResponse:
         response = self._transport.execute("GET", url, headers=headers, stream=True)
         try:
+            if not response.ok:
+                raise HTTPClientError(
+                    f"GET request failed with status {response.status_code}",
+                    status_code=response.status_code,
+                    url=response.url or url,
+                )
             chunks: list[bytes] = []
             total_bytes = 0
             for chunk in response.iter_content(chunk_size=8192):

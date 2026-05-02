@@ -139,7 +139,8 @@ class FileSystemDLLRepository(IDLLRepository):
             fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
             fcntl.flock(fd, fcntl.LOCK_EX)
             yield
-        except OSError:
+        except OSError as exc:
+            logger.warning("Failed to acquire index lock, proceeding without lock: %s", exc)
             yield
         finally:
             if fd >= 0:
@@ -160,11 +161,10 @@ class FileSystemDLLRepository(IDLLRepository):
             return {"files": {}}
 
         try:
+            index_size = os.path.getsize(self._index_path)
+            if index_size > self._INDEX_MAX_BYTES:
+                raise ValueError(f"Index file exceeds size limit ({index_size} bytes)")
             with open(self._index_path, encoding="utf-8") as f:
-                index_size = f.seek(0, 2)
-                if index_size > self._INDEX_MAX_BYTES:
-                    raise ValueError(f"Index file exceeds size limit ({index_size} bytes)")
-                f.seek(0)
                 raw_data = json.load(f)
                 if not isinstance(raw_data, dict):
                     raise ValueError("Index file must contain a JSON object")

@@ -31,8 +31,12 @@ _VT_UPLOAD_MAX_BYTES = 32 * 1024 * 1024  # 32 MiB
 
 
 def _is_valid_hash(value: str) -> bool:
-    """Return True when value looks like a hex hash suitable for URL path segments."""
-    return bool(value) and all(c in "0123456789abcdefABCDEF" for c in value)
+    """Return True when value is a hex hash with valid length for VirusTotal lookups."""
+    if not value:
+        return False
+    if len(value) not in (32, 40, 64):  # MD5, SHA-1, SHA-256
+        return False
+    return all(c in "0123456789abcdefABCDEF" for c in value)
 
 
 class VirusTotalError(SecurityServiceError):
@@ -227,23 +231,19 @@ class VirusTotalScanner(ISecurityScanner):
                 f"File upload failed: path is not a regular file: {file_path}"
             )
 
-        # Hash the full file content first for accurate hash lookup,
-        # then read up to the upload limit for submission.
+        # Read file once to avoid TOCTOU between hashing and upload.
         try:
-            file_hash = calculate_sha256(path.read_bytes())
+            content = path.read_bytes()
         except OSError as e:
             raise VirusTotalError(f"File upload failed: {e}") from e
 
-        try:
-            with path.open('rb') as f:
-                content = f.read(_VT_UPLOAD_MAX_BYTES + 1)
-                if len(content) > _VT_UPLOAD_MAX_BYTES:
-                    raise VirusTotalError(
-                        f"File exceeds { _VT_UPLOAD_MAX_BYTES // (1024 * 1024)} MiB upload limit"
-                    )
-        except OSError as e:
-            logger.error("Failed to upload file to VirusTotal: %s", e)
-            raise VirusTotalError(f"File upload failed: {e}") from e
+        if len(content) > _VT_UPLOAD_MAX_BYTES:
+            raise VirusTotalError(
+                f"File exceeds {_VT_UPLOAD_MAX_BYTES // (1024 * 1024)} MiB upload limit"
+            )
+
+        file_hash = calculate_sha256(content)
+        upload_content = content[:_VT_UPLOAD_MAX_BYTES]
 
         try:
             return self.scan_hash(file_hash)
@@ -253,7 +253,7 @@ class VirusTotalScanner(ISecurityScanner):
         response: HTTPResponseProtocol | None = None
         try:
             filename = Path(file_path).name
-            files = {'file': (filename, content)}
+            files = {'file': (filename, upload_content)}
             response = self.session.post(
                 f"{self.VT_API_URL}/files",
                 files=files,

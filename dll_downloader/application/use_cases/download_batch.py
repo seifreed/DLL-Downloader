@@ -96,7 +96,7 @@ class DownloadBatchUseCase:
                 logger.error("Unexpected error downloading %s: %s", normalized_name, exc)
                 response = DownloadDLLResponse(
                     success=False,
-                    error_message=f"Unexpected error: {exc}",
+                    error_message="Unexpected download error",
                 )
             items.append(DownloadBatchItem(dll_name=normalized_name, response=response))
 

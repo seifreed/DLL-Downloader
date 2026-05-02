@@ -141,6 +141,13 @@ class RequestsTransport:
             if self._retry_policy.should_retry_status(response.status_code, attempt):
                 self._log_retryable_status(method_name, url, attempt, response.status_code)
                 self._close_retryable_response(response)
+                if attempt >= self._retry_policy.max_attempts:
+                    raise HTTPClientError(
+                        f"{method_name} request failed with status {response.status_code} "
+                        f"after {attempt} attempts",
+                        status_code=response.status_code,
+                        url=response.url or url,
+                    )
                 self._retry_policy.pause_before_retry(attempt)
                 continue
 
@@ -159,8 +166,6 @@ class RequestsTransport:
                     )
 
             return response
-
-        raise RuntimeError("unreachable transport retry state")
 
     def _resolve_request_method(
         self,
