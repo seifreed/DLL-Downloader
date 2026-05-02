@@ -762,6 +762,7 @@ def test_http_client_get_text_raises_on_unsuccessful_response() -> None:
 def test_http_client_accepts_case_variant_user_agent_header() -> None:
     class DummyResponse:
         ok = True
+        is_redirect = False
         status_code = 200
         content = b"ok"
         headers: dict[str, str] = {}
@@ -869,6 +870,7 @@ def test_http_client_head_closes_response() -> None:
     """Verify HEAD response resources are released after headers are copied."""
     class DummyResponse:
         status_code = 200
+        is_redirect = False
         ok = True
         content = b""
         headers = {"content-length": "0"}
@@ -914,6 +916,7 @@ def test_http_client_get_closes_response() -> None:
     """Verify GET response resources are released after content is copied."""
     class DummyResponse:
         status_code = 200
+        is_redirect = False
         ok = True
         content = b"body"
         headers = {"content-type": "text/plain"}
@@ -961,6 +964,7 @@ def test_http_client_get_wraps_body_read_failures_and_closes_response() -> None:
     """Verify GET body read failures are normalized and resources are released."""
     class BrokenResponse:
         status_code = 200
+        is_redirect = False
         ok = True
         headers: dict[str, str] = {"content-type": "text/plain"}
         url = "https://example.com/file.dll"
@@ -1053,6 +1057,7 @@ def test_http_client_download_ignores_empty_chunks() -> None:
     """
     class DummyResponse:
         ok = True
+        is_redirect = False
         status_code = 200
         content = b""
         headers: dict[str, str] = {}
@@ -1100,6 +1105,7 @@ def test_http_client_download_wraps_stream_interruptions() -> None:
     """
     class DummyResponse:
         ok = True
+        is_redirect = False
         status_code = 200
         content = b""
         headers: dict[str, str] = {}
@@ -1149,6 +1155,7 @@ def test_http_client_download_wraps_stream_interruptions() -> None:
 def test_http_client_download_ignores_final_response_close_failure() -> None:
     class DummyResponse:
         ok = True
+        is_redirect = False
         status_code = 200
         content = b""
         headers: dict[str, str] = {}
@@ -1195,6 +1202,7 @@ def test_http_client_download_ignores_final_response_oserror_close_failure() -> 
     """RuntimeError from close() is no longer silently swallowed; only OSError is."""
     class DummyResponse:
         ok = True
+        is_redirect = False
         status_code = 200
         content = b""
         headers: dict[str, str] = {}
@@ -1246,6 +1254,7 @@ def test_http_client_download_retries_retryable_status() -> None:
             self.headers: dict[str, str] = {}
             self.url = "https://example.com/file.dll"
             self.closed = False
+            self.is_redirect = 300 <= status_code < 400
 
         def iter_content(self, chunk_size: int = 8192) -> Iterator[bytes]:
             yield self.content
@@ -1297,6 +1306,7 @@ def test_http_client_download_retries_when_retry_response_close_fails() -> None:
             self.headers: dict[str, str] = {}
             self.url = "https://example.com/file.dll"
             self.close_attempted = False
+            self.is_redirect = 300 <= status_code < 400
 
         def iter_content(self, chunk_size: int = 8192) -> Iterator[bytes]:
             yield self.content
@@ -1349,6 +1359,7 @@ def test_http_client_download_retries_when_retry_response_oserror_close_fails() 
             self.headers: dict[str, str] = {}
             self.url = "https://example.com/file.dll"
             self.close_attempted = False
+            self.is_redirect = 300 <= status_code < 400
 
         def iter_content(self, chunk_size: int = 8192) -> Iterator[bytes]:
             yield self.content
@@ -1395,6 +1406,7 @@ def test_http_client_download_retries_when_retry_response_oserror_close_fails() 
 def test_http_client_download_does_not_retry_non_retryable_status() -> None:
     class DummyResponse:
         ok = False
+        is_redirect = False
         status_code = 404
         content = b""
         headers: dict[str, str] = {}
@@ -1446,6 +1458,7 @@ def test_http_client_download_does_not_retry_non_retryable_status() -> None:
 def test_http_client_download_fails_after_exhausting_retryable_statuses() -> None:
     class DummyResponse:
         ok = False
+        is_redirect = False
         status_code = 503
         content = b""
         headers: dict[str, str] = {}
@@ -1579,6 +1592,7 @@ def test_http_client_rotates_user_agent_per_attempt() -> None:
             self.content = content
             self.headers: dict[str, str] = {}
             self.url = "https://example.com/file.dll"
+            self.is_redirect = 300 <= status_code < 400
 
         def iter_content(self, chunk_size: int = 8192) -> Iterator[bytes]:
             yield self.content

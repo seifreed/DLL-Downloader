@@ -159,6 +159,7 @@ TECHNICAL_ADAPTER_IMPORT_ALLOWLIST: dict[str, tuple[str, ...]] = {
         "__future__",
     ),
     "dll_downloader/infrastructure/services/virustotal.py": (
+        "json",
         "logging",
         "os",
         "stat",

@@ -24,6 +24,10 @@ class HTTPResponseProtocol(Protocol):
     def iter_content(self, chunk_size: int = 1) -> Iterator[bytes]:
         """Iterate over streamed response chunks."""
 
+    @property
+    def is_redirect(self) -> bool:
+        """Return True when the response is a redirect (3xx with Location header)."""
+
 
 class HTTPSessionProtocol(Protocol):
     """Minimal HTTP session contract shared by infrastructure adapters."""
@@ -69,7 +73,8 @@ class HTTPSessionResource:
     @property
     def has_session(self) -> bool:
         """Report whether a concrete session instance is currently active."""
-        return self._session is not None
+        with self._lock:
+            return self._session is not None
 
     def close(self) -> None:
         """Close and discard the current session if present."""

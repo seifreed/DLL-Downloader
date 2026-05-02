@@ -138,17 +138,19 @@ class FileSystemDLLRepository(IDLLRepository):
         try:
             fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
             fcntl.flock(fd, fcntl.LOCK_EX)
-            yield
         except OSError as exc:
             raise RepositoryError(f"Failed to acquire index lock: {exc}") from exc
+        try:
+            yield
         finally:
-            if fd >= 0:
-                with contextlib.suppress(OSError):
-                    fcntl.flock(fd, fcntl.LOCK_UN)
-                with contextlib.suppress(OSError):
-                    os.close(fd)
+            # Unlink while still holding the lock so no other process
+            # can acquire a lock on a file about to be deleted.
             with contextlib.suppress(OSError):
                 lock_path.unlink()
+            with contextlib.suppress(OSError):
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            with contextlib.suppress(OSError):
+                os.close(fd)
 
     def _load_index(self) -> IndexData:
         """Load the DLL index from disk."""
@@ -305,7 +307,7 @@ class FileSystemDLLRepository(IDLLRepository):
                         f"Refusing to replace symlink: {file_path}"
                     )
                 with contextlib.suppress(OSError):
-                    os.chmod(temp_name, file_path.stat().st_mode)
+                    os.chmod(temp_name, os.lstat(file_path).st_mode)
             elif self._is_symlink(file_path):
                 raise RepositoryError(
                     f"Refusing to write through dangling symlink: {file_path}"
@@ -337,24 +339,25 @@ class FileSystemDLLRepository(IDLLRepository):
             self._validate_payload_content(dll_file, content)
             self._validate_repository_write_path(file_path)
             self._validate_repository_write_path(self._index_path)
-            try:
-                previous_content = file_path.read_bytes()
-            except FileNotFoundError:
-                previous_content = None
 
-            # Write content to disk
-            self._atomic_write_bytes(file_path, content)
-
-            # Persist canonical metadata matching the bytes actually written.
-            dll_file = replace(
-                dll_file,
-                file_path=str(file_path),
-                file_hash=calculate_sha256(content),
-                file_size=len(content),
-            )
-
-            # Update index
+            # Acquire lock before reading previous content to prevent TOCTOU.
             with self._with_index_lock():
+                try:
+                    previous_content = file_path.read_bytes()
+                except FileNotFoundError:
+                    previous_content = None
+
+                # Write content to disk
+                self._atomic_write_bytes(file_path, content)
+
+                # Persist canonical metadata matching the bytes actually written.
+                dll_file = replace(
+                    dll_file,
+                    file_path=str(file_path),
+                    file_hash=calculate_sha256(content),
+                    file_size=len(content),
+                )
+
                 index = self._load_index()
                 key = self._get_file_key(dll_file.name, dll_file.architecture)
                 index["files"][key] = self._serialize_dll(dll_file)

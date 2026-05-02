@@ -59,6 +59,11 @@ class RequestsHTTPClient:
         self._max_download_bytes = max_download_bytes
         self._user_agent = user_agent
         self._verify_ssl = verify_ssl
+        if not verify_ssl:
+            logger.warning(
+                "SSL certificate verification is disabled; "
+                "HTTPS connections will be vulnerable to man-in-the-middle attacks"
+            )
         self._user_agent_provider = user_agent_provider or self._default_user_agent_provider(
             user_agent
         )
@@ -182,19 +187,20 @@ class RequestsHTTPClient:
                     url=url,
                 )
             content_length = header_value(dict(response.headers), "content-length")
+            declared_size: int | None = None
             if content_length is not None:
                 try:
                     declared_size = int(content_length)
-                    if declared_size > self._max_download_bytes:
-                        raise HTTPClientError(
-                            f"Content-Length {declared_size} exceeds download limit "
-                            f"{self._max_download_bytes}",
-                            status_code=response.status_code,
-                            url=url,
-                        )
                 except ValueError:
                     raise HTTPClientError(
                         f"Invalid Content-Length header: {content_length!r}",
+                        status_code=response.status_code,
+                        url=url,
+                    )
+                if declared_size > self._max_download_bytes:
+                    raise HTTPClientError(
+                        f"Content-Length {declared_size} exceeds download limit "
+                        f"{self._max_download_bytes}",
                         status_code=response.status_code,
                         url=url,
                     )
@@ -218,17 +224,13 @@ class RequestsHTTPClient:
                         url=url,
                     )
             result = b"".join(chunks)
-            if content_length is not None:
-                try:
-                    if len(result) != int(content_length):
-                        raise HTTPClientError(
-                            f"Incomplete download: received {len(result)} bytes, "
-                            f"expected {content_length}",
-                            status_code=response.status_code,
-                            url=url,
-                        )
-                except ValueError:
-                    pass
+            if declared_size is not None and len(result) != declared_size:
+                raise HTTPClientError(
+                    f"Incomplete download: received {len(result)} bytes, "
+                    f"expected {declared_size}",
+                    status_code=response.status_code,
+                    url=url,
+                )
             return result
         except HTTP_STREAM_ERROR_TYPES as exc:
             raise HTTPClientError(

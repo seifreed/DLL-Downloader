@@ -6,6 +6,7 @@ for malware analysis and threat detection.
 """
 
 import contextlib
+import json
 import logging
 import os
 import stat
@@ -61,12 +62,15 @@ def _safe_int(value: object) -> int:
         try:
             return int(float(value))
         except (ValueError, OverflowError):
+            logger.warning("VT API returned unparseable integer value: %r, defaulting to 0", value)
             return 0
+    logger.warning("VT API returned unexpected type for integer field: %r, defaulting to 0", value)
     return 0
 
 
 def _safe_json(response: HTTPResponseProtocol) -> dict[str, object]:
     """Normalize loosely typed HTTP JSON payloads into mappings."""
+
     content_length = None
     cl_header = response.headers.get("content-length") if hasattr(response, "headers") else None
     if cl_header:
@@ -78,10 +82,35 @@ def _safe_json(response: HTTPResponseProtocol) -> dict[str, object]:
         raise VirusTotalError(
             f"VirusTotal response exceeds size limit ({content_length} bytes)"
         )
+
+    # Stream-read the response body with a size limit to protect against
+    # responses that omit Content-Length or use chunked transfer encoding.
+    chunks: list[bytes] = []
+    total_bytes = 0
     try:
-        payload = response.json()
-    except (ValueError, UnicodeDecodeError) as exc:
-        raise VirusTotalError(f"Invalid JSON in VirusTotal response: {exc}") from exc
+        for chunk in response.iter_content(chunk_size=65536):
+            if chunk:
+                total_bytes += len(chunk)
+                if total_bytes > _VT_RESPONSE_MAX_BYTES:
+                    raise VirusTotalError(
+                        f"VirusTotal response exceeds size limit ({_VT_RESPONSE_MAX_BYTES} bytes)"
+                    )
+                chunks.append(chunk)
+    except AttributeError:
+        pass  # iter_content not available; fall through to response.json()
+
+    if chunks:
+        body = b"".join(chunks)
+        try:
+            payload = json.loads(body)
+        except (ValueError, UnicodeDecodeError) as exc:
+            raise VirusTotalError(f"Invalid JSON in VirusTotal response: {exc}") from exc
+    else:
+        try:
+            payload = response.json()
+        except (ValueError, UnicodeDecodeError) as exc:
+            raise VirusTotalError(f"Invalid JSON in VirusTotal response: {exc}") from exc
+
     if not isinstance(payload, Mapping):
         raise VirusTotalError("VirusTotal response body must be a JSON object")
     normalized: dict[str, object] = {}
@@ -226,7 +255,10 @@ class VirusTotalScanner(ISecurityScanner):
 
         path = Path(file_path)
         try:
-            fd = os.open(str(path), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            # Use O_NONBLOCK to prevent blocking on FIFOs and other special files,
+            # then clear it before wrapping with fdopen so regular file reads work.
+            open_flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+            fd = os.open(str(path), open_flags)
         except FileNotFoundError:
             raise VirusTotalError(
                 "File upload failed: path does not exist"
@@ -251,9 +283,12 @@ class VirusTotalScanner(ISecurityScanner):
                 raise VirusTotalError(
                     f"File exceeds {_VT_UPLOAD_MAX_BYTES // (1024 * 1024)} MiB upload limit"
                 )
+            # Clear O_NONBLOCK for regular files so read() works normally.
+            with contextlib.suppress(OSError):
+                os.set_blocking(fd, True)
             with os.fdopen(fd, "rb") as f:
+                fd = -1
                 content = f.read()
-            fd = -1
         except VirusTotalError:
             raise
         except OSError as e:
@@ -275,9 +310,17 @@ class VirusTotalScanner(ISecurityScanner):
             return self.scan_hash(file_hash)
         except HashNotFoundError:
             pass
-        except VirusTotalError:
+        except VirusTotalError as exc:
+            # Re-raise non-retryable errors (auth failures, forbidden, etc.)
+            # rather than silently falling through to a second doomed request.
+            error_message = str(exc).lower()
+            if any(
+                indicator in error_message
+                for indicator in ("401", "403", "unauthorized", "forbidden")
+            ):
+                raise
             logger.info(
-                "Hash lookup failed for %s, proceeding with upload", file_hash
+                "Hash lookup failed for %s, proceeding with upload: %s", file_hash, exc
             )
 
         response: HTTPResponseProtocol | None = None

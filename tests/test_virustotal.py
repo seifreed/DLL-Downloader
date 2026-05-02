@@ -254,6 +254,7 @@ def test_virustotal_scanner_parse_response_with_non_mapping_stats_defaults_unkno
 def test_virustotal_safe_json_rejects_non_string_keys() -> None:
     class DummyResponse:
         status_code = 200
+        is_redirect = False
         headers: MutableMapping[str, str] = {}
         content = b""
         url = "https://example.com"
@@ -961,6 +962,7 @@ def test_scan_file_upload_type_error_raises(
 ) -> None:
     class DummyResponse:
         status_code = 200
+        is_redirect = False
 
         def json(self) -> list[str]:
             return ["bad"]
@@ -998,6 +1000,7 @@ def test_scan_file_upload_runtime_json_error_raises_virustotal_error(
 ) -> None:
     class DummyResponse:
         status_code = 200
+        is_redirect = False
 
         def json(self) -> dict[str, object]:
             raise RuntimeError("json failed")
@@ -1069,6 +1072,7 @@ def test_scan_hash_404_raises() -> None:
 def test_scan_hash_passes_configured_timeout() -> None:
     class DummyResponse:
         status_code = 404
+        is_redirect = False
 
         def json(self) -> dict[str, object]:
             return {}
@@ -1108,6 +1112,7 @@ def test_scan_hash_passes_configured_timeout() -> None:
 def test_scan_hash_closes_response() -> None:
     class DummyResponse:
         status_code = 200
+        is_redirect = False
 
         def __init__(self) -> None:
             self.closed = False
@@ -1324,6 +1329,7 @@ def test_get_detailed_report_success() -> None:
 def test_get_detailed_report_closes_response() -> None:
     class DummyResponse:
         status_code = 200
+        is_redirect = False
 
         def __init__(self) -> None:
             self.closed = False
@@ -1430,6 +1436,7 @@ def test_get_detailed_report_exception_raises() -> None:
 def test_get_detailed_report_invalid_json_raises() -> None:
     class DummyResponse:
         status_code = 200
+        is_redirect = False
 
         def json(self) -> list[str]:
             return ["bad"]

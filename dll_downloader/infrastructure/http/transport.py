@@ -18,6 +18,8 @@ from ..http_session import (
 from .request_headers import RequestHeaderBuilder
 from .retry_policy import RetryPolicy
 
+_MAX_REDIRECT_HOPS = 10
+
 
 def _hostname_resolves_to_private_ip(hostname: str) -> bool:
     """Return True when *hostname* resolves to a private, loopback, or reserved IP.
@@ -80,6 +82,13 @@ class HTTPResponse:
     @property
     def is_success(self) -> bool:
         return 200 <= self.status_code < 300
+
+    @property
+    def is_redirect(self) -> bool:
+        return (
+            300 <= self.status_code < 400
+            and "location" in {k.lower(): v for k, v in self.headers.items()}
+        )
 
     @property
     def content_length(self) -> int | None:
@@ -151,6 +160,49 @@ class RequestsTransport:
         stream: bool = False,
         allow_redirects: bool = True,
     ) -> HTTPResponseProtocol:
+        if not allow_redirects:
+            return self._single_request(method_name, url, headers, stream=stream)
+
+        # Follow redirects manually so every hop is validated for SSRF.
+        current_url = url
+        for _hop in range(_MAX_REDIRECT_HOPS + 1):
+            # Validate each URL before connecting (per-hop DNS rebinding check).
+            parsed_target = urlparse(current_url)
+            target_hostname = parsed_target.hostname
+            if target_hostname and _hostname_resolves_to_private_ip(target_hostname):
+                raise HTTPClientError(
+                    f"Request to {target_hostname} rejected: resolves to private/reserved address",
+                    url=current_url,
+                )
+            if self._allowed_redirect_domains is not None:
+                if target_hostname and target_hostname not in self._allowed_redirect_domains:
+                    raise HTTPClientError(
+                        f"Redirect to disallowed domain: {target_hostname}",
+                        url=current_url,
+                    )
+            response = self._single_request(
+                method_name, current_url, headers, stream=stream, allow_redirects=False,
+            )
+            if not response.is_redirect:
+                return response
+            redirect_url = self._resolve_redirect(current_url, response)
+            self._close_retryable_response(response)
+            current_url = redirect_url
+        raise HTTPClientError(
+            f"Too many redirects (> {_MAX_REDIRECT_HOPS})",
+            url=url,
+        )
+
+    def _single_request(
+        self,
+        method_name: str,
+        url: str,
+        headers: Mapping[str, str] | None = None,
+        *,
+        stream: bool = False,
+        allow_redirects: bool = True,
+    ) -> HTTPResponseProtocol:
+        """Execute a single HTTP request with retry logic (no redirect following)."""
         request_method = self._resolve_request_method(method_name)
 
         for attempt in range(1, self._retry_policy.max_attempts + 1):
@@ -201,20 +253,6 @@ class RequestsTransport:
                     status_code=response.status_code,
                     url=response.url or url,
                 )
-
-            if (
-                self._allowed_redirect_domains is not None
-                and allow_redirects
-                and hasattr(response, 'url')
-                and response.url
-            ):
-                final_hostname = urlparse(response.url).hostname or ""
-                if final_hostname and final_hostname not in self._allowed_redirect_domains:
-                    self._close_retryable_response(response)
-                    raise HTTPClientError(
-                        f"Redirect to disallowed domain: {final_hostname}",
-                        url=response.url,
-                    )
 
             return response
 
@@ -285,3 +323,18 @@ class RequestsTransport:
             attempt,
             self._retry_policy.max_attempts,
         )
+
+    @staticmethod
+    def _resolve_redirect(original_url: str, response: HTTPResponseProtocol) -> str:
+        """Compute the absolute redirect URL from a 3xx response."""
+        from urllib.parse import urljoin
+
+        location = response.headers.get("Location", "")
+        if not location:
+            raise HTTPClientError(
+                f"Redirect response missing Location header",
+                url=original_url,
+            )
+        if location.startswith(("http://", "https://")):
+            return location
+        return urljoin(original_url, location)
