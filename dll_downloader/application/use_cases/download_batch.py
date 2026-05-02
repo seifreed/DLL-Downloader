@@ -32,7 +32,7 @@ class DownloadBatchItem:
 class DownloadBatchRequest:
     """Input parameters for batch download orchestration."""
 
-    dll_names: list[str]
+    dll_names: tuple[str, ...]
     architecture: Architecture = Architecture.X64
     scan_before_save: bool = True
     force_download: bool = False
@@ -92,7 +92,9 @@ class DownloadBatchUseCase:
                     success=False,
                     error_message=str(exc),
                 )
-            except Exception as exc:
+            except BaseException as exc:
+                if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+                    raise
                 logger.error("Unexpected error downloading %s: %s", normalized_name, exc)
                 response = DownloadDLLResponse(
                     success=False,

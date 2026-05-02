@@ -30,6 +30,9 @@ logger = logging.getLogger(__name__)
 __all__ = ["HTTPClientError", "HTTPResponse", "RequestsHTTPClient"]
 
 
+_DEFAULT_MAX_DOWNLOAD_BYTES = 512 * 1024 * 1024  # 512 MiB
+
+
 class RequestsHTTPClient:
     """HTTP client implementation satisfying the domain HTTP protocol."""
 
@@ -47,8 +50,10 @@ class RequestsHTTPClient:
         session_resource: HTTPSessionResource | None = None,
         user_agent_provider: UserAgentProvider | None = None,
         retry_policy: RetryPolicy | None = None,
+        max_download_bytes: int = _DEFAULT_MAX_DOWNLOAD_BYTES,
     ) -> None:
         self._timeout = timeout
+        self._max_download_bytes = max_download_bytes
         self._user_agent = user_agent
         self._verify_ssl = verify_ssl
         self._user_agent_provider = user_agent_provider or self._default_user_agent_provider(
@@ -147,9 +152,44 @@ class RequestsHTTPClient:
                     status_code=response.status_code,
                     url=url,
                 )
-            return b"".join(
-                chunk for chunk in response.iter_content(chunk_size=8192) if chunk
-            )
+            content_length = header_value(dict(response.headers), "content-length")
+            if content_length is not None:
+                try:
+                    declared_size = int(content_length)
+                    if declared_size > self._max_download_bytes:
+                        raise HTTPClientError(
+                            f"Content-Length {declared_size} exceeds download limit "
+                            f"{self._max_download_bytes}",
+                            status_code=response.status_code,
+                            url=url,
+                        )
+                except ValueError:
+                    pass
+            chunks: list[bytes] = []
+            total_bytes = 0
+            for chunk in response.iter_content(chunk_size=8192):
+                if chunk:
+                    total_bytes += len(chunk)
+                    if total_bytes > self._max_download_bytes:
+                        raise HTTPClientError(
+                            f"Download exceeded size limit {self._max_download_bytes}",
+                            status_code=response.status_code,
+                            url=url,
+                        )
+                    chunks.append(chunk)
+            result = b"".join(chunks)
+            if content_length is not None:
+                try:
+                    if len(result) != int(content_length):
+                        raise HTTPClientError(
+                            f"Incomplete download: received {len(result)} bytes, "
+                            f"expected {content_length}",
+                            status_code=response.status_code,
+                            url=url,
+                        )
+                except ValueError:
+                    pass
+            return result
         except HTTP_STREAM_ERROR_TYPES as exc:
             raise HTTPClientError(
                 f"Download stream failed: {exc}",
@@ -204,10 +244,12 @@ class RequestsHTTPClient:
     def get_file_info(self, url: str) -> HTTPFileInfo:
         headers = self.head(url)
         content_length = header_value(headers, "content-length")
-        try:
-            length_value = int(content_length) if content_length else 0
-        except ValueError:
-            length_value = 0
+        length_value: int | None = None
+        if content_length:
+            try:
+                length_value = int(content_length)
+            except ValueError:
+                length_value = None
         accept_ranges = header_value(headers, "accept-ranges")
         return {
             "content_type": header_value(headers, "content-type"),

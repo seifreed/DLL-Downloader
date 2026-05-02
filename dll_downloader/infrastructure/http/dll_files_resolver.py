@@ -258,7 +258,13 @@ class DllFilesResolver:
     def _extract_direct_link(self, html: str) -> str | None:
         for href, _ in self._iter_links(html):
             if self._is_official_zip_link(href):
-                return urljoin("https:", href)
+                parsed = urlparse(href)
+                if parsed.scheme == "https":
+                    return href
+                if parsed.scheme == "" and parsed.netloc:
+                    query = f"?{parsed.query}" if parsed.query else ""
+                    return f"https://{parsed.netloc}{parsed.path}{query}"
+                return href
         for href, _ in self._iter_links(html):
             if self._is_base_zip_link(href):
                 return urljoin(self.base_url, href)

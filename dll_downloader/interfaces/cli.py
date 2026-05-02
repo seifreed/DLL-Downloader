@@ -88,6 +88,8 @@ def read_dll_list_from_file(file_path: str) -> list[str]:
     path = Path(file_path).resolve()
     if not path.exists():
         raise ValueError(f"File '{file_path}' not found.")
+    if path.is_symlink():
+        raise ValueError(f"Refusing to read DLL list from symlink: '{file_path}'")
     if not path.is_file():
         raise ValueError(f"Failed to read file '{file_path}': not a regular file")
 

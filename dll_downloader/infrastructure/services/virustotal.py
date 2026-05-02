@@ -198,7 +198,7 @@ class VirusTotalScanner(ISecurityScanner):
             with path.open('rb') as f:
                 content = f.read()
         except OSError as e:
-            logger.error(f"Failed to upload file to VirusTotal: {e}")
+            logger.error("Failed to upload file to VirusTotal: %s", e)
             raise VirusTotalError(f"File upload failed: {e}") from e
 
         file_hash = calculate_sha256(content)
@@ -236,7 +236,7 @@ class VirusTotalScanner(ISecurityScanner):
             requests.RequestException,
             RuntimeError,
         ) as e:
-            logger.error(f"Failed to upload file to VirusTotal: {e}")
+            logger.error("Failed to upload file to VirusTotal: %s", e)
             raise VirusTotalError(f"File upload failed: {e}") from e
         finally:
             if response is not None:
@@ -279,7 +279,7 @@ class VirusTotalScanner(ISecurityScanner):
         except HashNotFoundError:
             raise
         except (requests.RequestException, RuntimeError) as e:
-            logger.error(f"Failed to query VirusTotal: {e}")
+            logger.error("Failed to query VirusTotal: %s", e)
             raise VirusTotalError(f"Hash lookup failed: {e}") from e
         finally:
             if response is not None:
@@ -309,12 +309,12 @@ class VirusTotalScanner(ISecurityScanner):
                 vt_scan_date=result.scan_date,
             )
 
-        except HashNotFoundError as exc:
+        except HashNotFoundError:
             logger.info("No VT results for %s, file not previously scanned", dll_file.name)
             raise
 
         except VirusTotalError as e:
-            logger.error(f"VT scan failed for {dll_file.name}: {e}")
+            logger.error("VT scan failed for %s: %s", dll_file.name, e)
             raise
 
     def get_detailed_report(self, file_hash: str) -> dict[str, object]:
@@ -346,7 +346,7 @@ class VirusTotalScanner(ISecurityScanner):
             return dict(_safe_json(response))
 
         except (requests.RequestException, RuntimeError) as e:
-            logger.error(f"Failed to get detailed report: {e}")
+            logger.error("Failed to get detailed report: %s", e)
             raise VirusTotalError(f"Report retrieval failed: {e}") from e
         finally:
             if response is not None:

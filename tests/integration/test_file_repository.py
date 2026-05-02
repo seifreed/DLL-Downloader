@@ -586,7 +586,7 @@ class TestFileSystemDLLRepositorySave:
         index_path = tmp_path / ".dll_index.json"
         index_path.mkdir()
 
-        with pytest.raises(RepositoryError, match="directory"):
+        with pytest.raises(RepositoryError, match="non-regular file"):
             repository.save(
                 DLLFile(name="orphan.dll", architecture=Architecture.X64),
                 sample_dll_content,

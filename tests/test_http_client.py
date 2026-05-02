@@ -1018,7 +1018,7 @@ def test_get_file_info_invalid_content_length() -> None:
 
     client = InvalidHeadClient()
     info = client.get_file_info("https://example.com/file.dll")
-    assert info["content_length"] == 0
+    assert info["content_length"] is None
 
 
 @pytest.mark.unit

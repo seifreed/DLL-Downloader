@@ -129,9 +129,9 @@ def detect_requested_output_format(argv: list[str]) -> OutputFormat:
 
 
 def _matches_output_flag(argument: str, flag: str) -> bool:
-    """Match argparse-style unambiguous abbreviations for structured flags."""
+    """Match exact or equals-delimited structured output flags."""
     argument_name = argument.split("=", 1)[0]
-    return len(argument_name) <= len(flag) and flag.startswith(argument_name)
+    return argument_name == flag
 
 
 def parse_main_arguments(

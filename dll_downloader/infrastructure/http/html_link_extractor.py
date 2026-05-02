@@ -19,7 +19,7 @@ class HTMLLinkExtractor(HTMLParser):
     _in_anchor: bool = False
 
     def __post_init__(self) -> None:
-        HTMLParser.__init__(self)
+        HTMLParser.__init__(self, convert_charrefs=True)
 
     def handle_starttag(
         self,

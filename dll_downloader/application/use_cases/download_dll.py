@@ -6,8 +6,8 @@ for security threats, and storing it in the repository.
 """
 
 import logging
-import zlib
 import zipfile
+import zlib
 from dataclasses import dataclass, replace
 from io import BytesIO
 from pathlib import Path
@@ -28,11 +28,7 @@ from ...domain.repositories.dll_repository import IDLLRepository
 from ...domain.services import IHTTPClient, calculate_sha256
 from ...domain.services.download_resolver import IDownloadURLResolver
 from ...domain.services.pe_validation import (
-    detect_pe_dll_architecture,
-    expected_optional_magic,
-    has_loadable_section,
     inspect_pe_dll_architecture,
-    pe_image_layout_is_valid,
 )
 from ...domain.services.security_scanner import ISecurityScanner
 from ..errors import ArchiveExtractionError, DownloadExecutionError
@@ -46,6 +42,8 @@ _ZIP_MEMBER_READ_ERRORS = (
     zipfile.BadZipFile,
     zlib.error,
 )
+_ZIP_COMPRESSION_RATIO_LIMIT = 100
+_ZIP_MEMBER_SIZE_LIMIT = 512 * 1024 * 1024  # 512 MiB
 
 
 @dataclass
@@ -426,7 +424,9 @@ class DownloadDLLUseCase:
                 )
             except (DownloadResolutionError, HTTPServiceError, ValueError) as exc:
                 raise DownloadExecutionError(str(exc)) from exc
-            except Exception as exc:
+            except BaseException as exc:
+                if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+                    raise
                 raise DownloadExecutionError(str(exc)) from exc
         return self._build_download_url(request.dll_name, request.architecture)
 
@@ -436,7 +436,9 @@ class DownloadDLLUseCase:
             return self._http_client.download(download_url)
         except (HTTPServiceError, ValueError) as exc:
             raise DownloadExecutionError(str(exc)) from exc
-        except Exception as exc:
+        except BaseException as exc:
+            if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+                raise
             raise DownloadExecutionError(str(exc)) from exc
 
     def _save_dll(self, dll_file: DLLFile, content: bytes) -> DLLFile:
@@ -483,6 +485,19 @@ class DownloadDLLUseCase:
     ) -> bytes:
         """Extract and validate the preferred DLL member from a ZIP payload."""
         with zipfile.ZipFile(BytesIO(content)) as archive:
+            for member in archive.infolist():
+                if member.is_dir():
+                    continue
+                if member.compress_size > 0:
+                    ratio = member.file_size / member.compress_size
+                    if ratio > _ZIP_COMPRESSION_RATIO_LIMIT:
+                        raise ArchiveExtractionError(
+                            "ZIP member has suspicious compression ratio, possible ZIP bomb"
+                        )
+                if member.file_size > _ZIP_MEMBER_SIZE_LIMIT:
+                    raise ArchiveExtractionError(
+                        "ZIP member exceeds size limit"
+                    )
             matching_members = [
                 member for member in archive.infolist()
                 if not member.is_dir() and member.filename.lower().endswith(".dll")

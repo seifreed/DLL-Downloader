@@ -9,8 +9,8 @@ import json
 import logging
 import os
 import tempfile
-import zlib
 import zipfile
+import zlib
 from dataclasses import replace
 from datetime import datetime
 from io import BytesIO
@@ -28,8 +28,14 @@ from ...domain.repositories.dll_repository import IDLLRepository
 from ...domain.services import calculate_sha256
 from ...domain.services.pe_validation import (
     detect_pe_dll_architecture as _detect_pe_dll_architecture,
+)
+from ...domain.services.pe_validation import (
     expected_optional_magic as _expected_optional_magic,
+)
+from ...domain.services.pe_validation import (
     has_loadable_section as _has_loadable_section,
+)
+from ...domain.services.pe_validation import (
     pe_image_layout_is_valid as _pe_image_layout_is_valid,
 )
 
@@ -99,6 +105,7 @@ class FileSystemDLLRepository(IDLLRepository):
     """
 
     INDEX_FILENAME = ".dll_index.json"
+    _INDEX_MAX_BYTES = 10 * 1024 * 1024  # 10 MiB
 
     def __init__(self, base_path: Path) -> None:
         """
@@ -131,6 +138,10 @@ class FileSystemDLLRepository(IDLLRepository):
 
         try:
             with open(self._index_path, encoding="utf-8") as f:
+                index_size = f.seek(0, 2)
+                if index_size > self._INDEX_MAX_BYTES:
+                    raise ValueError(f"Index file exceeds size limit ({index_size} bytes)")
+                f.seek(0)
                 raw_data = json.load(f)
                 if not isinstance(raw_data, dict):
                     raise ValueError("Index file must contain a JSON object")
@@ -201,24 +212,27 @@ class FileSystemDLLRepository(IDLLRepository):
 
     def _validate_repository_write_path(self, file_path: Path) -> None:
         """Reject writes through symlinks or paths escaping the repository root."""
-        if file_path.is_symlink():
-            raise RepositoryError(f"Refusing to write through symlink: {file_path}")
-        if file_path.exists():
-            if file_path.is_dir():
-                raise RepositoryError(f"Refusing to write over directory: {file_path}")
-            if not file_path.is_file():
-                raise RepositoryError(
-                    f"Refusing to write over non-regular file: {file_path}"
-                )
-
         repository_root = self._base_path.resolve()
         try:
-            file_path.parent.resolve(strict=True).relative_to(repository_root)
-            file_path.resolve(strict=False).relative_to(repository_root)
+            resolved_parent = file_path.parent.resolve(strict=True)
+            resolved_parent.relative_to(repository_root)
         except (OSError, ValueError) as exc:
             raise RepositoryError(
                 f"Refusing to write outside repository: {file_path}"
             ) from exc
+        if file_path.is_symlink():
+            raise RepositoryError(f"Refusing to write through symlink: {file_path}")
+        if file_path.exists():
+            if not file_path.is_file():
+                raise RepositoryError(
+                    f"Refusing to write over non-regular file: {file_path}"
+                )
+            try:
+                file_path.resolve(strict=True).relative_to(repository_root)
+            except (OSError, ValueError) as exc:
+                raise RepositoryError(
+                    f"Refusing to write outside repository: {file_path}"
+                ) from exc
 
     def _atomic_write_bytes(self, file_path: Path, content: bytes) -> None:
         """Write bytes through a same-directory temp file and atomic replace."""
@@ -895,6 +909,14 @@ class FileSystemDLLRepository(IDLLRepository):
         file_size = data["file_size"]
         security_status = SecurityStatus(data["security_status"])
         vt_detection_ratio = data["vt_detection_ratio"]
+
+        if isinstance(file_path, str) and file_path:
+            resolved_path = Path(file_path)
+            if resolved_path.is_symlink() or not self._path_is_within_repository(resolved_path):
+                logger.warning(
+                    "Skipping DLL index entry with unsafe file_path: %s", file_path
+                )
+                file_path = None
 
         vt_scan_date_raw = data["vt_scan_date"]
         vt_scan_date = (

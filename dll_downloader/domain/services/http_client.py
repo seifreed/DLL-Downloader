@@ -14,7 +14,7 @@ class HTTPFileInfo(TypedDict):
     """Structured metadata returned by an HTTP adapter."""
 
     content_type: str | None
-    content_length: int
+    content_length: int | None
     last_modified: str | None
     etag: str | None
     accept_ranges: bool

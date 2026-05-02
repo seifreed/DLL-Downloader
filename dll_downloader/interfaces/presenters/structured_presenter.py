@@ -3,7 +3,8 @@ Structured presenters for machine-readable CLI output.
 """
 
 import json
-from datetime import datetime
+import logging
+from datetime import UTC, datetime
 from typing import Any
 
 from ...application.use_cases.download_batch import (
@@ -14,14 +15,15 @@ from ...application.use_cases.download_dll import DownloadDLLResponse
 from ...domain.entities.dll_file import DLLFile
 
 STRUCTURED_OUTPUT_VERSION = "1.0"
+_logger = logging.getLogger(__name__)
 
 
 def _serialize_datetime(value: datetime | None) -> str | None:
     if value is None:
         return None
     if value.tzinfo is None:
-        from datetime import timezone
-        value = value.replace(tzinfo=timezone.utc)
+        _logger.warning("Serializing naive datetime as UTC: %s", value)
+        value = value.replace(tzinfo=UTC)
     return value.isoformat()
 
 

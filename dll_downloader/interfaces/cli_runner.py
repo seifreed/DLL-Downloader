@@ -106,12 +106,10 @@ class DownloadCLIService:
         self._is_structured = is_structured
 
     def run(self, command: CLIBatchDownloadCommand) -> CLIBatchDownloadResult:
-        architecture_label = (
-            "x86" if command.architecture == Architecture.X86 else "x64"
-        )
+        architecture_label = command.architecture.value
         batch_response = self._batch_use_case.execute(
             DownloadBatchRequest(
-                dll_names=command.dll_names,
+                dll_names=tuple(command.dll_names),
                 architecture=command.architecture,
                 scan_before_save=command.scan_enabled,
                 force_download=command.force_download,

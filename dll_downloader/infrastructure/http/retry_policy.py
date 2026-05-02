@@ -20,6 +20,9 @@ _NON_RETRYABLE_EXCEPTIONS: tuple[type[requests.RequestException], ...] = (
 )
 
 
+_MAX_RETRY_ATTEMPTS = 100
+
+
 @dataclass
 class RetryPolicy:
     """Decide when HTTP transport failures should be retried."""
@@ -36,6 +39,8 @@ class RetryPolicy:
     def __post_init__(self) -> None:
         if self.max_attempts <= 0:
             raise ValueError("max_attempts must be positive")
+        if self.max_attempts > _MAX_RETRY_ATTEMPTS:
+            raise ValueError(f"max_attempts must not exceed {_MAX_RETRY_ATTEMPTS}")
         if self.backoff_seconds < 0:
             raise ValueError("backoff_seconds cannot be negative")
         if self.jitter_seconds < 0:
