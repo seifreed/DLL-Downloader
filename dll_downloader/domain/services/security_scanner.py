@@ -54,12 +54,7 @@ class ScanResult:
 
     @property
     def detection_count(self) -> int:
-        """Get the number of positive detections."""
-        if self.detection_ratio:
-            try:
-                return int(self.detection_ratio.split('/')[0])
-            except (ValueError, IndexError):
-                pass
+        """Get the number of positive detections from the detailed engine results."""
         return len([d for d in self.detections.values() if d])
 
 

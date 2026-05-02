@@ -4,6 +4,7 @@ Default production composition for the DLL downloader runtime.
 
 from pathlib import Path
 from typing import cast
+from urllib.parse import urlparse
 
 from ..application.use_cases.download_dll import DownloadDLLUseCase
 from ..bootstrap import (
@@ -32,6 +33,13 @@ class DefaultDownloadComponentFactory:
         user_agent_provider = None
         if settings.user_agent_pool and not settings.user_agent:
             user_agent_provider = RandomUserAgentProvider(settings.user_agent_pool)
+        base_hostname = urlparse(settings.download_base_url).hostname or ""
+        vt_hostname = urlparse(VirusTotalScanner.VT_API_URL).hostname or ""
+        allowed_redirect_domains = {
+            domain
+            for domain in (base_hostname, vt_hostname)
+            if domain
+        }
         return RequestsHTTPClient(
             timeout=settings.http_timeout,
             user_agent=settings.user_agent,
@@ -40,6 +48,7 @@ class DefaultDownloadComponentFactory:
             retry_jitter_seconds=settings.http_retry_jitter_seconds,
             verify_ssl=settings.verify_ssl,
             user_agent_provider=user_agent_provider,
+            allowed_redirect_domains=allowed_redirect_domains,
         )
 
     def create_scanner(

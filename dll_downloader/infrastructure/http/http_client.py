@@ -3,6 +3,7 @@ HTTP client adapter built on top of the shared requests transport.
 """
 
 import logging
+import time
 from collections.abc import Mapping
 
 from ...domain.services.http_client import HTTPFileInfo
@@ -31,6 +32,7 @@ __all__ = ["HTTPClientError", "HTTPResponse", "RequestsHTTPClient"]
 
 
 _DEFAULT_MAX_DOWNLOAD_BYTES = 512 * 1024 * 1024  # 512 MiB
+_DEFAULT_STREAM_WALL_LIMIT = 600  # 10 minutes total per streaming read
 
 
 class RequestsHTTPClient:
@@ -51,6 +53,7 @@ class RequestsHTTPClient:
         user_agent_provider: UserAgentProvider | None = None,
         retry_policy: RetryPolicy | None = None,
         max_download_bytes: int = _DEFAULT_MAX_DOWNLOAD_BYTES,
+        allowed_redirect_domains: set[str] | None = None,
     ) -> None:
         self._timeout = timeout
         self._max_download_bytes = max_download_bytes
@@ -72,6 +75,7 @@ class RequestsHTTPClient:
             header_builder=self._header_builder,
             timeout=timeout,
             verify_ssl=verify_ssl,
+            allowed_redirect_domains=allowed_redirect_domains,
         )
 
     @staticmethod
@@ -117,6 +121,7 @@ class RequestsHTTPClient:
                 )
             chunks: list[bytes] = []
             total_bytes = 0
+            stream_start = time.monotonic()
             for chunk in response.iter_content(chunk_size=8192):
                 if chunk:
                     total_bytes += len(chunk)
@@ -127,6 +132,12 @@ class RequestsHTTPClient:
                             url=response.url or url,
                         )
                     chunks.append(chunk)
+                if time.monotonic() - stream_start > _DEFAULT_STREAM_WALL_LIMIT:
+                    raise HTTPClientError(
+                        f"GET response exceeded wall-clock limit of {_DEFAULT_STREAM_WALL_LIMIT}s",
+                        status_code=response.status_code,
+                        url=response.url or url,
+                    )
             content = b"".join(chunks)
             return HTTPResponse(
                 status_code=response.status_code,
@@ -189,6 +200,7 @@ class RequestsHTTPClient:
                     )
             chunks: list[bytes] = []
             total_bytes = 0
+            stream_start = time.monotonic()
             for chunk in response.iter_content(chunk_size=8192):
                 if chunk:
                     total_bytes += len(chunk)
@@ -199,6 +211,12 @@ class RequestsHTTPClient:
                             url=url,
                         )
                     chunks.append(chunk)
+                if time.monotonic() - stream_start > _DEFAULT_STREAM_WALL_LIMIT:
+                    raise HTTPClientError(
+                        f"Download exceeded wall-clock limit of {_DEFAULT_STREAM_WALL_LIMIT}s",
+                        status_code=response.status_code,
+                        url=url,
+                    )
             result = b"".join(chunks)
             if content_length is not None:
                 try:
@@ -269,6 +287,12 @@ class RequestsHTTPClient:
             "HEAD", url, headers=headers, allow_redirects=True
         )
         try:
+            if not getattr(response, 'ok', False):
+                raise HTTPClientError(
+                    f"HEAD request failed with status {response.status_code}",
+                    status_code=response.status_code,
+                    url=response.url if hasattr(response, 'url') else url,
+                )
             return dict(response.headers)
         finally:
             self._close_response(response)

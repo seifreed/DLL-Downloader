@@ -147,6 +147,8 @@ class FileSystemDLLRepository(IDLLRepository):
                     fcntl.flock(fd, fcntl.LOCK_UN)
                 with contextlib.suppress(OSError):
                     os.close(fd)
+            with contextlib.suppress(OSError):
+                lock_path.unlink()
 
     def _load_index(self) -> IndexData:
         """Load the DLL index from disk."""
@@ -160,16 +162,17 @@ class FileSystemDLLRepository(IDLLRepository):
             return {"files": {}}
 
         try:
-            index_size = os.path.getsize(self._index_path)
-            if index_size > self._INDEX_MAX_BYTES:
-                raise ValueError(f"Index file exceeds size limit ({index_size} bytes)")
             fd = os.open(str(self._index_path), os.O_RDONLY | os.O_NOFOLLOW)
         except OSError as e:
             logger.error("Failed to open index file: %s", e)
             raise RepositoryError(f"Failed to load index: {e}") from e
 
         try:
+            st = os.fstat(fd)
+            if st.st_size > self._INDEX_MAX_BYTES:
+                raise ValueError(f"Index file exceeds size limit ({st.st_size} bytes)")
             with os.fdopen(fd, encoding="utf-8") as f:
+                fd = -1
                 raw_data = json.load(f)
                 if not isinstance(raw_data, dict):
                     raise ValueError("Index file must contain a JSON object")
@@ -192,6 +195,10 @@ class FileSystemDLLRepository(IDLLRepository):
         except ValueError as e:
             logger.error("Invalid index structure: %s", e)
             raise RepositoryError(f"Invalid index structure: {e}") from e
+        finally:
+            if fd >= 0:
+                with contextlib.suppress(OSError):
+                    os.close(fd)
 
     def _save_index(self, index: IndexData) -> None:
         """Save the DLL index to disk."""
@@ -279,7 +286,7 @@ class FileSystemDLLRepository(IDLLRepository):
         self._validate_repository_write_path(file_path)
         fd, temp_name = tempfile.mkstemp(
             dir=file_path.parent,
-            prefix=f".{file_path.name}.",
+            prefix=".dll_tmp_",
         )
         temp_path = Path(temp_name)
         fd_opened = False
@@ -769,18 +776,27 @@ class FileSystemDLLRepository(IDLLRepository):
             return set()
 
         try:
-            index_size = os.path.getsize(self._index_path)
-            if index_size > self._INDEX_MAX_BYTES:
+            fd = os.open(str(self._index_path), os.O_RDONLY | os.O_NOFOLLOW)
+        except OSError:
+            return set()
+
+        try:
+            st = os.fstat(fd)
+            if st.st_size > self._INDEX_MAX_BYTES:
                 logger.warning(
-                    "Skipping raw index keys: file exceeds size limit (%d bytes)", index_size
+                    "Skipping raw index keys: file exceeds size limit (%d bytes)", st.st_size
                 )
                 return set()
-            fd = os.open(str(self._index_path), os.O_RDONLY | os.O_NOFOLLOW)
             with os.fdopen(fd, encoding="utf-8") as f:
+                fd = -1
                 raw_data = json.load(f)
         except (OSError, json.JSONDecodeError) as exc:
             logger.warning("Failed to load raw index keys: %s", exc)
             return set()
+        finally:
+            if fd >= 0:
+                with contextlib.suppress(OSError):
+                    os.close(fd)
         if not isinstance(raw_data, dict):
             return set()
         raw_files = raw_data.get("files", {})
@@ -815,14 +831,15 @@ class FileSystemDLLRepository(IDLLRepository):
                 )
                 return False
 
-            original_index, index_was_updated = self._remove_index_entry_for_delete(
-                delete_target
-            )
-            self._unlink_payload_for_delete(
-                file_path,
-                index_was_updated=index_was_updated,
-                original_index=original_index,
-            )
+            with self._with_index_lock():
+                original_index, index_was_updated = self._remove_index_entry_under_lock(
+                    delete_target
+                )
+                self._unlink_payload_for_delete(
+                    file_path,
+                    index_was_updated=index_was_updated,
+                    original_index=original_index,
+                )
 
             logger.info("Deleted DLL: %s", delete_target.name)
             return True
@@ -894,21 +911,20 @@ class FileSystemDLLRepository(IDLLRepository):
             return self._path_location_is_within_repository(file_path)
         return self._path_is_within_repository(file_path)
 
-    def _remove_index_entry_for_delete(
+    def _remove_index_entry_under_lock(
         self,
         dll_file: DLLFile,
     ) -> tuple[IndexData, bool]:
-        """Remove delete target metadata before unlinking the payload."""
-        with self._with_index_lock():
-            index = self._load_index()
-            original_index: IndexData = copy.deepcopy(index)
-            key = self._get_file_key(dll_file.name, dll_file.architecture)
-            if key not in index["files"]:
-                return original_index, False
+        """Remove delete target metadata. Caller must hold the index lock."""
+        index = self._load_index()
+        original_index: IndexData = copy.deepcopy(index)
+        key = self._get_file_key(dll_file.name, dll_file.architecture)
+        if key not in index["files"]:
+            return original_index, False
 
-            del index["files"][key]
-            self._save_index(index)
-            return original_index, True
+        del index["files"][key]
+        self._save_index(index)
+        return original_index, True
 
     def _unlink_payload_for_delete(
         self,
@@ -1162,7 +1178,7 @@ class FileSystemDLLRepository(IDLLRepository):
             with open(file_path, "rb") as f:
                 content = f.read()
         except OSError as exc:
-            raise RepositoryError(f"Failed to read DLL file {file_path}: {exc}") from exc
+            raise RepositoryError(f"Failed to read DLL file: {exc}") from exc
         file_hash = calculate_sha256(content)
 
         return DLLFile(

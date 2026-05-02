@@ -29,6 +29,7 @@ from ..http_session import (
 logger = logging.getLogger(__name__)
 _API_KEY_MISSING = "VirusTotal API key not configured"
 _VT_UPLOAD_MAX_BYTES = 32 * 1024 * 1024  # 32 MiB
+_VT_RESPONSE_MAX_BYTES = 64 * 1024 * 1024  # 64 MiB
 
 
 def _is_valid_hash(value: str) -> bool:
@@ -66,6 +67,17 @@ def _safe_int(value: object) -> int:
 
 def _safe_json(response: HTTPResponseProtocol) -> dict[str, object]:
     """Normalize loosely typed HTTP JSON payloads into mappings."""
+    content_length = None
+    cl_header = response.headers.get("content-length") if hasattr(response, "headers") else None
+    if cl_header:
+        try:
+            content_length = int(cl_header)
+        except (ValueError, TypeError):
+            pass
+    if content_length is not None and content_length > _VT_RESPONSE_MAX_BYTES:
+        raise VirusTotalError(
+            f"VirusTotal response exceeds size limit ({content_length} bytes)"
+        )
     try:
         payload = response.json()
     except (ValueError, UnicodeDecodeError) as exc:
@@ -217,12 +229,12 @@ class VirusTotalScanner(ISecurityScanner):
             fd = os.open(str(path), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
         except FileNotFoundError:
             raise VirusTotalError(
-                f"File upload failed: path does not exist: {file_path}"
+                "File upload failed: path does not exist"
             ) from None
         except OSError as e:
             if e.errno == 40:  # ELOOP - symlink
                 raise VirusTotalError(
-                    f"File upload failed: path is a symlink: {file_path}"
+                    "File upload failed: path is a symlink"
                 ) from e
             raise VirusTotalError(f"File upload failed: {e}") from e
 
@@ -232,7 +244,7 @@ class VirusTotalScanner(ISecurityScanner):
                 os.close(fd)
                 fd = -1
                 raise VirusTotalError(
-                    f"File upload failed: path is not a regular file: {file_path}"
+                    "File upload failed: path is not a regular file"
                 )
             file_size = st.st_size
             if file_size > _VT_UPLOAD_MAX_BYTES:

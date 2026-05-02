@@ -1517,7 +1517,7 @@ def test_http_client_get_fails_after_exhausting_request_exceptions() -> None:
 
     with pytest.raises(
         HTTPClientError,
-        match="GET request failed: temporary outage",
+        match="GET request failed",
     ) as exc_info:
         client.get("https://example.com/file.dll")
 
@@ -1563,7 +1563,7 @@ def test_http_client_respects_non_retryable_transport_exception_policy() -> None
 
     with pytest.raises(
         HTTPClientError,
-        match="GET request failed: do not retry",
+        match="GET request failed",
     ):
         client.get("https://example.com/file.dll")
 

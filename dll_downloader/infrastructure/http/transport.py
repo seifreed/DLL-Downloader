@@ -18,6 +18,40 @@ from ..http_session import (
 from .request_headers import RequestHeaderBuilder
 from .retry_policy import RetryPolicy
 
+
+def _hostname_resolves_to_private_ip(hostname: str) -> bool:
+    """Return True when *hostname* resolves to a private, loopback, or reserved IP.
+
+    Loopback addresses (127.0.0.0/8, ::1) are excluded so that local
+    development and integration tests targeting localhost are not blocked.
+    """
+    import ipaddress
+    import socket
+
+    try:
+        addr = ipaddress.ip_address(hostname)
+        if addr.is_loopback:
+            return False
+        return addr.is_private or addr.is_link_local or addr.is_reserved
+    except ValueError:
+        pass
+
+    try:
+        resolved = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+        for _family, _type, _proto, _canonname, sockaddr in resolved:
+            ip_str = sockaddr[0]
+            try:
+                resolved_addr = ipaddress.ip_address(ip_str)
+            except ValueError:
+                continue
+            if resolved_addr.is_loopback:
+                continue
+            if resolved_addr.is_private or resolved_addr.is_link_local or resolved_addr.is_reserved:
+                return True
+    except socket.gaierror:
+        return False
+    return False
+
 logger = logging.getLogger(__name__)
 
 
@@ -120,6 +154,15 @@ class RequestsTransport:
         request_method = self._resolve_request_method(method_name)
 
         for attempt in range(1, self._retry_policy.max_attempts + 1):
+            # Per-request DNS rebinding check: resolve the target hostname
+            # immediately before connecting to avoid TOCTOU with config-time validation.
+            parsed_target = urlparse(url)
+            target_hostname = parsed_target.hostname
+            if target_hostname and _hostname_resolves_to_private_ip(target_hostname):
+                raise HTTPClientError(
+                    f"Request to {target_hostname} rejected: resolves to private/reserved address",
+                    url=url,
+                )
             try:
                 response = request_method(
                     url,
@@ -151,7 +194,7 @@ class RequestsTransport:
                 self._retry_policy.pause_before_retry(attempt)
                 continue
 
-            if not getattr(response, 'is_success', lambda: True)() and method_name == "HEAD":
+            if not getattr(response, 'ok', False) and method_name == "HEAD":
                 self._close_retryable_response(response)
                 raise HTTPClientError(
                     f"{method_name} request failed with status {response.status_code}",
@@ -208,9 +251,8 @@ class RequestsTransport:
         url: str,
         error: requests.RequestException,
     ) -> HTTPClientError:
-        message = f"{method_name} request failed: {error}"
-        logger.error("%s for %s: %s", method_name, url, message)
-        return HTTPClientError(message, url=url)
+        logger.error("%s for %s: %s", method_name, url, error)
+        return HTTPClientError(f"{method_name} request failed", url=url)
 
     def _log_retry_exception(
         self,

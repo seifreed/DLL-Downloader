@@ -275,7 +275,11 @@ class DllFilesResolver:
         parsed_base = urlparse(self.base_url)
         if parsed_href.netloc.lower() != parsed_base.netloc.lower():
             return False
-        return not (parsed_base.scheme == "https" and parsed_href.scheme == "http")
+        if parsed_base.scheme == "https" and parsed_href.scheme == "http":
+            return False
+        if parsed_href.scheme == "http" and parsed_base.scheme != "http":
+            return False
+        return True
 
     @staticmethod
     def _is_official_zip_link(href: str) -> bool:

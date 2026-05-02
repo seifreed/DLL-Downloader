@@ -90,8 +90,8 @@ def test_idllrepository_pass_throughs() -> None:
 
 @pytest.mark.unit
 def test_scan_result_detection_count_variants() -> None:
-    result = ScanResult(file_hash="x", status=SecurityStatus.CLEAN, detection_ratio="5/70")
-    assert result.detection_count == 5
+    empty_detections = ScanResult(file_hash="x", status=SecurityStatus.CLEAN, detection_ratio="5/70")
+    assert empty_detections.detection_count == 0
 
     bad_ratio = ScanResult(file_hash="x", status=SecurityStatus.CLEAN, detection_ratio="bad")
     assert bad_ratio.detection_count == 0

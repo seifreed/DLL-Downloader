@@ -90,7 +90,7 @@ def inspect_pe_dll_architecture(content: bytes) -> PEDllInspection:
     if architecture is None:
         return PEDllInspection(unsupported_machine=machine)
     if not pe_image_layout_is_valid(content, machine_offset, architecture):
-        return PEDllInspection()
+        return PEDllInspection(architecture=None)
 
     characteristics_offset = machine_offset + _PE_CHARACTERISTICS_OFFSET_FROM_MACHINE
     if len(content) < characteristics_offset + 2:

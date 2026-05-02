@@ -32,6 +32,7 @@ from dll_downloader.domain.entities.dll_file import (
     Architecture,
     DLLFile,
     SecurityStatus,
+    normalize_dll_name,
 )
 from dll_downloader.domain.errors import (
     DownloadResolutionError,
@@ -219,9 +220,17 @@ class InMemoryRepository(IDLLRepository):
         name: str,
         architecture: Architecture | None = None
     ) -> DLLFile | None:
-        """Find DLL by name and architecture."""
-        key = self._make_key(name, architecture or Architecture.UNKNOWN)
-        return self._storage.get(key)
+        """Find DLL by name and architecture, matching real repository behavior."""
+        normalized = normalize_dll_name(name)
+        if architecture is not None and architecture != Architecture.UNKNOWN:
+            key = self._make_key(normalized, architecture)
+            return self._storage.get(key)
+        concrete = [arch for arch in Architecture if arch != Architecture.UNKNOWN]
+        for arch in concrete:
+            key = self._make_key(normalized, arch)
+            if key in self._storage:
+                return self._storage[key]
+        return None
 
     def find_by_hash(self, file_hash: str) -> DLLFile | None:
         """Find DLL by hash."""
@@ -942,7 +951,7 @@ def test_download_dll_use_case_fails_when_zip_reader_is_invalid() -> None:
     )
 
     assert response.success is False
-    assert response.error_message == "Download failed: Downloaded content is not a valid DLL (missing PE signature)"
+    assert response.error_message == "Download failed: Downloaded content is not a valid DLL (invalid PE image layout)"
 
 
 @pytest.mark.unit
@@ -1369,7 +1378,7 @@ def test_download_dll_use_case_detects_x86_and_x64_pe_architectures() -> None:
 
 @pytest.mark.unit
 def test_download_dll_use_case_rejects_incomplete_pe_header() -> None:
-    with pytest.raises(DownloadExecutionError, match="missing PE signature"):
+    with pytest.raises(DownloadExecutionError, match="invalid PE image layout"):
         DownloadDLLUseCase._detect_pe_architecture(b"MZ")
 
 
@@ -1379,13 +1388,13 @@ def test_download_dll_use_case_rejects_missing_pe_signature() -> None:
     payload[0:2] = b"MZ"
     payload[0x3C:0x40] = (0x80).to_bytes(4, "little")
 
-    with pytest.raises(DownloadExecutionError, match="missing PE signature"):
+    with pytest.raises(DownloadExecutionError, match="invalid PE image layout"):
         DownloadDLLUseCase._detect_pe_architecture(bytes(payload))
 
 
 @pytest.mark.unit
 def test_download_dll_use_case_rejects_pe_stub_without_image_layout() -> None:
-    with pytest.raises(DownloadExecutionError, match="missing PE signature"):
+    with pytest.raises(DownloadExecutionError, match="invalid PE image layout"):
         DownloadDLLUseCase._detect_pe_architecture(
             _build_pe_header_stub(Architecture.X64)
         )
@@ -1393,7 +1402,7 @@ def test_download_dll_use_case_rejects_pe_stub_without_image_layout() -> None:
 
 @pytest.mark.unit
 def test_download_dll_use_case_rejects_blank_pe_section_table() -> None:
-    with pytest.raises(DownloadExecutionError, match="missing PE signature"):
+    with pytest.raises(DownloadExecutionError, match="invalid PE image layout"):
         DownloadDLLUseCase._detect_pe_architecture(
             _build_pe_payload_with_blank_section(Architecture.X64)
         )
@@ -1427,7 +1436,7 @@ def test_download_dll_use_case_rejects_zip_member_with_blank_pe_section_table() 
     assert response.success is False
     assert response.error_message == (
         "Download failed: Could not extract valid DLL from ZIP: "
-        "Downloaded content is not a valid DLL (missing PE signature)"
+        "Downloaded content is not a valid DLL (invalid PE image layout)"
     )
     assert repository.list_all() == []
 
@@ -1436,7 +1445,7 @@ def test_download_dll_use_case_rejects_zip_member_with_blank_pe_section_table() 
 def test_download_dll_use_case_rejects_missing_pe_characteristics() -> None:
     payload = _build_pe_payload(Architecture.X64)[:-2]
 
-    with pytest.raises(DownloadExecutionError, match="missing PE signature"):
+    with pytest.raises(DownloadExecutionError, match="invalid PE image layout"):
         DownloadDLLUseCase._detect_pe_architecture(payload)
 
 
@@ -1685,7 +1694,7 @@ def test_download_dll_use_case_fails_when_payload_is_not_zip() -> None:
 
     assert response.success is False
     assert response.error_message == (
-        "Download failed: Downloaded content is not a valid DLL (missing PE signature)"
+        "Download failed: Downloaded content is not a valid DLL (invalid PE image layout)"
     )
 
 
@@ -1714,7 +1723,7 @@ def test_download_dll_use_case_fails_when_pk_content_is_not_valid_zip() -> None:
 
     assert response.success is False
     assert response.error_message == (
-        "Download failed: Downloaded content is not a valid DLL (missing PE signature)"
+        "Download failed: Downloaded content is not a valid DLL (invalid PE image layout)"
     )
 
 
@@ -1861,7 +1870,7 @@ def test_download_dll_use_case_fails_when_extracted_content_is_not_pe() -> None:
     assert response.success is False
     assert response.error_message == (
         "Download failed: Could not extract valid DLL from ZIP: "
-        "Downloaded content is not a valid DLL (missing PE signature)"
+        "Downloaded content is not a valid DLL (invalid PE image layout)"
     )
 
 
@@ -1891,7 +1900,7 @@ def test_download_dll_use_case_fails_when_extract_is_enabled_but_payload_is_not_
 
     assert response.success is False
     assert response.error_message == (
-        "Download failed: Downloaded content is not a valid DLL (missing PE signature)"
+        "Download failed: Downloaded content is not a valid DLL (invalid PE image layout)"
     )
 
 

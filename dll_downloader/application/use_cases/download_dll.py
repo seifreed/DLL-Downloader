@@ -34,7 +34,7 @@ from ...domain.services.security_scanner import ISecurityScanner
 from ..errors import ArchiveExtractionError, DownloadExecutionError
 
 logger = logging.getLogger(__name__)
-_INVALID_PE_MESSAGE = "Downloaded content is not a valid DLL (missing PE signature)"
+_INVALID_PE_MESSAGE = "Downloaded content is not a valid DLL (invalid PE image layout)"
 _NOT_DLL_MESSAGE = "Downloaded PE file is not a DLL"
 _ZIP_MEMBER_READ_ERRORS = (
     RuntimeError,
@@ -44,6 +44,7 @@ _ZIP_MEMBER_READ_ERRORS = (
 )
 _ZIP_COMPRESSION_RATIO_LIMIT = 100
 _ZIP_MEMBER_SIZE_LIMIT = 512 * 1024 * 1024  # 512 MiB
+_ZIP_COMPRESSED_SIZE_LIMIT = 100 * 1024 * 1024  # 100 MiB
 
 
 @dataclass
@@ -561,6 +562,10 @@ class DownloadDLLUseCase:
             read_error: Exception | None = None
             empty_member_found = False
             for member in requested_members:
+                if member.compress_size > _ZIP_COMPRESSED_SIZE_LIMIT:
+                    raise ArchiveExtractionError(
+                        "ZIP member compressed size exceeds safe limit, possible ZIP bomb"
+                    )
                 try:
                     extracted_content = archive.read(member)
                 except _ZIP_MEMBER_READ_ERRORS as exc:

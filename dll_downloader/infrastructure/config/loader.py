@@ -84,6 +84,18 @@ class _VTTomlSettingsSource:
             return None
 
         try:
+            mode = vt_path.stat().st_mode
+            if mode & 0o077:
+                logging.warning(
+                    "VT config file %s has overly permissive permissions (%o); "
+                    "consider restricting to 0600",
+                    vt_path,
+                    mode & 0o777,
+                )
+        except OSError:
+            pass
+
+        try:
             contents = vt_path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             return None
