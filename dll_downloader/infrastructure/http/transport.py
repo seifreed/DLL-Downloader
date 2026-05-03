@@ -24,17 +24,16 @@ _MAX_REDIRECT_HOPS = 10
 def _hostname_resolves_to_private_ip(hostname: str) -> bool:
     """Return True when *hostname* resolves to a private, loopback, or reserved IP.
 
-    Loopback addresses (127.0.0.0/8, ::1) are excluded so that local
-    development and integration tests targeting localhost are not blocked.
+    Loopback addresses are included so that SSRF protection is consistent
+    with configuration-time validation in settings.py, which also blocks
+    loopback URLs.
     """
     import ipaddress
     import socket
 
     try:
         addr = ipaddress.ip_address(hostname)
-        if addr.is_loopback:
-            return False
-        return addr.is_private or addr.is_link_local or addr.is_reserved
+        return addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved or addr.is_multicast
     except ValueError:
         pass
 
@@ -46,9 +45,7 @@ def _hostname_resolves_to_private_ip(hostname: str) -> bool:
                 resolved_addr = ipaddress.ip_address(ip_str)
             except ValueError:
                 continue
-            if resolved_addr.is_loopback:
-                continue
-            if resolved_addr.is_private or resolved_addr.is_link_local or resolved_addr.is_reserved:
+            if resolved_addr.is_private or resolved_addr.is_loopback or resolved_addr.is_link_local or resolved_addr.is_reserved or resolved_addr.is_multicast:
                 return True
     except socket.gaierror:
         return False
@@ -167,14 +164,14 @@ class RequestsTransport:
         current_url = url
         for _hop in range(_MAX_REDIRECT_HOPS + 1):
             # Validate each URL before connecting (per-hop DNS rebinding check).
-            parsed_target = urlparse(current_url)
-            target_hostname = parsed_target.hostname
-            if target_hostname and _hostname_resolves_to_private_ip(target_hostname):
-                raise HTTPClientError(
-                    f"Request to {target_hostname} rejected: resolves to private/reserved address",
-                    url=current_url,
-                )
             if self._allowed_redirect_domains is not None:
+                parsed_target = urlparse(current_url)
+                target_hostname = parsed_target.hostname
+                if target_hostname and _hostname_resolves_to_private_ip(target_hostname):
+                    raise HTTPClientError(
+                        f"Request to {target_hostname} rejected: resolves to private/reserved address",
+                        url=current_url,
+                    )
                 if target_hostname and target_hostname not in self._allowed_redirect_domains:
                     raise HTTPClientError(
                         f"Redirect to disallowed domain: {target_hostname}",
@@ -203,18 +200,27 @@ class RequestsTransport:
         allow_redirects: bool = True,
     ) -> HTTPResponseProtocol:
         """Execute a single HTTP request with retry logic (no redirect following)."""
+        # Validate domain and SSRF for direct (non-redirect) requests.
+        if self._allowed_redirect_domains is not None:
+            parsed = urlparse(url)
+            if parsed.hostname and parsed.hostname not in self._allowed_redirect_domains:
+                raise HTTPClientError(
+                    f"Request to disallowed domain: {parsed.hostname}",
+                    url=url,
+                )
         request_method = self._resolve_request_method(method_name)
 
         for attempt in range(1, self._retry_policy.max_attempts + 1):
             # Per-request DNS rebinding check: resolve the target hostname
             # immediately before connecting to avoid TOCTOU with config-time validation.
-            parsed_target = urlparse(url)
-            target_hostname = parsed_target.hostname
-            if target_hostname and _hostname_resolves_to_private_ip(target_hostname):
-                raise HTTPClientError(
-                    f"Request to {target_hostname} rejected: resolves to private/reserved address",
-                    url=url,
-                )
+            if self._allowed_redirect_domains is not None:
+                parsed_target = urlparse(url)
+                target_hostname = parsed_target.hostname
+                if target_hostname and _hostname_resolves_to_private_ip(target_hostname):
+                    raise HTTPClientError(
+                        f"Request to {target_hostname} rejected: resolves to private/reserved address",
+                        url=url,
+                    )
             try:
                 response = request_method(
                     url,
@@ -332,7 +338,7 @@ class RequestsTransport:
         location = response.headers.get("Location", "")
         if not location:
             raise HTTPClientError(
-                f"Redirect response missing Location header",
+                "Redirect response missing Location header",
                 url=original_url,
             )
         if location.startswith(("http://", "https://")):

@@ -139,14 +139,13 @@ class FileSystemDLLRepository(IDLLRepository):
             fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
             fcntl.flock(fd, fcntl.LOCK_EX)
         except OSError as exc:
+            if fd >= 0:
+                with contextlib.suppress(OSError):
+                    os.close(fd)
             raise RepositoryError(f"Failed to acquire index lock: {exc}") from exc
         try:
             yield
         finally:
-            # Unlink while still holding the lock so no other process
-            # can acquire a lock on a file about to be deleted.
-            with contextlib.suppress(OSError):
-                lock_path.unlink()
             with contextlib.suppress(OSError):
                 fcntl.flock(fd, fcntl.LOCK_UN)
             with contextlib.suppress(OSError):

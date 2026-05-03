@@ -18,10 +18,12 @@ class DownloadConsolePresenter:
         if not dll_file:
             return f"[FAILED] {dll_name}: file info missing"
         if response.was_cached:
-            lines.append(f"[CACHED] {dll_name} already exists at: {dll_file.file_path}")
+            path_display = dll_file.file_path or "<unknown path>"
+            lines.append(f"[CACHED] {dll_name} already exists at: {path_display}")
         else:
+            path_display = dll_file.file_path or "<unknown path>"
             lines.append(f"[OK] Downloaded: {dll_name}")
-            lines.append(f"     Path: {dll_file.file_path}")
+            lines.append(f"     Path: {path_display}")
             if dll_file.file_hash:
                 lines.append(f"     SHA256: {dll_file.file_hash}")
             if dll_file.file_size is not None:

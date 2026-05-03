@@ -72,7 +72,12 @@ def _safe_json(response: HTTPResponseProtocol) -> dict[str, object]:
     """Normalize loosely typed HTTP JSON payloads into mappings."""
 
     content_length = None
-    cl_header = response.headers.get("content-length") if hasattr(response, "headers") else None
+    cl_header = None
+    if hasattr(response, "headers"):
+        for key in response.headers:
+            if key.lower() == "content-length":
+                cl_header = response.headers[key]
+                break
     if cl_header:
         try:
             content_length = int(cl_header)
@@ -97,7 +102,13 @@ def _safe_json(response: HTTPResponseProtocol) -> dict[str, object]:
                     )
                 chunks.append(chunk)
     except AttributeError:
-        pass  # iter_content not available; fall through to response.json()
+        # iter_content not available; enforce size limit on content attribute
+        raw_content = getattr(response, "content", None)
+        if raw_content is not None:
+            if len(raw_content) > _VT_RESPONSE_MAX_BYTES:
+                raise VirusTotalError(
+                    f"VirusTotal response exceeds size limit ({_VT_RESPONSE_MAX_BYTES} bytes)"
+                ) from None
 
     if chunks:
         body = b"".join(chunks)
@@ -284,8 +295,7 @@ class VirusTotalScanner(ISecurityScanner):
                     f"File exceeds {_VT_UPLOAD_MAX_BYTES // (1024 * 1024)} MiB upload limit"
                 )
             # Clear O_NONBLOCK for regular files so read() works normally.
-            with contextlib.suppress(OSError):
-                os.set_blocking(fd, True)
+            os.set_blocking(fd, True)
             with os.fdopen(fd, "rb") as f:
                 fd = -1
                 content = f.read()
@@ -564,7 +574,10 @@ class VirusTotalScanner(ISecurityScanner):
         scan_timestamp = attributes.get("last_analysis_date")
         scan_date: datetime | None = None
         if isinstance(scan_timestamp, (int, float)):
-            scan_date = datetime.fromtimestamp(float(scan_timestamp), tz=UTC)
+            try:
+                scan_date = datetime.fromtimestamp(float(scan_timestamp), tz=UTC)
+            except (OverflowError, OSError, ValueError):
+                scan_date = None
 
         detections = self._extract_engine_detections(data)
 

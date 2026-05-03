@@ -13,10 +13,7 @@ class HTMLLinkExtractor(HTMLParser):
     line_offsets: tuple[int, ...] = (0,)
     links: list[tuple[str, str]] = field(default_factory=list)
     links_with_positions: list[tuple[str, str, int]] = field(default_factory=list)
-    _current_href: str | None = None
-    _current_text: list[str] = field(default_factory=list)
-    _current_position: int = -1
-    _in_anchor: bool = False
+    _anchor_stack: list[tuple[str | None, list[str], int]] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         HTMLParser.__init__(self, convert_charrefs=True)
@@ -29,30 +26,25 @@ class HTMLLinkExtractor(HTMLParser):
         if tag != "a":
             return
 
-        self._in_anchor = True
-        self._current_href = ""
-        self._current_text = []
-        self._current_position = self._absolute_position()
+        href = ""
         for key, value in attrs:
             if key == "href":
-                self._current_href = value or ""
+                href = value or ""
+
+        self._anchor_stack.append((href, [], self._absolute_position()))
 
     def handle_endtag(self, tag: str) -> None:
-        if tag != "a" or not self._in_anchor:
+        if tag != "a" or not self._anchor_stack:
             return
 
-        href = self._current_href or ""
-        text = "".join(self._current_text).strip()
+        href, text_parts, position = self._anchor_stack.pop()
+        text = "".join(text_parts).strip()
         self.links.append((href, text))
-        self.links_with_positions.append((href, text, self._current_position))
-        self._current_href = None
-        self._current_text = []
-        self._current_position = -1
-        self._in_anchor = False
+        self.links_with_positions.append((href, text, position))
 
     def handle_data(self, data: str) -> None:
-        if self._in_anchor:
-            self._current_text.append(data)
+        for _href, text_parts, _pos in self._anchor_stack:
+            text_parts.append(data)
 
     def _absolute_position(self) -> int:
         line_number, column_offset = self.getpos()

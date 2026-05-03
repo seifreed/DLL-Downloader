@@ -1,13 +1,10 @@
-"""
-Command Line Interface
-
-Provides the CLI entry point for the DLL Downloader application
-using Clean Architecture with dependency injection.
-"""
+"""CLI entry point for the DLL Downloader application."""
 
 import argparse
+import contextlib
 import logging
 import os
+import re
 import stat
 import sys
 from pathlib import Path
@@ -45,6 +42,16 @@ _LOG_LEVELS = {
 }
 
 
+_PATH_PATTERN = re.compile(r"(?:^|\s|['\"])/[^\s'\"]+")
+
+
+def _sanitize_boundary_message(exc: Exception) -> str:
+    """Remove filesystem paths and URL credentials from exception messages."""
+    msg = str(exc)
+    msg = _PATH_PATTERN.sub(" <path>", msg)
+    return msg
+
+
 def set_debug_mode(enabled: bool) -> None:
     """
     Set debug mode environment variable.
@@ -66,6 +73,9 @@ def apply_logging_settings(settings: Settings, debug_enabled: bool) -> None:
     logging.getLogger().setLevel(_LOG_LEVELS[level_name])
 
 
+_MAX_DLL_LIST_LINES = 10_000
+
+
 def read_dll_list_from_file(file_path: str) -> list[str]:
     """
     Read DLL names from a file, one per line.
@@ -80,24 +90,37 @@ def read_dll_list_from_file(file_path: str) -> list[str]:
         ValueError: If the file does not exist or is empty.
     """
     raw_path = Path(file_path)
+    fd = -1
     try:
-        if stat.S_ISLNK(os.lstat(raw_path).st_mode):
-            raise ValueError(f"Refusing to read DLL list from symlink: '{file_path}'")
+        fd = os.open(str(raw_path), os.O_RDONLY | os.O_NOFOLLOW)
     except FileNotFoundError:
         raise ValueError(f"File '{file_path}' not found.") from None
     except OSError as exc:
+        if exc.errno == 40:  # ELOOP - symlink
+            raise ValueError(f"Refusing to read DLL list from symlink: '{file_path}'") from exc
         raise ValueError(f"Failed to access file '{file_path}': {exc}") from exc
-    path = raw_path.resolve(strict=True)
-    if not path.is_file():
-        raise ValueError(f"Failed to read file '{file_path}': not a regular file")
 
     try:
-        with path.open(encoding="utf-8") as f:
-            dll_names = [normalize_dll_name(line.strip()) for line in f if line.strip()]
+        st = os.fstat(fd)
+        if stat.S_ISLNK(st.st_mode) or not stat.S_ISREG(st.st_mode):
+            raise ValueError(f"Refusing to read non-regular file: '{file_path}'")
+        with os.fdopen(fd, encoding="utf-8") as f:
+            fd = -1  # ownership transferred to fdopen
+            dll_names = []
+            for i, line in enumerate(f):
+                if i >= _MAX_DLL_LIST_LINES:
+                    raise ValueError(f"File '{file_path}' exceeds maximum line count")
+                stripped = line.strip()
+                if stripped:
+                    dll_names.append(normalize_dll_name(stripped))
+    except ValueError:
+        raise
     except (OSError, UnicodeDecodeError) as exc:
         raise ValueError(f"Failed to read file '{file_path}': {exc}") from exc
-    except ValueError as exc:
-        raise ValueError(f"Invalid DLL name in '{file_path}': {exc}") from exc
+    finally:
+        if fd >= 0:
+            with contextlib.suppress(OSError):
+                os.close(fd)
 
     if not dll_names:
         raise ValueError(
@@ -171,7 +194,7 @@ def _run_cli_session(
     except Exception as exc:
         emit_cli_input_error(
             service,
-            create_batch_presenter(output_format).boundary_error(str(exc)),
+            create_batch_presenter(output_format).boundary_error(_sanitize_boundary_message(exc)),
         )
         return 1
 
@@ -195,6 +218,8 @@ def main(settings: Settings | None = None) -> int:
         return _main_inner(settings)
     except KeyboardInterrupt:
         return 130
+    except BrokenPipeError:
+        return 0
 
 
 def _main_inner(settings: Settings | None) -> int:
@@ -221,7 +246,7 @@ def _main_inner(settings: Settings | None) -> int:
         except (OSError, ValueError) as exc:
             emit_cli_input_error(
                 service,
-                create_batch_presenter(output_format).boundary_error(str(exc)),
+                create_batch_presenter(output_format).boundary_error(_sanitize_boundary_message(exc)),
             )
             return 1
 
@@ -230,7 +255,7 @@ def _main_inner(settings: Settings | None) -> int:
     except ValueError as exc:
         emit_cli_input_error(
             service,
-            create_batch_presenter(output_format).boundary_error(str(exc)),
+            create_batch_presenter(output_format).boundary_error(_sanitize_boundary_message(exc)),
         )
         return 1
 

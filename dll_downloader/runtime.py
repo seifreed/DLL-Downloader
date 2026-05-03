@@ -2,7 +2,7 @@
 Explicit default-runtime helpers for programmatic use.
 """
 
-import contextlib
+import logging
 from typing import TYPE_CHECKING
 
 from .api import Settings
@@ -12,6 +12,8 @@ from .bootstrap import (
     DownloadApplication,
 )
 from .domain.entities import Architecture
+
+_logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from .interfaces.cli_output import ConsoleOutputWriter
@@ -90,7 +92,7 @@ def process_downloads(
     runner = _create_batch_cli_service(use_case)
     result = runner.run_with_error_handling(
         CLIBatchDownloadCommand(
-            dll_names=dll_names,
+            dll_names=tuple(dll_names),
             architecture=architecture,
             scan_enabled=scan_enabled,
             force_download=force_download,
@@ -98,17 +100,21 @@ def process_downloads(
             debug=debug,
         )
     )
-    writer = _create_output_writer()
-    emit_command_result(writer, result)
     try:
+        writer = _create_output_writer()
+        emit_command_result(writer, result)
         return result.session.success_count, result.session.failure_count
     finally:
         if http_client is not None:
-            with contextlib.suppress(Exception):
+            try:
                 http_client.close()
+            except Exception as exc:
+                _logger.warning("Failed to close HTTP client: %s", exc)
         if scanner is not None:
-            with contextlib.suppress(Exception):
+            try:
                 scanner.close()
+            except Exception as exc:
+                _logger.warning("Failed to close scanner: %s", exc)
 
 
 __all__ = [

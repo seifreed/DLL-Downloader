@@ -37,7 +37,7 @@ class DefaultDownloadComponentFactory:
         vt_hostname = urlparse(VirusTotalScanner.VT_API_URL).hostname or ""
         allowed_redirect_domains = {
             domain
-            for domain in (base_hostname, vt_hostname)
+            for domain in (base_hostname, vt_hostname, "download.zip.dll-files.com")
             if domain
         }
         return RequestsHTTPClient(

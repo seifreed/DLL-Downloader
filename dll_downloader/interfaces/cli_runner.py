@@ -54,7 +54,7 @@ class SupportsDownloadExecution(Protocol):
 class CLIBatchDownloadCommand:
     """Input data required to process a CLI batch download."""
 
-    dll_names: list[str]
+    dll_names: tuple[str, ...]
     architecture: Architecture
     scan_enabled: bool
     force_download: bool
@@ -66,7 +66,7 @@ class CLIBatchDownloadCommand:
 class CLIBatchDownloadResult:
     """Summary values returned to the CLI entrypoint."""
 
-    lines: list[str]
+    lines: tuple[str, ...]
     success_count: int
     failure_count: int
 
@@ -83,7 +83,7 @@ class CLIRunResult:
 class CLIInvocation:
     """Fully normalized CLI invocation after argument parsing."""
 
-    dll_names: list[str]
+    dll_names: tuple[str, ...]
     architecture: Architecture
     scan_enabled: bool
     force_download: bool
@@ -233,7 +233,7 @@ class CLIApplicationService:
         dll_names = resolve_dll_names(args, parser, read_dll_list)
 
         return CLIInvocation(
-            dll_names=dll_names,
+            dll_names=tuple(dll_names),
             architecture=parse_architecture(getattr(args, "arch", "x64")),
             scan_enabled=(
                 not getattr(args, "no_scan", False)

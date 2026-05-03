@@ -4,7 +4,7 @@ Structured presenters for machine-readable CLI output.
 
 import json
 import logging
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -24,7 +24,7 @@ def _path_to_uri(file_path: str | None) -> str | None:
         return None
     p = Path(file_path)
     try:
-        return p.resolve().as_uri()
+        return p.as_uri()
     except ValueError:
         return file_path
 
@@ -33,8 +33,8 @@ def _serialize_datetime(value: datetime | None) -> str | None:
     if value is None:
         return None
     if value.tzinfo is None:
-        _logger.warning("Serializing naive datetime as UTC: %s", value)
-        value = value.replace(tzinfo=UTC)
+        _logger.error("Refusing to serialize naive datetime as UTC: %s", value)
+        return None
     return value.isoformat()
 
 
@@ -281,6 +281,7 @@ class DownloadBatchSARIFPresenter:
                     "tool": {
                         "driver": {
                             "name": "dll_downloader",
+                            "version": STRUCTURED_OUTPUT_VERSION,
                             "informationUri": "https://github.com/seifreed/DLL-Downloader",
                             "rules": [
                                 {
