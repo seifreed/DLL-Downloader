@@ -4,7 +4,7 @@ Structured presenters for machine-readable CLI output.
 
 import json
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -26,15 +26,18 @@ def _path_to_uri(file_path: str | None) -> str | None:
     try:
         return p.as_uri()
     except ValueError:
-        return file_path
+        # For relative paths, produce a relative URI reference per SARIF spec.
+        # Convert backslashes to forward slashes for URI compatibility.
+        return file_path.replace("\\", "/")
 
 
 def _serialize_datetime(value: datetime | None) -> str | None:
     if value is None:
         return None
     if value.tzinfo is None:
-        _logger.error("Refusing to serialize naive datetime as UTC: %s", value)
-        return None
+        # Assume UTC for naive datetimes rather than silently dropping data.
+        _logger.warning("Assuming UTC for naive datetime: %s", value)
+        return value.replace(tzinfo=UTC).isoformat()
     return value.isoformat()
 
 

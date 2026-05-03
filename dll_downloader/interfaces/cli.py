@@ -2,6 +2,7 @@
 
 import argparse
 import contextlib
+import errno
 import logging
 import os
 import re
@@ -43,12 +44,14 @@ _LOG_LEVELS = {
 
 
 _PATH_PATTERN = re.compile(r"(?:^|\s|['\"])/[^\s'\"]+")
+_URL_CREDENTIALS_PATTERN = re.compile(r"://[^/\s:]+:[^/\s@]+@")
 
 
 def _sanitize_boundary_message(exc: Exception) -> str:
     """Remove filesystem paths and URL credentials from exception messages."""
     msg = str(exc)
     msg = _PATH_PATTERN.sub(" <path>", msg)
+    msg = _URL_CREDENTIALS_PATTERN.sub("://<credentials>@", msg)
     return msg
 
 
@@ -96,13 +99,13 @@ def read_dll_list_from_file(file_path: str) -> list[str]:
     except FileNotFoundError:
         raise ValueError(f"File '{file_path}' not found.") from None
     except OSError as exc:
-        if exc.errno == 40:  # ELOOP - symlink
+        if exc.errno == errno.ELOOP:
             raise ValueError(f"Refusing to read DLL list from symlink: '{file_path}'") from exc
         raise ValueError(f"Failed to access file '{file_path}': {exc}") from exc
 
     try:
         st = os.fstat(fd)
-        if stat.S_ISLNK(st.st_mode) or not stat.S_ISREG(st.st_mode):
+        if not stat.S_ISREG(st.st_mode):
             raise ValueError(f"Refusing to read non-regular file: '{file_path}'")
         with os.fdopen(fd, encoding="utf-8") as f:
             fd = -1  # ownership transferred to fdopen

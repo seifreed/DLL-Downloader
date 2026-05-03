@@ -165,12 +165,6 @@ class RequestsHTTPClient:
         headers: Mapping[str, str] | None = None,
     ) -> str:
         response = self.get(url, headers=headers)
-        if not response.is_success:
-            raise HTTPClientError(
-                f"GET request failed with status {response.status_code}",
-                status_code=response.status_code,
-                url=url,
-            )
         return self._decode_text(response.content, response.headers)
 
     def download(

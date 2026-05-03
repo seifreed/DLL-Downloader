@@ -41,6 +41,7 @@ _ZIP_MEMBER_READ_ERRORS = (
     NotImplementedError,
     zipfile.BadZipFile,
     zlib.error,
+    ValueError,
 )
 _ZIP_COMPRESSION_RATIO_LIMIT = 100
 _ZIP_MEMBER_SIZE_LIMIT = 512 * 1024 * 1024  # 512 MiB
@@ -310,25 +311,9 @@ class DownloadDLLUseCase:
                 request.architecture,
             ):
                 return True
-            # If cache has a ZIP, attempt extraction from the cached ZIP
-            if dll_file.file_path:
-                cache_path = Path(dll_file.file_path)
-                if not cache_path.is_symlink() and cache_path.is_file():
-                    try:
-                        content = cache_path.read_bytes()
-                    except OSError:
-                        return False
-                    if zipfile.is_zipfile(BytesIO(content)):
-                        try:
-                            extracted = self._extract_valid_dll_from_zip(
-                                content, request
-                            )
-                            self._validate_dll_architecture(
-                                extracted, request.architecture
-                            )
-                            return True
-                        except (ArchiveExtractionError, DownloadExecutionError):
-                            return False
+            # A cached ZIP cannot satisfy an extract request because the cached
+            # DLLFile entity still references the ZIP path, not the extracted DLL.
+            # Re-download to get a fresh extraction.
             return False
         if not dll_file.file_path:
             return False
@@ -395,7 +380,7 @@ class DownloadDLLUseCase:
             raise DownloadExecutionError(str(exc)) from exc
         except Exception as exc:
             raise DownloadExecutionError(
-                f"Security scan failed unexpectedly: {exc}"
+                "Security scan failed unexpectedly"
             ) from exc
 
         if scanned_dll.security_status in {
@@ -465,7 +450,7 @@ class DownloadDLLUseCase:
         """Download bytes and normalize transport-layer failures."""
         try:
             return self._http_client.download(download_url)
-        except (HTTPServiceError, ValueError) as exc:
+        except (HTTPServiceError, ValueError, OSError) as exc:
             raise DownloadExecutionError(str(exc)) from exc
 
     def _save_dll(self, dll_file: DLLFile, content: bytes) -> DLLFile:
@@ -494,7 +479,7 @@ class DownloadDLLUseCase:
                 self._validate_zip_contains_valid_dll(content, request)
                 return content
             return self._extract_valid_dll_from_zip(content, request)
-        except (RuntimeError, NotImplementedError, zipfile.BadZipFile, zlib.error) as exc:
+        except (RuntimeError, NotImplementedError, zipfile.BadZipFile, zlib.error, ValueError) as exc:
             raise ArchiveExtractionError("Downloaded archive is not a valid ZIP file") from exc
 
     def _validate_zip_contains_valid_dll(
@@ -549,10 +534,15 @@ class DownloadDLLUseCase:
                 )
 
             expected_name = request.dll_name.lower()
-            requested_members = [
-                member for member in matching_members
-                if member.filename.replace("\\", "/").rsplit("/", 1)[-1].lower() == expected_name
-            ]
+            # Prefer root-level members over nested ones to avoid path confusion.
+            # Sort so that members with fewer path segments come first.
+            requested_members = sorted(
+                [
+                    member for member in matching_members
+                    if member.filename.replace("\\", "/").rsplit("/", 1)[-1].lower() == expected_name
+                ],
+                key=lambda m: m.filename.replace("\\", "/").count("/"),
+            )
             if not requested_members:
                 raise ArchiveExtractionError(
                     f"ZIP archive does not contain requested DLL {request.dll_name}"

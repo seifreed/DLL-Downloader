@@ -162,6 +162,7 @@ TECHNICAL_ADAPTER_IMPORT_ALLOWLIST: dict[str, tuple[str, ...]] = {
         "json",
         "logging",
         "os",
+        "errno",
         "stat",
         "collections.abc",
         "contextlib",

@@ -52,7 +52,7 @@ _ARCH_STRING_MAP = {
 
 def parse_architecture(arch_str: str) -> Architecture:
     """Normalize CLI architecture strings to the domain enum."""
-    result = _ARCH_STRING_MAP.get(arch_str)
+    result = _ARCH_STRING_MAP.get(arch_str.lower())
     if result is None:
         raise ValueError(f"Unsupported architecture: {arch_str!r}")
     return result

@@ -1321,7 +1321,7 @@ def test_get_detailed_report_success() -> None:
         session_resource=_resource_with_session(cast(HTTPSessionProtocol, session)),
     )
 
-    assert scanner.get_detailed_report("hash") == {"ok": True}
+    assert scanner.get_detailed_report("a" * 64) == {"ok": True}
     assert session.get_timeout == 8.75
 
 
@@ -1363,7 +1363,7 @@ def test_get_detailed_report_closes_response() -> None:
         session_resource=_resource_with_session(cast(HTTPSessionProtocol, session)),
     )
 
-    assert scanner.get_detailed_report("hash") == {"ok": True}
+    assert scanner.get_detailed_report("a" * 64) == {"ok": True}
     assert session.response.closed is True
 
 
@@ -1400,7 +1400,7 @@ def test_get_detailed_report_non_200_raises() -> None:
     )
 
     with pytest.raises(VirusTotalError):
-        scanner.get_detailed_report("hash")
+        scanner.get_detailed_report("a" * 64)
 
 
 @pytest.mark.unit
@@ -1429,7 +1429,7 @@ def test_get_detailed_report_exception_raises() -> None:
     )
 
     with pytest.raises(VirusTotalError):
-        scanner.get_detailed_report("hash")
+        scanner.get_detailed_report("a" * 64)
 
 
 @pytest.mark.unit
@@ -1462,7 +1462,7 @@ def test_get_detailed_report_invalid_json_raises() -> None:
     )
 
     with pytest.raises((VirusTotalError, TypeError)):
-        scanner.get_detailed_report("hash")
+        scanner.get_detailed_report("a" * 64)
 
 
 @pytest.mark.unit
@@ -1472,7 +1472,7 @@ def test_get_detailed_report_unavailable_raises() -> None:
     """
     scanner = VirusTotalScanner(api_key=None)
     with pytest.raises(VirusTotalError):
-        scanner.get_detailed_report("hash")
+        scanner.get_detailed_report("a" * 64)
 
 
 # ---------------------------------------------------------------------------

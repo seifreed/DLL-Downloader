@@ -27,6 +27,10 @@ def _hostname_resolves_to_private_ip(hostname: str) -> bool:
     Loopback addresses are included so that SSRF protection is consistent
     with configuration-time validation in settings.py, which also blocks
     loopback URLs.
+
+    Returns True on DNS resolution failure (fail-closed) to prevent
+    DNS-rebinding attacks where an attacker returns NXDOMAIN during the
+    SSRF check but resolves to a private IP during the actual request.
     """
     import ipaddress
     import socket
@@ -47,8 +51,8 @@ def _hostname_resolves_to_private_ip(hostname: str) -> bool:
                 continue
             if resolved_addr.is_private or resolved_addr.is_loopback or resolved_addr.is_link_local or resolved_addr.is_reserved or resolved_addr.is_multicast:
                 return True
-    except socket.gaierror:
-        return False
+    except (socket.gaierror, socket.herror, OSError):
+        return True
     return False
 
 logger = logging.getLogger(__name__)
@@ -162,16 +166,22 @@ class RequestsTransport:
 
         # Follow redirects manually so every hop is validated for SSRF.
         current_url = url
-        for _hop in range(_MAX_REDIRECT_HOPS + 1):
-            # Validate each URL before connecting (per-hop DNS rebinding check).
-            if self._allowed_redirect_domains is not None:
-                parsed_target = urlparse(current_url)
-                target_hostname = parsed_target.hostname
-                if target_hostname and _hostname_resolves_to_private_ip(target_hostname):
+        for _hop in range(_MAX_REDIRECT_HOPS):
+            parsed_target = urlparse(current_url)
+            target_hostname = parsed_target.hostname
+            # Always check for private IP resolution. When an explicit domain
+            # allowlist is configured, allow private IPs only for allowlisted hosts.
+            is_allowlisted = (
+                self._allowed_redirect_domains is not None
+                and target_hostname in self._allowed_redirect_domains
+            )
+            if target_hostname and _hostname_resolves_to_private_ip(target_hostname):
+                if not is_allowlisted:
                     raise HTTPClientError(
                         f"Request to {target_hostname} rejected: resolves to private/reserved address",
                         url=current_url,
                     )
+            if self._allowed_redirect_domains is not None:
                 if target_hostname and target_hostname not in self._allowed_redirect_domains:
                     raise HTTPClientError(
                         f"Redirect to disallowed domain: {target_hostname}",
@@ -200,9 +210,20 @@ class RequestsTransport:
         allow_redirects: bool = True,
     ) -> HTTPResponseProtocol:
         """Execute a single HTTP request with retry logic (no redirect following)."""
-        # Validate domain and SSRF for direct (non-redirect) requests.
+        # Always check SSRF for every outbound request. When an explicit domain
+        # allowlist is configured, allow private IPs only for allowlisted hosts.
+        parsed = urlparse(url)
+        is_allowlisted = (
+            self._allowed_redirect_domains is not None
+            and parsed.hostname in self._allowed_redirect_domains
+        )
+        if parsed.hostname and _hostname_resolves_to_private_ip(parsed.hostname):
+            if not is_allowlisted:
+                raise HTTPClientError(
+                    f"Request to {parsed.hostname} rejected: resolves to private/reserved address",
+                    url=url,
+                )
         if self._allowed_redirect_domains is not None:
-            parsed = urlparse(url)
             if parsed.hostname and parsed.hostname not in self._allowed_redirect_domains:
                 raise HTTPClientError(
                     f"Request to disallowed domain: {parsed.hostname}",
@@ -213,10 +234,14 @@ class RequestsTransport:
         for attempt in range(1, self._retry_policy.max_attempts + 1):
             # Per-request DNS rebinding check: resolve the target hostname
             # immediately before connecting to avoid TOCTOU with config-time validation.
-            if self._allowed_redirect_domains is not None:
-                parsed_target = urlparse(url)
-                target_hostname = parsed_target.hostname
-                if target_hostname and _hostname_resolves_to_private_ip(target_hostname):
+            parsed_target = urlparse(url)
+            target_hostname = parsed_target.hostname
+            is_allowlisted = (
+                self._allowed_redirect_domains is not None
+                and target_hostname in self._allowed_redirect_domains
+            )
+            if target_hostname and _hostname_resolves_to_private_ip(target_hostname):
+                if not is_allowlisted:
                     raise HTTPClientError(
                         f"Request to {target_hostname} rejected: resolves to private/reserved address",
                         url=url,
@@ -335,7 +360,7 @@ class RequestsTransport:
         """Compute the absolute redirect URL from a 3xx response."""
         from urllib.parse import urljoin
 
-        location = response.headers.get("Location", "")
+        location = header_value(response.headers, "location") or ""
         if not location:
             raise HTTPClientError(
                 "Redirect response missing Location header",

@@ -6,6 +6,7 @@ for malware analysis and threat detection.
 """
 
 import contextlib
+import errno
 import json
 import logging
 import os
@@ -57,10 +58,10 @@ def _safe_int(value: object) -> int:
     if isinstance(value, int) and not isinstance(value, bool):
         return value
     if isinstance(value, float):
-        return int(value)
+        return int(round(value))
     if isinstance(value, str):
         try:
-            return int(float(value))
+            return int(round(float(value)))
         except (ValueError, OverflowError):
             logger.warning("VT API returned unparseable integer value: %r, defaulting to 0", value)
             return 0
@@ -275,7 +276,7 @@ class VirusTotalScanner(ISecurityScanner):
                 "File upload failed: path does not exist"
             ) from None
         except OSError as e:
-            if e.errno == 40:  # ELOOP - symlink
+            if e.errno == errno.ELOOP:
                 raise VirusTotalError(
                     "File upload failed: path is a symlink"
                 ) from e
@@ -314,7 +315,7 @@ class VirusTotalScanner(ISecurityScanner):
             )
 
         file_hash = calculate_sha256(content)
-        upload_content = content[:_VT_UPLOAD_MAX_BYTES]
+        upload_content = content
 
         try:
             return self.scan_hash(file_hash)
@@ -464,6 +465,9 @@ class VirusTotalScanner(ISecurityScanner):
         """
         if not self.is_available:
             raise VirusTotalError(_API_KEY_MISSING)
+
+        if not _is_valid_hash(file_hash):
+            raise VirusTotalError(f"Invalid file hash: {file_hash!r}")
 
         response: HTTPResponseProtocol | None = None
         try:

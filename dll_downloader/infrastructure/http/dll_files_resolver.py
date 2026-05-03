@@ -260,6 +260,8 @@ class DllFilesResolver:
                 if parsed.scheme == "" and parsed.netloc:
                     if "@" in parsed.netloc:
                         continue
+                    if ":" in parsed.netloc:
+                        continue
                     query = f"?{parsed.query}" if parsed.query else ""
                     return f"https://{parsed.netloc}{parsed.path}{query}"
         for href, _ in self._iter_links(html):

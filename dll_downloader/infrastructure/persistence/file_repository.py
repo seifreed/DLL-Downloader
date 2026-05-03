@@ -305,12 +305,14 @@ class FileSystemDLLRepository(IDLLRepository):
                     raise RepositoryError(
                         f"Refusing to replace symlink: {file_path}"
                     )
-                with contextlib.suppress(OSError):
-                    os.chmod(temp_name, os.lstat(file_path).st_mode)
             elif self._is_symlink(file_path):
                 raise RepositoryError(
                     f"Refusing to write through dangling symlink: {file_path}"
                 )
+            # Set explicit read/write permissions instead of copying from
+            # the target file (which could be replaced via TOCTOU).
+            with contextlib.suppress(OSError):
+                os.chmod(temp_name, 0o644)
             temp_path.replace(file_path)
         except BaseException:
             temp_path.unlink(missing_ok=True)
@@ -1177,10 +1179,19 @@ class FileSystemDLLRepository(IDLLRepository):
     ) -> DLLFile:
         """Create a DLLFile entity from an existing file on disk."""
         try:
-            with open(file_path, "rb") as f:
+            fd = os.open(str(file_path), os.O_RDONLY | os.O_NOFOLLOW)
+        except OSError as exc:
+            raise RepositoryError(f"Failed to read DLL file: {exc}") from exc
+        try:
+            with os.fdopen(fd, "rb") as f:
+                fd = -1
                 content = f.read()
         except OSError as exc:
             raise RepositoryError(f"Failed to read DLL file: {exc}") from exc
+        finally:
+            if fd >= 0:
+                with contextlib.suppress(OSError):
+                    os.close(fd)
         file_hash = calculate_sha256(content)
 
         return DLLFile(
