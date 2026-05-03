@@ -313,6 +313,12 @@ class FileSystemDLLRepository(IDLLRepository):
             # the target file (which could be replaced via TOCTOU).
             with contextlib.suppress(OSError):
                 os.chmod(temp_name, 0o644)
+            # TOCTOU hardening: re-check for symlink between earlier validation
+            # and the atomic replace to prevent symlink replacement attacks.
+            if self._is_symlink(file_path):
+                raise RepositoryError(
+                    f"Refusing to replace symlink: {file_path}"
+                )
             temp_path.replace(file_path)
         except BaseException:
             temp_path.unlink(missing_ok=True)
@@ -958,6 +964,17 @@ class FileSystemDLLRepository(IDLLRepository):
                 "orphaned index entries may exist: %s",
                 exc,
             )
+
+    def update_metadata(self, dll_file: DLLFile) -> DLLFile:
+        """Update metadata for an existing DLL without rewriting the payload."""
+        with self._with_index_lock():
+            index = self._load_index()
+            key = self._get_file_key(dll_file.name, dll_file.architecture)
+            if key not in index["files"]:
+                raise RepositoryOperationError(f"DLL not found in index: {dll_file.name}")
+            index["files"][key] = self._serialize_dll(dll_file)
+            self._save_index(index)
+        return dll_file
 
     def exists(self, name: str, architecture: Architecture | None = None) -> bool:
         """

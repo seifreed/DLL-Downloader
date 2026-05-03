@@ -2,6 +2,7 @@
 Transport primitives for HTTP adapters.
 """
 
+import ipaddress
 import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -21,6 +22,17 @@ from .retry_policy import RetryPolicy
 _MAX_REDIRECT_HOPS = 10
 
 
+def _normalize_ip(addr: "ipaddress.IPv4Address | ipaddress.IPv6Address") -> "ipaddress.IPv4Address | ipaddress.IPv6Address":
+    """Convert IPv4-mapped IPv6 addresses to their IPv4 equivalent.
+
+    ``::ffff:127.0.0.1`` is NOT private under ``IPv6Address.is_private``,
+    but its embedded IPv4 address IS private.  Normalise before checking.
+    """
+    if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped is not None:
+        return addr.ipv4_mapped
+    return addr
+
+
 def _hostname_resolves_to_private_ip(hostname: str) -> bool:
     """Return True when *hostname* resolves to a private, loopback, or reserved IP.
 
@@ -32,11 +44,11 @@ def _hostname_resolves_to_private_ip(hostname: str) -> bool:
     DNS-rebinding attacks where an attacker returns NXDOMAIN during the
     SSRF check but resolves to a private IP during the actual request.
     """
-    import ipaddress
     import socket
 
     try:
         addr = ipaddress.ip_address(hostname)
+        addr = _normalize_ip(addr)
         return addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved or addr.is_multicast
     except ValueError:
         pass
@@ -47,6 +59,7 @@ def _hostname_resolves_to_private_ip(hostname: str) -> bool:
             ip_str = sockaddr[0]
             try:
                 resolved_addr = ipaddress.ip_address(ip_str)
+                resolved_addr = _normalize_ip(resolved_addr)
             except ValueError:
                 continue
             if resolved_addr.is_private or resolved_addr.is_loopback or resolved_addr.is_link_local or resolved_addr.is_reserved or resolved_addr.is_multicast:
@@ -192,8 +205,10 @@ class RequestsTransport:
             )
             if not response.is_redirect:
                 return response
-            redirect_url = self._resolve_redirect(current_url, response)
-            self._close_retryable_response(response)
+            try:
+                redirect_url = self._resolve_redirect(current_url, response)
+            finally:
+                self._close_retryable_response(response)
             current_url = redirect_url
         raise HTTPClientError(
             f"Too many redirects (> {_MAX_REDIRECT_HOPS})",
@@ -210,20 +225,9 @@ class RequestsTransport:
         allow_redirects: bool = True,
     ) -> HTTPResponseProtocol:
         """Execute a single HTTP request with retry logic (no redirect following)."""
-        # Always check SSRF for every outbound request. When an explicit domain
-        # allowlist is configured, allow private IPs only for allowlisted hosts.
-        parsed = urlparse(url)
-        is_allowlisted = (
-            self._allowed_redirect_domains is not None
-            and parsed.hostname in self._allowed_redirect_domains
-        )
-        if parsed.hostname and _hostname_resolves_to_private_ip(parsed.hostname):
-            if not is_allowlisted:
-                raise HTTPClientError(
-                    f"Request to {parsed.hostname} rejected: resolves to private/reserved address",
-                    url=url,
-                )
+        # Check domain allowlist once (URL does not change across retries).
         if self._allowed_redirect_domains is not None:
+            parsed = urlparse(url)
             if parsed.hostname and parsed.hostname not in self._allowed_redirect_domains:
                 raise HTTPClientError(
                     f"Request to disallowed domain: {parsed.hostname}",
@@ -367,5 +371,10 @@ class RequestsTransport:
                 url=original_url,
             )
         if location.startswith(("http://", "https://")):
+            if original_url.startswith("https://") and location.startswith("http://"):
+                raise HTTPClientError(
+                    f"HTTPS to HTTP redirect rejected: {location}",
+                    url=original_url,
+                )
             return location
         return urljoin(original_url, location)
