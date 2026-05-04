@@ -95,7 +95,7 @@ class _VTTomlSettingsSource:
     def load(home_override: str | None = None) -> str | None:
         vt_path = (
             Path(home_override) / ".vt.toml"
-            if home_override is not None
+            if home_override is not None and home_override.strip()
             else Path("~/.vt.toml").expanduser()
         )
         fd = -1

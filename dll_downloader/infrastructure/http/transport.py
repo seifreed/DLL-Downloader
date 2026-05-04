@@ -72,16 +72,22 @@ logger = logging.getLogger(__name__)
 
 
 def header_value(headers: Mapping[str, str], name: str) -> str | None:
-    """Return an HTTP header value using case-insensitive field names."""
-    direct_value = headers.get(name)
-    if direct_value is not None:
-        return direct_value
+    """Return an HTTP header value using case-insensitive field names.
 
+    Per RFC 7230, multiple headers with the same field name are
+    combined with comma separators. Returns the first value found
+    when headers use different casing for the same logical name.
+    """
     normalized_name = name.lower()
+    values: list[str] = []
     for header_name, header_value_text in headers.items():
         if header_name.lower() == normalized_name:
-            return header_value_text
-    return None
+            values.append(header_value_text)
+    if not values:
+        return None
+    if len(values) == 1:
+        return values[0]
+    return ", ".join(values)
 
 
 @dataclass(frozen=True)
@@ -179,7 +185,14 @@ class RequestsTransport:
 
         # Follow redirects manually so every hop is validated for SSRF.
         current_url = url
+        visited_urls: set[str] = set()
         for _hop in range(_MAX_REDIRECT_HOPS):
+            if current_url in visited_urls:
+                raise HTTPClientError(
+                    f"Redirect cycle detected: {current_url}",
+                    url=url,
+                )
+            visited_urls.add(current_url)
             parsed_target = urlparse(current_url)
             target_hostname = parsed_target.hostname
             # Always check for private IP resolution. When an explicit domain
@@ -375,16 +388,31 @@ class RequestsTransport:
                 "Redirect response missing Location header",
                 url=original_url,
             )
+        location = location.strip()
         if location.startswith(("http://", "https://")):
             if original_url.startswith("https://") and location.startswith("http://"):
                 raise HTTPClientError(
                     f"HTTPS to HTTP redirect rejected: {location}",
                     url=original_url,
                 )
+            # Strip credentials from redirect URLs to prevent leakage.
+            parsed_location = urlparse(location)
+            if parsed_location.username or parsed_location.password:
+                sanitized = parsed_location._replace(netloc=parsed_location.hostname)
+                if parsed_location.port:
+                    sanitized = sanitized._replace(
+                        netloc=f"{parsed_location.hostname}:{parsed_location.port}"
+                    )
+                return sanitized.geturl()
             return location
         # Reject absolute URLs with non-HTTP schemes (ftp://, file://, etc.)
-        # to prevent protocol-injection redirects.
+        # and scheme-less forms like data: or javascript: that use `:` without `://`.
         if "://" in location and not location.startswith(("//", "/")):
+            raise HTTPClientError(
+                f"Redirect to non-HTTP scheme rejected: {location}",
+                url=original_url,
+            )
+        if ":" in location and not location.startswith(("//", "/")) and "/" not in location.split(":")[0]:
             raise HTTPClientError(
                 f"Redirect to non-HTTP scheme rejected: {location}",
                 url=original_url,

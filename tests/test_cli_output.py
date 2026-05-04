@@ -54,7 +54,7 @@ def test_emit_command_result_without_traceback_text() -> None:
 
 
 @pytest.mark.unit
-def test_emit_command_result_structured_failure_goes_to_stdout() -> None:
+def test_emit_command_result_structured_failure_goes_to_stderr() -> None:
     writer = RecordingWriter()
 
     emit_command_result(
@@ -66,8 +66,8 @@ def test_emit_command_result_structured_failure_goes_to_stdout() -> None:
         ),
     )
 
-    assert writer.stdout == ['{"error":"bad"}']
-    assert writer.stderr == []
+    assert writer.stdout == []
+    assert writer.stderr == ['{"error":"bad"}']
 
 
 @pytest.mark.unit

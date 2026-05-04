@@ -1162,7 +1162,7 @@ def test_delete_rejects_symlink_path_outside_repository(
         outside_symlink.unlink(missing_ok=True)
 
 
-def test_delete_removes_internal_symlink_pointing_outside_repository(
+def test_delete_refuses_internal_symlink_pointing_outside_repository(
     tmp_download_dir: Path,
     tmp_path: Path,
 ) -> None:
@@ -1177,12 +1177,12 @@ def test_delete_removes_internal_symlink_pointing_outside_repository(
         file_path=str(symlink_path),
     )
 
-    assert repository.delete(dll) is True
-    assert not symlink_path.is_symlink()
+    assert repository.delete(dll) is False
+    assert symlink_path.is_symlink()
     assert outside_file.read_bytes() == b"external content"
 
 
-def test_delete_removes_broken_symlink_inside_repository(tmp_download_dir: Path) -> None:
+def test_delete_refuses_broken_symlink_inside_repository(tmp_download_dir: Path) -> None:
     repository = FileSystemDLLRepository(tmp_download_dir)
     symlink_path = tmp_download_dir / "x64" / "broken.dll"
     symlink_path.symlink_to(tmp_download_dir / "missing-target.dll")
@@ -1192,8 +1192,8 @@ def test_delete_removes_broken_symlink_inside_repository(tmp_download_dir: Path)
         file_path=str(symlink_path),
     )
 
-    assert repository.delete(dll) is True
-    assert not symlink_path.is_symlink()
+    assert repository.delete(dll) is False
+    assert symlink_path.is_symlink()
 
 
 def test_find_nonexistent_dll_returns_none(
@@ -1841,14 +1841,12 @@ def test_index_symlink_is_not_loaded(
     index_path.symlink_to(external_index)
 
     try:
-        found = repository.find_by_name("external-index.dll", Architecture.X64)
-
-        assert found is not None
-        assert found.download_url is None
-        assert repository.find_by_hash(file_hash) is None
-        listed = repository.list_all()
-        assert [dll.name for dll in listed] == ["external-index.dll"]
-        assert listed[0].download_url is None
+        with pytest.raises(RepositoryError, match="symlink"):
+            repository.find_by_name("external-index.dll", Architecture.X64)
+        with pytest.raises(RepositoryError, match="symlink"):
+            repository.find_by_hash(file_hash)
+        with pytest.raises(RepositoryError, match="symlink"):
+            repository.list_all()
     finally:
         index_path.unlink(missing_ok=True)
         external_index.unlink(missing_ok=True)

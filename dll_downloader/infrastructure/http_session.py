@@ -62,13 +62,12 @@ class HTTPSessionResource:
     @property
     def session(self) -> HTTPSessionProtocol:
         """Return a lazily created configured HTTP session."""
-        if self._session is None:
-            with self._lock:
-                if self._session is None:
-                    session = cast(HTTPSessionProtocol, requests.Session())
-                    session.headers.update(self._headers)
-                    self._session = session
-        return self._session
+        with self._lock:
+            if self._session is None:
+                session = cast(HTTPSessionProtocol, requests.Session())
+                session.headers.update(self._headers)
+                self._session = session
+            return self._session
 
     @property
     def has_session(self) -> bool:

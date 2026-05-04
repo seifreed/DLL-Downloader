@@ -21,7 +21,7 @@ _logger = logging.getLogger(__name__)
 
 
 def _path_to_uri(file_path: str | None) -> str | None:
-    if file_path is None:
+    if file_path is None or not file_path:
         return None
     p = Path(file_path)
     try:
@@ -33,8 +33,8 @@ def _path_to_uri(file_path: str | None) -> str | None:
         if parts and not parts[0]:
             # Absolute path without drive letter (e.g., "/foo/bar")
             # Prepend a leading slash to form a valid relative URI.
-            return "/" + "/".join(quote(part, safe="") for part in parts if part)
-        return "/".join(quote(part, safe="") for part in parts)
+            return "/" + "/".join(quote(part, safe="-._~") for part in parts if part)
+        return "/".join(quote(part, safe="-._~") for part in parts)
 
 
 def _serialize_datetime(value: datetime | None) -> str | None:
@@ -168,6 +168,7 @@ class DownloadBatchSARIFPresenter:
                 }
             ],
             properties={
+                "architecture": "",
                 "successCount": 0,
                 "failureCount": failure_count,
                 "structuredOutputVersion": STRUCTURED_OUTPUT_VERSION,

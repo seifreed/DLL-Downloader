@@ -87,7 +87,7 @@ def _validate_not_private_url(value: str, field_name: str) -> None:
     parsed = urlparse(value)
     hostname = parsed.hostname
     if not hostname:
-        return
+        raise ValueError(f"{field_name} must have a valid hostname")
     try:
         addr = ipaddress.ip_address(hostname)
         addr = _normalize_ip(addr)

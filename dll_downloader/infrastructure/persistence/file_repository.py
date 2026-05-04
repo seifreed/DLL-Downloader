@@ -160,8 +160,7 @@ class FileSystemDLLRepository(IDLLRepository):
     def _load_index(self) -> IndexData:
         """Load the DLL index from disk."""
         if self._is_symlink(self._index_path):
-            logger.warning("Refusing to load DLL index through symlink: %s", self._index_path)
-            return {"files": {}}
+            raise RepositoryError(f"Refusing to load DLL index through symlink: {self._index_path}")
         if not self._index_path.exists():
             return {"files": {}}
         if not self._index_path.is_file():
@@ -332,10 +331,13 @@ class FileSystemDLLRepository(IDLLRepository):
         return resolved_parent
 
     @staticmethod
-    def _read_file_no_follow(file_path: Path) -> bytes:
+    def _read_file_no_follow(file_path: Path, max_bytes: int = 1024 * 1024 * 1024) -> bytes:
         """Read file bytes with O_NOFOLLOW to prevent symlink traversal."""
         fd = os.open(str(file_path), os.O_RDONLY | os.O_NOFOLLOW)
         try:
+            st = os.fstat(fd)
+            if st.st_size > max_bytes:
+                raise RepositoryError(f"File exceeds read limit ({st.st_size} bytes): {file_path}")
             with os.fdopen(fd, "rb") as f:
                 fd = -1
                 return f.read()
@@ -367,6 +369,7 @@ class FileSystemDLLRepository(IDLLRepository):
             # the target file (which could be replaced via TOCTOU).
             with contextlib.suppress(OSError):
                 os.chmod(temp_name, 0o644)
+            logger.debug("Set permissions 0o644 on temp file %s", temp_name)
             # TOCTOU hardening: open the target with O_NOFOLLOW immediately
             # before the atomic rename to catch symlink replacement attacks.
             # If the target exists, O_NOFOLLOW prevents following a symlink
@@ -811,9 +814,10 @@ class FileSystemDLLRepository(IDLLRepository):
         """
         with self._with_index_lock(shared=True):
             index = self._load_index()
+            raw_keys = self._load_raw_index_keys()
             dll_files: list[DLLFile] = []
             indexed_keys = {
-                *self._load_raw_index_keys(),
+                *raw_keys,
                 *(key.lower() for key in index["files"]),
             }
             returned_keys: set[str] = set()
@@ -863,11 +867,9 @@ class FileSystemDLLRepository(IDLLRepository):
 
     def _load_raw_index_keys(self) -> set[str]:
         """Return raw index keys so corrupt metadata still blocks disk fallback."""
-        if (
-            self._is_symlink(self._index_path)
-            or not self._index_path.exists()
-            or not self._index_path.is_file()
-        ):
+        if self._is_symlink(self._index_path):
+            return set()
+        if not self._index_path.exists() or not self._index_path.is_file():
             return set()
 
         try:
@@ -897,7 +899,21 @@ class FileSystemDLLRepository(IDLLRepository):
         raw_files = raw_data.get("files", {})
         if not isinstance(raw_files, dict):
             return set()
-        return {str(key).lower() for key in raw_files}
+        normalized_keys: set[str] = set()
+        for key in raw_files:
+            entry = raw_files.get(key)
+            if isinstance(entry, dict):
+                arch = entry.get("architecture", "")
+                name = entry.get("name", "")
+                if isinstance(arch, str) and isinstance(name, str):
+                    try:
+                        normalized_arch = Architecture(arch).value
+                    except ValueError:
+                        normalized_arch = arch.lower()
+                    normalized_keys.add(f"{normalized_arch}/{str(name).lower()}")
+                    continue
+            normalized_keys.add(str(key).lower())
+        return normalized_keys
 
     def delete(self, dll_file: DLLFile) -> bool:
         """
@@ -918,15 +934,15 @@ class FileSystemDLLRepository(IDLLRepository):
             if file_path is None:
                 return False
 
-            self._validate_repository_write_path(self._index_path)
-            if not self._delete_path_is_safe(file_path):
-                logger.warning(
-                    "Refusing to delete DLL outside repository: %s",
-                    file_path,
-                )
-                return False
-
             with self._with_index_lock():
+                self._validate_repository_write_path(self._index_path)
+                self._validate_repository_write_path(file_path)
+                if not self._delete_path_is_safe(file_path):
+                    logger.warning(
+                        "Refusing to delete DLL outside repository: %s",
+                        file_path,
+                    )
+                    return False
                 original_index, index_was_updated = self._remove_index_entry_under_lock(
                     delete_target
                 )

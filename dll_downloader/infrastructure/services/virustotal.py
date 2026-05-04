@@ -80,6 +80,8 @@ def _safe_int(value: object, *, strict: bool = False) -> int:
             raise VirusTotalError(f"VT API returned negative count: {value}")
         return value
     if isinstance(value, float):
+        if value != value or value == float('inf') or value == float('-inf'):
+            raise VirusTotalError(f"VT API returned non-finite float: {value!r}")
         result = int(round(value))
         if strict and result < 0:
             raise VirusTotalError(f"VT API returned negative count: {result}")
@@ -95,6 +97,16 @@ def _safe_int(value: object, *, strict: bool = False) -> int:
                 raise VirusTotalError(f"VT API returned unparseable integer value: {value!r}") from exc
             logger.warning("VT API returned unparseable integer value: %r, defaulting to 0", value)
             return 0
+    if value is None:
+        if strict:
+            raise VirusTotalError("VT API returned null for integer field")
+        logger.warning("VT API returned null for integer field, defaulting to 0")
+        return 0
+    if isinstance(value, (dict, list)):
+        if strict:
+            raise VirusTotalError(f"VT API returned unexpected type for integer field: {value!r}")
+        logger.warning("VT API returned unexpected type for integer field: %r, defaulting to 0", value)
+        return 0
     raise VirusTotalError(f"VT API returned unexpected type for integer field: {value!r}")
 
 
@@ -145,7 +157,7 @@ def _safe_json(response: HTTPResponseProtocol) -> dict[str, object]:
         body = b"".join(chunks)
         try:
             payload = json.loads(body)
-        except (ValueError, UnicodeDecodeError, TypeError) as exc:
+        except (ValueError, UnicodeDecodeError, TypeError, RecursionError) as exc:
             raise VirusTotalError(f"Invalid JSON in VirusTotal response: {exc}") from exc
     else:
         # Fallback: response supports json() but not iter_content/content.
@@ -153,7 +165,7 @@ def _safe_json(response: HTTPResponseProtocol) -> dict[str, object]:
         # already checked above and no streaming size accounting is available.
         try:
             payload = response.json()
-        except (ValueError, UnicodeDecodeError, TypeError) as exc:
+        except (ValueError, UnicodeDecodeError, TypeError, RecursionError) as exc:
             raise VirusTotalError(f"Invalid JSON in VirusTotal response: {exc}") from exc
         serialized_size = len(json.dumps(payload, default=str))
         if serialized_size > _VT_RESPONSE_MAX_BYTES:
@@ -277,7 +289,7 @@ class VirusTotalScanner(ISecurityScanner):
         kwargs.setdefault("allow_redirects", False)
         kwargs.setdefault("timeout", self._timeout)
         current_url = url
-        for _ in range(self._MAX_REDIRECT_HOPS):
+        for hop in range(self._MAX_REDIRECT_HOPS):
             parsed = urlparse(current_url)
             if parsed.scheme not in ("http", "https"):
                 raise VirusTotalError(f"Request to non-HTTP scheme rejected: {current_url}")
@@ -318,6 +330,7 @@ class VirusTotalScanner(ISecurityScanner):
         hops = 0
         while response.is_redirect and hops < self._MAX_REDIRECT_HOPS:
             location = _header_value(dict(response.headers), "location") or ""
+            location = location.strip()
             self._close_response(response)
             if not location:
                 raise VirusTotalError(f"Redirect response missing Location header for {current_url}")
@@ -329,11 +342,16 @@ class VirusTotalScanner(ISecurityScanner):
                 from urllib.parse import urljoin
                 current_url = urljoin(current_url, location)
             parsed = urlparse(current_url)
+            if parsed.scheme not in ("http", "https"):
+                raise VirusTotalError(f"Request to non-HTTP scheme rejected: {current_url}")
             if parsed.hostname and not self._hostname_is_allowed(parsed.hostname):
                 raise VirusTotalError(
                     f"Redirect to disallowed or private-address hostname rejected: {parsed.hostname}"
                 )
-            response = self.session.get(current_url, allow_redirects=False, timeout=self._timeout)  # type: ignore[arg-type]
+            if response.status_code in (307, 308):
+                response = self.session.post(current_url, allow_redirects=False, timeout=self._timeout, **{k: v for k, v in kwargs.items() if k not in ("allow_redirects", "timeout")})  # type: ignore[arg-type]
+            else:
+                response = self.session.get(current_url, allow_redirects=False, timeout=self._timeout)  # type: ignore[arg-type]
             hops += 1
         if response.is_redirect:
             self._close_response(response)
@@ -449,8 +467,11 @@ class VirusTotalScanner(ISecurityScanner):
             error_message = str(exc).lower()
             if any(
                 indicator in error_message
-                for indicator in ("401", "403", "429", "unauthorized", "forbidden", "rate limit")
+                for indicator in ("unauthorized", "forbidden", "rate limit")
             ):
+                raise
+            status_code = getattr(exc, 'status_code', None)
+            if status_code in (401, 403, 429):
                 raise
             logger.info(
                 "Hash lookup failed for %s, proceeding with upload: %s", file_hash, exc

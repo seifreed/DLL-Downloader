@@ -6,6 +6,7 @@ for security threats, and storing it in the repository.
 """
 
 import logging
+import os
 import zipfile
 import zlib
 from dataclasses import dataclass, replace
@@ -178,8 +179,13 @@ class DownloadDLLUseCase:
             file_hash=self._calculate_hash(content)
         )
 
-        dll_file, security_warning = self._scan_for_malware(dll_file, request.scan_before_save)
         dll_file = self._save_dll(dll_file, content)
+        dll_file, security_warning = self._scan_for_malware(dll_file, request.scan_before_save)
+        if dll_file.file_path:
+            try:
+                dll_file = self._repository.update_metadata(dll_file)
+            except RepositoryOperationError:
+                logger.warning("Failed to persist scan results for %s", dll_file.name)
 
         return DownloadDLLResponse(
             success=True,
@@ -263,6 +269,7 @@ class DownloadDLLUseCase:
         try:
             return self._repository.update_metadata(scanned_dll)
         except RepositoryOperationError:
+            logger.warning("Failed to persist scan results for cached DLL %s", cached_dll.name)
             return scanned_dll
 
     @classmethod
@@ -275,15 +282,22 @@ class DownloadDLLUseCase:
         valid ZIP containing the requested DLL."""
         if not dll_file.file_path:
             return False
-        cache_path = Path(dll_file.file_path)
-        if cache_path.is_symlink():
-            return False
-        if not cache_path.is_file():
-            return False
         try:
-            content = cache_path.read_bytes()
+            cache_path = Path(dll_file.file_path)
+            fd = os.open(str(cache_path), os.O_RDONLY | os.O_NOFOLLOW)
         except OSError:
             return False
+        try:
+            with os.fdopen(fd, "rb") as f:
+                fd = -1
+                content = f.read()
+        except OSError:
+            return False
+        finally:
+            if fd >= 0:
+                import contextlib
+                with contextlib.suppress(OSError):
+                    os.close(fd)
         if zipfile.is_zipfile(BytesIO(content)):
             return False
         try:
@@ -311,16 +325,22 @@ class DownloadDLLUseCase:
         if not dll_file.file_path:
             return False
 
-        cache_path = Path(dll_file.file_path)
-        if cache_path.is_symlink():
-            return False
-        if not cache_path.is_file():
-            return False
-
         try:
-            content = cache_path.read_bytes()
+            cache_path = Path(dll_file.file_path)
+            fd = os.open(str(cache_path), os.O_RDONLY | os.O_NOFOLLOW)
         except OSError:
             return False
+        try:
+            with os.fdopen(fd, "rb") as f:
+                fd = -1
+                content = f.read()
+        except OSError:
+            return False
+        finally:
+            if fd >= 0:
+                import contextlib
+                with contextlib.suppress(OSError):
+                    os.close(fd)
 
         if zipfile.is_zipfile(BytesIO(content)):
             try:
@@ -472,7 +492,7 @@ class DownloadDLLUseCase:
                 self._validate_zip_contains_valid_dll(content, request)
                 return content
             return self._extract_valid_dll_from_zip(content, request)
-        except (RuntimeError, NotImplementedError, zipfile.BadZipFile, zlib.error, ValueError, OverflowError) as exc:
+        except (RuntimeError, NotImplementedError, zipfile.BadZipFile, zlib.error, ValueError, OverflowError, OSError) as exc:
             raise ArchiveExtractionError("Downloaded archive is not a valid ZIP file") from exc
 
     def _validate_zip_contains_valid_dll(
@@ -561,7 +581,7 @@ class DownloadDLLUseCase:
                     raise ArchiveExtractionError(
                         "Extracted DLL exceeds size limit"
                     )
-                if member.file_size > 0 and len(extracted_content) != member.file_size:
+                if len(extracted_content) != member.file_size:
                     raise ArchiveExtractionError(
                         "Extracted size does not match ZIP metadata, possible ZIP bomb"
                     )

@@ -130,7 +130,7 @@ class RequestsHTTPClient:
             for chunk in response.iter_content(chunk_size=8192):
                 if chunk:
                     total_bytes += len(chunk)
-                    if total_bytes > self._max_download_bytes:
+                    if total_bytes >= self._max_download_bytes:
                         raise HTTPClientError(
                             f"GET response exceeds size limit {self._max_download_bytes}",
                             status_code=response.status_code,
@@ -191,7 +191,7 @@ class RequestsHTTPClient:
                         status_code=response.status_code,
                         url=url,
                     )
-                if declared_size > self._max_download_bytes:
+                if declared_size >= self._max_download_bytes:
                     raise HTTPClientError(
                         f"Content-Length {declared_size} exceeds download limit "
                         f"{self._max_download_bytes}",
@@ -204,7 +204,7 @@ class RequestsHTTPClient:
             for chunk in response.iter_content(chunk_size=8192):
                 if chunk:
                     total_bytes += len(chunk)
-                    if total_bytes > self._max_download_bytes:
+                    if total_bytes >= self._max_download_bytes:
                         raise HTTPClientError(
                             f"Download exceeded size limit {self._max_download_bytes}",
                             status_code=response.status_code,

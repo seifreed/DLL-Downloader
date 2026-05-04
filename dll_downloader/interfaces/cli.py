@@ -98,13 +98,13 @@ def read_dll_list_from_file(file_path: str) -> list[str]:
         st = os.fstat(fd)
         if not stat.S_ISREG(st.st_mode):
             raise ValueError(f"Refusing to read non-regular file: '{file_path}'")
-        with os.fdopen(fd, encoding="utf-8") as f:
+        with os.fdopen(fd, encoding="utf-8-sig") as f:
             fd = -1  # ownership transferred to fdopen
             dll_names = []
             for i, line in enumerate(f):
                 if i >= _MAX_DLL_LIST_LINES:
                     raise ValueError(f"File '{file_path}' exceeds maximum line count")
-                if len(line) > _MAX_DLL_NAME_LENGTH:
+                if len(line.rstrip('\n\r')) > _MAX_DLL_NAME_LENGTH:
                     raise ValueError(
                         f"Line {i + 1} in '{file_path}' exceeds maximum length"
                     )
