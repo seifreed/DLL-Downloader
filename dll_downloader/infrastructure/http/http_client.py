@@ -3,7 +3,6 @@ HTTP client adapter built on top of the shared requests transport.
 """
 
 import logging
-import time
 from collections.abc import Mapping
 
 from ...domain.services.http_client import HTTPFileInfo
@@ -13,6 +12,7 @@ from ..http_session import (
     HTTPSessionResource,
 )
 from .request_headers import RequestHeaderBuilder
+from .response_stream import declared_content_length, decode_text, read_bounded_response
 from .retry_policy import RetryPolicy
 from .transport import (
     HTTP_STREAM_ERROR_TYPES,
@@ -29,7 +29,6 @@ from .user_agents import (
 
 logger = logging.getLogger(__name__)
 __all__ = ["HTTPClientError", "HTTPResponse", "RequestsHTTPClient"]
-
 
 _DEFAULT_MAX_DOWNLOAD_BYTES = 512 * 1024 * 1024  # 512 MiB
 _DEFAULT_STREAM_WALL_LIMIT = 600  # 10 minutes total per streaming read
@@ -85,9 +84,7 @@ class RequestsHTTPClient:
 
     @staticmethod
     def _default_user_agent_provider(user_agent: str | None) -> UserAgentProvider:
-        if user_agent:
-            return FixedUserAgentProvider(user_agent)
-        return RandomUserAgentProvider()
+        return FixedUserAgentProvider(user_agent) if user_agent else RandomUserAgentProvider()
 
     @property
     def session(self) -> HTTPSessionProtocol:
@@ -103,19 +100,10 @@ class RequestsHTTPClient:
     def __enter__(self) -> "RequestsHTTPClient":
         return self
 
-    def __exit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_val: BaseException | None,
-        exc_tb: object | None,
-    ) -> None:
+    def __exit__(self, *_args: object) -> None:
         self.close()
 
-    def get(
-        self,
-        url: str,
-        headers: Mapping[str, str] | None = None,
-    ) -> HTTPResponse:
+    def get(self, url: str, headers: Mapping[str, str] | None = None) -> HTTPResponse:
         response = self._transport.execute("GET", url, headers=headers, stream=True)
         try:
             if not response.ok:
@@ -124,26 +112,13 @@ class RequestsHTTPClient:
                     status_code=response.status_code,
                     url=response.url or url,
                 )
-            chunks: list[bytes] = []
-            total_bytes = 0
-            stream_start = time.monotonic()
-            for chunk in response.iter_content(chunk_size=8192):
-                if chunk:
-                    total_bytes += len(chunk)
-                    if total_bytes >= self._max_download_bytes:
-                        raise HTTPClientError(
-                            f"GET response exceeds size limit {self._max_download_bytes}",
-                            status_code=response.status_code,
-                            url=response.url or url,
-                        )
-                    chunks.append(chunk)
-                if time.monotonic() - stream_start > _DEFAULT_STREAM_WALL_LIMIT:
-                    raise HTTPClientError(
-                        f"GET response exceeded wall-clock limit of {_DEFAULT_STREAM_WALL_LIMIT}s",
-                        status_code=response.status_code,
-                        url=response.url or url,
-                    )
-            content = b"".join(chunks)
+            content = read_bounded_response(
+                response,
+                max_bytes=self._max_download_bytes,
+                wall_limit_seconds=_DEFAULT_STREAM_WALL_LIMIT,
+                operation="GET response",
+                url=response.url or url,
+            )
             return HTTPResponse(
                 status_code=response.status_code,
                 content=content,
@@ -159,19 +134,15 @@ class RequestsHTTPClient:
         finally:
             self._close_response(response)
 
-    def get_text(
-        self,
-        url: str,
-        headers: Mapping[str, str] | None = None,
-    ) -> str:
+    def get_text(self, url: str, headers: Mapping[str, str] | None = None) -> str:
         response = self.get(url, headers=headers)
-        return self._decode_text(response.content, response.headers)
+        return decode_text(response.content, response.headers)
 
-    def download(
-        self,
-        url: str,
-        headers: Mapping[str, str] | None = None,
-    ) -> bytes:
+    @staticmethod
+    def _decode_text(content: bytes, headers: Mapping[str, str]) -> str:
+        return decode_text(content, headers)
+
+    def download(self, url: str, headers: Mapping[str, str] | None = None) -> bytes:
         response = self._transport.execute("DOWNLOAD", url, headers=headers, stream=True)
         try:
             if not response.ok:
@@ -180,52 +151,20 @@ class RequestsHTTPClient:
                     status_code=response.status_code,
                     url=url,
                 )
-            content_length = header_value(dict(response.headers), "content-length")
-            declared_size: int | None = None
-            if content_length is not None:
-                try:
-                    declared_size = int(content_length)
-                except ValueError:
-                    raise HTTPClientError(
-                        f"Invalid Content-Length header: {content_length!r}",
-                        status_code=response.status_code,
-                        url=url,
-                    )
-                if declared_size >= self._max_download_bytes:
-                    raise HTTPClientError(
-                        f"Content-Length {declared_size} exceeds download limit "
-                        f"{self._max_download_bytes}",
-                        status_code=response.status_code,
-                        url=url,
-                    )
-            chunks: list[bytes] = []
-            total_bytes = 0
-            stream_start = time.monotonic()
-            for chunk in response.iter_content(chunk_size=8192):
-                if chunk:
-                    total_bytes += len(chunk)
-                    if total_bytes >= self._max_download_bytes:
-                        raise HTTPClientError(
-                            f"Download exceeded size limit {self._max_download_bytes}",
-                            status_code=response.status_code,
-                            url=url,
-                        )
-                    chunks.append(chunk)
-                if time.monotonic() - stream_start > _DEFAULT_STREAM_WALL_LIMIT:
-                    raise HTTPClientError(
-                        f"Download exceeded wall-clock limit of {_DEFAULT_STREAM_WALL_LIMIT}s",
-                        status_code=response.status_code,
-                        url=url,
-                    )
-            result = b"".join(chunks)
-            if declared_size is not None and len(result) != declared_size:
-                raise HTTPClientError(
-                    f"Incomplete download: received {len(result)} bytes, "
-                    f"expected {declared_size}",
-                    status_code=response.status_code,
-                    url=url,
-                )
-            return result
+            declared_size = declared_content_length(
+                response,
+                max_bytes=self._max_download_bytes,
+                operation="download",
+                url=url,
+            )
+            return read_bounded_response(
+                response,
+                max_bytes=self._max_download_bytes,
+                wall_limit_seconds=_DEFAULT_STREAM_WALL_LIMIT,
+                operation="Download",
+                url=url,
+                declared_size=declared_size,
+            )
         except HTTP_STREAM_ERROR_TYPES as exc:
             raise HTTPClientError(
                 f"Download stream failed: {exc}",
@@ -234,35 +173,6 @@ class RequestsHTTPClient:
             ) from exc
         finally:
             self._close_response(response)
-
-    _TEXT_CHARSETS = frozenset({
-        "utf-8", "utf8", "utf-16", "utf-16-le", "utf-16-be",
-        "utf-32", "utf-32-le", "utf-32-be",
-        "ascii", "latin-1", "iso-8859-1", "iso-8859-15",
-        "cp1252", "windows-1252", "cp1250", "windows-1250", "cp1251", "windows-1251",
-        "shift_jis", "shift-jis", "euc-jp", "euc-kr", "gb2312", "gbk", "gb18030",
-        "big5", "iso-2022-jp",
-    })
-
-    @classmethod
-    def _decode_text(cls, content: bytes, headers: dict[str, str]) -> str:
-        content_type = header_value(headers, "content-type") or ""
-        charset = "utf-8"
-        for part in content_type.split(";"):
-            part = part.strip()
-            if part.lower().startswith("charset="):
-                candidate = part.split("=", 1)[1].strip().strip('"').strip("'").lower()
-                if candidate in cls._TEXT_CHARSETS:
-                    charset = candidate
-                break
-        try:
-            return content.decode(charset)
-        except LookupError:
-            return content.decode("utf-8", errors="replace")
-        except UnicodeDecodeError:
-            if charset == "utf-8":
-                return content.decode("utf-8", errors="replace")
-            return content.decode(charset, errors="replace")
 
     @staticmethod
     def _close_response(response: HTTPResponseProtocol) -> None:
@@ -274,11 +184,7 @@ class RequestsHTTPClient:
         except HTTP_STREAM_ERROR_TYPES as exc:
             logger.warning("Failed to close response: %s", exc)
 
-    def head(
-        self,
-        url: str,
-        headers: Mapping[str, str] | None = None,
-    ) -> dict[str, str]:
+    def head(self, url: str, headers: Mapping[str, str] | None = None) -> dict[str, str]:
         response = self._transport.execute(
             "HEAD", url, headers=headers, allow_redirects=True
         )
@@ -294,9 +200,7 @@ class RequestsHTTPClient:
             self._close_response(response)
 
     def get_file_info(
-        self,
-        url: str,
-        headers: Mapping[str, str] | None = None,
+        self, url: str, headers: Mapping[str, str] | None = None
     ) -> HTTPFileInfo:
         response_headers = self.head(url, headers=headers)
         content_length = header_value(response_headers, "content-length")

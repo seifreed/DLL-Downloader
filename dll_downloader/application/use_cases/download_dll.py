@@ -5,8 +5,10 @@ Orchestrates the process of downloading a DLL file, optionally scanning it
 for security threats, and storing it in the repository.
 """
 
+import contextlib
 import logging
 import os
+import stat
 import zipfile
 import zlib
 from dataclasses import dataclass, replace
@@ -48,6 +50,29 @@ _ZIP_MEMBER_READ_ERRORS = (
 _ZIP_COMPRESSION_RATIO_LIMIT = 100
 _ZIP_MEMBER_SIZE_LIMIT = 512 * 1024 * 1024  # 512 MiB
 _ZIP_COMPRESSED_SIZE_LIMIT = 100 * 1024 * 1024  # 100 MiB
+_READ_FILE_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0)
+
+
+def _read_regular_file_no_follow(file_path: Path) -> bytes | None:
+    """Read a regular file without following symlinks or blocking on FIFOs."""
+    try:
+        fd = os.open(str(file_path), _READ_FILE_FLAGS)
+    except OSError:
+        return None
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            return None
+        os.set_blocking(fd, True)
+        with os.fdopen(fd, "rb") as file_handle:
+            fd = -1
+            return file_handle.read()
+    except OSError:
+        return None
+    finally:
+        if fd >= 0:
+            with contextlib.suppress(OSError):
+                os.close(fd)
 
 
 @dataclass
@@ -173,19 +198,17 @@ class DownloadDLLUseCase:
 
         dll_file = DLLFile(
             name=request.dll_name,
-            architecture=request.architecture,
+            architecture=self._resolve_actual_architecture(content, request.architecture),
             download_url=download_url,
             file_size=len(content),
             file_hash=self._calculate_hash(content)
         )
 
+        dll_file, security_warning = self._scan_for_malware(
+            dll_file,
+            request.scan_before_save,
+        )
         dll_file = self._save_dll(dll_file, content)
-        dll_file, security_warning = self._scan_for_malware(dll_file, request.scan_before_save)
-        if dll_file.file_path:
-            try:
-                dll_file = self._repository.update_metadata(dll_file)
-            except RepositoryOperationError:
-                logger.warning("Failed to persist scan results for %s", dll_file.name)
 
         return DownloadDLLResponse(
             success=True,
@@ -282,22 +305,9 @@ class DownloadDLLUseCase:
         valid ZIP containing the requested DLL."""
         if not dll_file.file_path:
             return False
-        try:
-            cache_path = Path(dll_file.file_path)
-            fd = os.open(str(cache_path), os.O_RDONLY | os.O_NOFOLLOW)
-        except OSError:
+        content = _read_regular_file_no_follow(Path(dll_file.file_path))
+        if content is None:
             return False
-        try:
-            with os.fdopen(fd, "rb") as f:
-                fd = -1
-                content = f.read()
-        except OSError:
-            return False
-        finally:
-            if fd >= 0:
-                import contextlib
-                with contextlib.suppress(OSError):
-                    os.close(fd)
         if zipfile.is_zipfile(BytesIO(content)):
             return False
         try:
@@ -313,34 +323,19 @@ class DownloadDLLUseCase:
     ) -> bool:
         """Return True when a file-backed cache entry matches the active request."""
         if request.extract_archive:
-            if self._cached_payload_satisfies_extract(
-                dll_file,
-                request.architecture,
-            ):
-                return True
             # A cached ZIP cannot satisfy an extract request because the cached
             # DLLFile entity still references the ZIP path, not the extracted DLL.
             # Re-download to get a fresh extraction.
-            return False
+            return self._cached_payload_satisfies_extract(
+                dll_file,
+                request.architecture,
+            )
         if not dll_file.file_path:
             return False
 
-        try:
-            cache_path = Path(dll_file.file_path)
-            fd = os.open(str(cache_path), os.O_RDONLY | os.O_NOFOLLOW)
-        except OSError:
+        content = _read_regular_file_no_follow(Path(dll_file.file_path))
+        if content is None:
             return False
-        try:
-            with os.fdopen(fd, "rb") as f:
-                fd = -1
-                content = f.read()
-        except OSError:
-            return False
-        finally:
-            if fd >= 0:
-                import contextlib
-                with contextlib.suppress(OSError):
-                    os.close(fd)
 
         if zipfile.is_zipfile(BytesIO(content)):
             try:
@@ -403,6 +398,23 @@ class DownloadDLLUseCase:
             raise DownloadExecutionError("Security scan did not complete")
 
         return scanned_dll, self._security_warning_for_status(scanned_dll)
+
+    @staticmethod
+    def _resolve_actual_architecture(
+        content: bytes,
+        requested_architecture: Architecture,
+    ) -> Architecture:
+        """Return the resolved architecture for a DLL file.
+
+        When the request specifies UNKNOWN, detect the actual PE architecture
+        from the content. Otherwise, return the requested architecture.
+        """
+        if requested_architecture == Architecture.UNKNOWN:
+            try:
+                return DownloadDLLUseCase._detect_pe_architecture(content)
+            except DownloadExecutionError:
+                return requested_architecture
+        return requested_architecture
 
     @staticmethod
     def _security_warning_for_status(dll_file: DLLFile) -> str | None:
@@ -503,7 +515,7 @@ class DownloadDLLUseCase:
         """Validate that a ZIP payload contains a real PE DLL before saving it as-is."""
         self._extract_valid_dll_from_zip(content, request)
 
-    def _extract_valid_dll_from_zip(
+    def _extract_valid_dll_from_zip(  # noqa: C901
         self,
         content: bytes,
         request: DownloadDLLRequest,
@@ -517,6 +529,10 @@ class DownloadDLLUseCase:
                 if member.file_size > _ZIP_MEMBER_SIZE_LIMIT:
                     raise ArchiveExtractionError(
                         "ZIP member exceeds size limit"
+                    )
+                if member.compress_size > _ZIP_COMPRESSED_SIZE_LIMIT:
+                    raise ArchiveExtractionError(
+                        "ZIP member compressed size exceeds safe limit"
                     )
                 # Check compression ratio for potential ZIP bombs
                 if member.compress_size > 0:
@@ -565,10 +581,6 @@ class DownloadDLLUseCase:
             read_error: Exception | None = None
             empty_member_found = False
             for member in requested_members:
-                if member.compress_size > _ZIP_COMPRESSED_SIZE_LIMIT:
-                    raise ArchiveExtractionError(
-                        "ZIP member compressed size exceeds safe limit, possible ZIP bomb"
-                    )
                 try:
                     extracted_content = archive.read(member)
                 except _ZIP_MEMBER_READ_ERRORS as exc:

@@ -201,18 +201,24 @@ class RequestsTransport:
                 self._allowed_redirect_domains is not None
                 and target_hostname in self._allowed_redirect_domains
             )
-            if target_hostname and _hostname_resolves_to_private_ip(target_hostname):
-                if not is_allowlisted:
-                    raise HTTPClientError(
-                        f"Request to {target_hostname} rejected: resolves to private/reserved address",
-                        url=current_url,
-                    )
-            if self._allowed_redirect_domains is not None:
-                if target_hostname and target_hostname not in self._allowed_redirect_domains:
-                    raise HTTPClientError(
-                        f"Redirect to disallowed domain: {target_hostname}",
-                        url=current_url,
-                    )
+            if (
+                target_hostname
+                and _hostname_resolves_to_private_ip(target_hostname)
+                and not is_allowlisted
+            ):
+                raise HTTPClientError(
+                    f"Request to {target_hostname} rejected: resolves to private/reserved address",
+                    url=current_url,
+                )
+            if (
+                self._allowed_redirect_domains is not None
+                and target_hostname
+                and target_hostname not in self._allowed_redirect_domains
+            ):
+                raise HTTPClientError(
+                    f"Redirect to disallowed domain: {target_hostname}",
+                    url=current_url,
+                )
             response = self._single_request(
                 method_name, current_url, headers, stream=stream, allow_redirects=False,
             )
@@ -251,18 +257,7 @@ class RequestsTransport:
         for attempt in range(1, self._retry_policy.max_attempts + 1):
             # Per-request DNS rebinding check: resolve the target hostname
             # immediately before connecting to avoid TOCTOU with config-time validation.
-            parsed_target = urlparse(url)
-            target_hostname = parsed_target.hostname
-            is_allowlisted = (
-                self._allowed_redirect_domains is not None
-                and target_hostname in self._allowed_redirect_domains
-            )
-            if target_hostname and _hostname_resolves_to_private_ip(target_hostname):
-                if not is_allowlisted:
-                    raise HTTPClientError(
-                        f"Request to {target_hostname} rejected: resolves to private/reserved address",
-                        url=url,
-                    )
+            self._validate_single_request_target(url)
             try:
                 response = request_method(
                     url,
@@ -281,16 +276,9 @@ class RequestsTransport:
                 self._retry_policy.pause_before_retry(attempt)
                 continue
 
-            if self._retry_policy.should_retry_status(response.status_code, attempt):
+            if self._status_should_retry(response.status_code, attempt):
                 self._log_retryable_status(method_name, url, attempt, response.status_code)
                 self._close_retryable_response(response)
-                if attempt >= self._retry_policy.max_attempts:
-                    raise HTTPClientError(
-                        f"{method_name} request failed with status {response.status_code} "
-                        f"after {attempt} attempts",
-                        status_code=response.status_code,
-                        url=response.url or url,
-                    )
                 self._retry_policy.pause_before_retry(attempt)
                 continue
 
@@ -309,13 +297,38 @@ class RequestsTransport:
             url=url,
         )
 
+    def _validate_single_request_target(self, url: str) -> None:
+        parsed_target = urlparse(url)
+        target_hostname = parsed_target.hostname
+        is_allowlisted = (
+            self._allowed_redirect_domains is not None
+            and target_hostname in self._allowed_redirect_domains
+        )
+        if (
+            target_hostname
+            and _hostname_resolves_to_private_ip(target_hostname)
+            and not is_allowlisted
+        ):
+            raise HTTPClientError(
+                f"Request to {target_hostname} rejected: resolves to private/reserved address",
+                url=url,
+            )
+
+    def _status_should_retry(self, status_code: int, attempt: int) -> bool:
+        return (
+            status_code in self._retry_policy.retryable_status_codes
+            and attempt < self._retry_policy.max_attempts
+        )
+
     def _resolve_request_method(
         self,
         method_name: str,
     ) -> Callable[..., HTTPResponseProtocol]:
-        if method_name in {"GET", "DOWNLOAD"}:
+        if method_name == "GET" or method_name == "DOWNLOAD":
             return self.session.get
-        return self.session.head
+        if method_name == "HEAD":
+            return self.session.head
+        raise HTTPClientError(f"Unknown HTTP method: {method_name}", url="")
 
     def _close_retryable_response(self, response: HTTPResponseProtocol) -> None:
         """Release a retryable response before issuing the next request."""
@@ -398,10 +411,11 @@ class RequestsTransport:
             # Strip credentials from redirect URLs to prevent leakage.
             parsed_location = urlparse(location)
             if parsed_location.username or parsed_location.password:
-                sanitized = parsed_location._replace(netloc=parsed_location.hostname)
+                hostname = parsed_location.hostname or ""
+                sanitized = parsed_location._replace(netloc=hostname)
                 if parsed_location.port:
                     sanitized = sanitized._replace(
-                        netloc=f"{parsed_location.hostname}:{parsed_location.port}"
+                        netloc=f"{hostname}:{parsed_location.port}"
                     )
                 return sanitized.geturl()
             return location

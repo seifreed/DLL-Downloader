@@ -235,7 +235,7 @@ class DllFilesResolver:
             return False
         return self._is_base_url_link(href)
 
-    def _extract_direct_link(self, html: str) -> str | None:
+    def _extract_direct_link(self, html: str) -> str | None:  # noqa: C901
         for href, _ in self._iter_links(html):
             if self._is_official_zip_link(href):
                 parsed = urlparse(href)
@@ -276,9 +276,7 @@ class DllFilesResolver:
             return False
         if parsed_base.scheme == "https" and parsed_href.scheme == "http":
             return False
-        if parsed_href.scheme == "http" and parsed_base.scheme != "http":
-            return False
-        return True
+        return not (parsed_href.scheme == "http" and parsed_base.scheme != "http")
 
     @staticmethod
     def _is_official_zip_link(href: str) -> bool:

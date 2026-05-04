@@ -61,8 +61,8 @@ def _validate_string(value: object, field_name: str) -> None:
 
 def _validate_https_url(value: object, field_name: str) -> None:
     _validate_string(value, field_name)
-    if not isinstance(value, str):
-        return
+    # _validate_string guarantees value is a non-empty string.
+    assert isinstance(value, str)
     if not value.lower().startswith("https://"):
         raise ValueError(f"{field_name} must use HTTPS")
     _validate_not_private_url(value, field_name)
@@ -90,14 +90,15 @@ def _validate_not_private_url(value: str, field_name: str) -> None:
         raise ValueError(f"{field_name} must have a valid hostname")
     try:
         addr = ipaddress.ip_address(hostname)
+    except ValueError:
+        pass  # hostname is not an IP literal; proceed to DNS resolution
+    else:
         addr = _normalize_ip(addr)
         if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved or addr.is_multicast:
             raise ValueError(
                 f"{field_name} must not point to a private, loopback, reserved, or multicast address"
             )
         return
-    except ValueError:
-        pass
     # Not an IP literal; resolve hostname to check for DNS rebinding.
     # Fail closed on DNS errors (consistent with transport layer).
     try:

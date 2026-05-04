@@ -161,7 +161,11 @@ class InMemoryHTTPClient(IHTTPClient):
         """Get textual content from registered URL."""
         return self.download(url, headers=headers).decode("utf-8", errors="replace")
 
-    def get_file_info(self, url: str) -> HTTPFileInfo:
+    def get_file_info(
+        self,
+        url: str,
+        headers: Mapping[str, str] | None = None,
+    ) -> HTTPFileInfo:
         """
         Get file metadata without downloading.
 

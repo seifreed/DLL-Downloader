@@ -15,6 +15,7 @@ import stat
 import tempfile
 import zipfile
 import zlib
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import replace
 from datetime import datetime
@@ -54,6 +55,7 @@ _ZIP_MEMBER_READ_ERRORS = (
 )
 _SHA256_HEX_LENGTH = 64
 _HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
+_READ_FILE_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0)
 
 
 def _is_sha256_hash(value: object) -> bool:
@@ -126,13 +128,16 @@ class FileSystemDLLRepository(IDLLRepository):
 
     def _ensure_directories(self) -> None:
         """Create base directory and architecture subdirectories if needed."""
+        resolved = self._base_path.resolve()
+        if resolved != self._base_path and self._base_path.is_symlink():
+            raise RepositoryError(f"Refusing to use symlinked base path: {self._base_path}")
         self._base_path.mkdir(parents=True, exist_ok=True)
         for arch in Architecture:
             if arch != Architecture.UNKNOWN:
                 (self._base_path / arch.value).mkdir(exist_ok=True)
 
     @contextmanager
-    def _with_index_lock(self, shared: bool = False) -> None:
+    def _with_index_lock(self, shared: bool = False) -> Iterator[None]:
         """Acquire an advisory file lock for index safety.
 
         Args:
@@ -157,7 +162,7 @@ class FileSystemDLLRepository(IDLLRepository):
             with contextlib.suppress(OSError):
                 os.close(fd)
 
-    def _load_index(self) -> IndexData:
+    def _load_index(self) -> IndexData:  # noqa: C901
         """Load the DLL index from disk."""
         if self._is_symlink(self._index_path):
             raise RepositoryError(f"Refusing to load DLL index through symlink: {self._index_path}")
@@ -168,15 +173,18 @@ class FileSystemDLLRepository(IDLLRepository):
             return {"files": {}}
 
         try:
-            fd = os.open(str(self._index_path), os.O_RDONLY | os.O_NOFOLLOW)
+            fd = os.open(str(self._index_path), _READ_FILE_FLAGS)
         except OSError as e:
             logger.error("Failed to open index file: %s", e)
             raise RepositoryError(f"Failed to load index: {e}") from e
 
         try:
             st = os.fstat(fd)
+            if not stat.S_ISREG(st.st_mode):
+                raise ValueError("Index path is not a regular file")
             if st.st_size > self._INDEX_MAX_BYTES:
                 raise ValueError(f"Index file exceeds size limit ({st.st_size} bytes)")
+            os.set_blocking(fd, True)
             with os.fdopen(fd, encoding="utf-8") as f:
                 fd = -1
                 raw_data = json.load(f)
@@ -333,11 +341,14 @@ class FileSystemDLLRepository(IDLLRepository):
     @staticmethod
     def _read_file_no_follow(file_path: Path, max_bytes: int = 1024 * 1024 * 1024) -> bytes:
         """Read file bytes with O_NOFOLLOW to prevent symlink traversal."""
-        fd = os.open(str(file_path), os.O_RDONLY | os.O_NOFOLLOW)
+        fd = os.open(str(file_path), _READ_FILE_FLAGS)
         try:
             st = os.fstat(fd)
+            if not stat.S_ISREG(st.st_mode):
+                raise RepositoryError(f"Refusing to read non-regular file: {file_path}")
             if st.st_size > max_bytes:
                 raise RepositoryError(f"File exceeds read limit ({st.st_size} bytes): {file_path}")
+            os.set_blocking(fd, True)
             with os.fdopen(fd, "rb") as f:
                 fd = -1
                 return f.read()
@@ -380,12 +391,12 @@ class FileSystemDLLRepository(IDLLRepository):
             try:
                 target_fd = os.open(
                     str(file_path),
-                    os.O_RDONLY | os.O_NOFOLLOW,
+                    _READ_FILE_FLAGS,
                 )
                 target_st = os.fstat(target_fd)
-                if stat.S_ISLNK(target_st.st_mode):
+                if stat.S_ISLNK(target_st.st_mode) or not stat.S_ISREG(target_st.st_mode):
                     raise RepositoryError(
-                        f"Refusing to replace symlink: {file_path}"
+                        f"Refusing to replace non-regular file: {file_path}"
                     )
             except FileNotFoundError:
                 pass  # target doesn't exist yet; rename is safe
@@ -865,7 +876,7 @@ class FileSystemDLLRepository(IDLLRepository):
             )
             return []
 
-    def _load_raw_index_keys(self) -> set[str]:
+    def _load_raw_index_keys(self) -> set[str]:  # noqa: C901
         """Return raw index keys so corrupt metadata still blocks disk fallback."""
         if self._is_symlink(self._index_path):
             return set()
@@ -873,17 +884,20 @@ class FileSystemDLLRepository(IDLLRepository):
             return set()
 
         try:
-            fd = os.open(str(self._index_path), os.O_RDONLY | os.O_NOFOLLOW)
+            fd = os.open(str(self._index_path), _READ_FILE_FLAGS)
         except OSError:
             return set()
 
         try:
             st = os.fstat(fd)
+            if not stat.S_ISREG(st.st_mode):
+                return set()
             if st.st_size > self._INDEX_MAX_BYTES:
                 logger.warning(
                     "Skipping raw index keys: file exceeds size limit (%d bytes)", st.st_size
                 )
                 return set()
+            os.set_blocking(fd, True)
             with os.fdopen(fd, encoding="utf-8") as f:
                 fd = -1
                 raw_data = json.load(f)
@@ -1297,10 +1311,14 @@ class FileSystemDLLRepository(IDLLRepository):
     ) -> DLLFile:
         """Create a DLLFile entity from an existing file on disk."""
         try:
-            fd = os.open(str(file_path), os.O_RDONLY | os.O_NOFOLLOW)
+            fd = os.open(str(file_path), _READ_FILE_FLAGS)
         except OSError as exc:
             raise RepositoryError(f"Failed to read DLL file: {exc}") from exc
         try:
+            st = os.fstat(fd)
+            if not stat.S_ISREG(st.st_mode):
+                raise RepositoryError(f"Refusing to read non-regular file: {file_path}")
+            os.set_blocking(fd, True)
             with os.fdopen(fd, "rb") as f:
                 fd = -1
                 content = f.read()

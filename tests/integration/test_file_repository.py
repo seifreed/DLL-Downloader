@@ -168,10 +168,11 @@ class OSErrorAtomicWriteRepository(FileSystemDLLRepository):
 class DirectoryRaceRepository(FileSystemDLLRepository):
     """Repository variant that creates a directory after write validation."""
 
-    def _validate_repository_write_path(self, file_path: Path) -> None:
-        super()._validate_repository_write_path(file_path)
+    def _validate_repository_write_path(self, file_path: Path) -> Path:
+        resolved_parent = super()._validate_repository_write_path(file_path)
         if file_path.name == "race.dll" and not file_path.exists():
             file_path.mkdir()
+        return resolved_parent
 
 
 class FailingRollbackWriteRepository(FailingIndexSaveRepository):
@@ -579,6 +580,17 @@ class TestFileSystemDLLRepositorySave:
         assert target_path.exists()
         assert not (tmp_path / ".dll_index.json").exists()
 
+    @pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="requires FIFO support")
+    def test_read_file_no_follow_rejects_fifo_without_blocking(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        fifo_path = tmp_path / "pipe.dll"
+        os.mkfifo(fifo_path)
+
+        with pytest.raises(RepositoryError, match="non-regular file"):
+            FileSystemDLLRepository._read_file_no_follow(fifo_path)
+
     def test_save_rejects_index_directory_without_leaving_payload(
         self,
         repository: FileSystemDLLRepository,
@@ -931,7 +943,7 @@ def test_atomic_write_cleans_temp_file_when_replace_fails(tmp_download_dir: Path
     repository = DirectoryRaceRepository(tmp_download_dir)
     target_path = tmp_download_dir / "x64" / "race.dll"
 
-    with pytest.raises(OSError):
+    with pytest.raises(RepositoryError, match="Refusing to replace non-regular file"):
         repository._atomic_write_bytes(target_path, b"data")
 
     assert sorted(path.name for path in target_path.parent.iterdir()) == ["race.dll"]

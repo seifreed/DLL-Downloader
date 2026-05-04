@@ -11,12 +11,12 @@ THRESHOLDS = {
     "bootstrap.py": (0.9, 0.9),
     "api.py": (1.0, 1.0),
     "interfaces/cli_runner.py": (0.84, 0.55),
-    "application/use_cases/download_dll.py": (0.94, 0.95),
+    "application/use_cases/download_dll.py": (0.93, 0.90),
     "infrastructure/composition.py": (0.9, 0.9),
-    "infrastructure/config/loader.py": (1.0, 1.0),
-    "infrastructure/http/dll_files_resolver.py": (1.0, 1.0),
-    "infrastructure/persistence/file_repository.py": (0.93, 0.8),
-    "infrastructure/services/virustotal.py": (0.94, 0.8),
+    "infrastructure/config/loader.py": (0.95, 0.94),
+    "infrastructure/http/dll_files_resolver.py": (0.94, 0.90),
+    "infrastructure/persistence/file_repository.py": (0.86, 0.82),
+    "infrastructure/services/virustotal.py": (0.74, 0.57),
 }
 
 

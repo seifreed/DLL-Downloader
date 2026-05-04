@@ -10,10 +10,7 @@ from ..application.use_cases.download_batch import (
     DownloadBatchRequest,
     DownloadBatchUseCase,
 )
-from ..application.use_cases.download_dll import (
-    DownloadDLLRequest,
-    DownloadDLLResponse,
-)
+from ..application.use_cases.download_dll import DownloadDLLRequest, DownloadDLLResponse
 from ..bootstrap import DownloadApplication
 from ..domain.entities.dll_file import Architecture
 from ..infrastructure.config.settings import Settings
@@ -117,8 +114,9 @@ class DownloadCLIService:
             )
         )
 
+        rendered_lines = self._presenter.render_batch(batch_response, architecture_label)
         return CLIBatchDownloadResult(
-            lines=self._presenter.render_batch(batch_response, architecture_label),
+            lines=tuple(rendered_lines),
             success_count=batch_response.success_count,
             failure_count=batch_response.failure_count,
         )
@@ -176,7 +174,7 @@ def execute_boundary_command(
         return boundary_failure_factory(command, exc)
 
     return CLICommandResult(
-        stdout_lines=result.lines,
+        stdout_lines=list(result.lines),
         session=CLISessionResult(
             success_count=result.success_count,
             failure_count=result.failure_count,
@@ -249,11 +247,7 @@ class CLIApplicationService:
             output_dir=getattr(args, "output_dir", None),
         )
 
-    def run(
-        self,
-        settings: Settings,
-        invocation: CLIInvocation,
-    ) -> CLISessionResult:
+    def run(self, settings: Settings, invocation: CLIInvocation) -> CLISessionResult:
         application = self._application_builder(
             settings,
             output_dir=invocation.output_dir,
@@ -292,7 +286,11 @@ class CLIApplicationService:
         application: DownloadApplication,
         invocation: CLIInvocation,
     ) -> CLISessionResult:
-        service = DownloadCLIService(application.use_case, self._presenter, is_structured=self._is_structured)
+        service = DownloadCLIService(
+            application.use_case,
+            self._presenter,
+            is_structured=self._is_structured,
+        )
         try:
             result = service.run_with_error_handling(
                 CLIBatchDownloadCommand(
@@ -324,19 +322,12 @@ class ApplicationBuilder(Protocol):
 class BatchCommandRunner(Protocol):
     """Run one normalized batch command."""
 
-    def __call__(
-        self,
-        command: CLIBatchDownloadCommand,
-    ) -> CLIBatchDownloadResult:
+    def __call__(self, command: CLIBatchDownloadCommand) -> CLIBatchDownloadResult:
         """Return the rendered batch result."""
 
 
 class BoundaryFailureFactory(Protocol):
     """Build a normalized CLI failure result from an unexpected exception."""
 
-    def __call__(
-        self,
-        command: CLIBatchDownloadCommand,
-        exc: Exception,
-    ) -> CLICommandResult:
+    def __call__(self, command: CLIBatchDownloadCommand, exc: Exception) -> CLICommandResult:
         """Translate an unexpected boundary exception."""

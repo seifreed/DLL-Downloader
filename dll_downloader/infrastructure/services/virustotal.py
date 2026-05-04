@@ -17,7 +17,7 @@ from collections.abc import Mapping
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import requests
 
@@ -25,17 +25,18 @@ from ...domain.entities.dll_file import DLLFile, SecurityStatus
 from ...domain.errors import SecurityServiceError
 from ...domain.services import calculate_sha256
 from ...domain.services.security_scanner import ISecurityScanner, ScanResult
+from ..http.transport import header_value as _header_value
 from ..http_session import (
     HTTPResponseProtocol,
     HTTPSessionProtocol,
     HTTPSessionResource,
 )
-from ..http.transport import header_value as _header_value
 
 logger = logging.getLogger(__name__)
 _API_KEY_MISSING = "VirusTotal API key not configured"
 _VT_UPLOAD_MAX_BYTES = 32 * 1024 * 1024  # 32 MiB
 _VT_RESPONSE_MAX_BYTES = 64 * 1024 * 1024  # 64 MiB
+_READ_FILE_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0)
 
 
 def _is_valid_hash(value: str) -> bool:
@@ -57,7 +58,7 @@ class HashNotFoundError(VirusTotalError):
     pass
 
 
-def _safe_int(value: object, *, strict: bool = False) -> int:
+def _safe_int(value: object, *, strict: bool = False) -> int:  # noqa: C901
     """Safely coerce API values to int, handling float-like strings.
 
     When *strict* is True (used for security-critical fields like
@@ -112,69 +113,91 @@ def _safe_int(value: object, *, strict: bool = False) -> int:
 
 def _safe_json(response: HTTPResponseProtocol) -> dict[str, object]:
     """Normalize loosely typed HTTP JSON payloads into mappings."""
+    payload = _response_json_payload(response)
+    if not isinstance(payload, Mapping):
+        raise VirusTotalError("VirusTotal response body must be a JSON object")
+    return _normalize_json_mapping(payload)
 
-    content_length = None
-    cl_header = None
-    if hasattr(response, "headers"):
-        for key in response.headers:
-            if key.lower() == "content-length":
-                cl_header = response.headers[key]
-                break
-    if cl_header:
-        try:
-            content_length = int(cl_header)
-        except (ValueError, TypeError):
-            pass
+
+def _response_json_payload(response: HTTPResponseProtocol) -> object:
+    content_length = _response_content_length(response)
     if content_length is not None and content_length > _VT_RESPONSE_MAX_BYTES:
         raise VirusTotalError(
             f"VirusTotal response exceeds size limit ({content_length} bytes)"
         )
 
-    # Stream-read the response body with a size limit to protect against
-    # responses that omit Content-Length or use chunked transfer encoding.
+    body = _bounded_response_body(response)
+    if body:
+        return _loads_response_body(body)
+    return _json_payload_from_method(response)
+
+
+def _response_content_length(response: HTTPResponseProtocol) -> int | None:
+    content_length: int | None = None
+    raw_headers = getattr(response, "headers", {})
+    if not isinstance(raw_headers, Mapping):
+        return content_length
+    cl_header = _header_value(raw_headers, "content-length")
+    if cl_header:
+        with contextlib.suppress(ValueError, TypeError):
+            content_length = int(cl_header)
+    return content_length
+
+
+def _bounded_response_body(response: HTTPResponseProtocol) -> bytes | None:
+    chunks = _response_chunks(response)
+    if chunks is None:
+        raw_content = getattr(response, "content", None)
+        if not isinstance(raw_content, bytes):
+            return None
+        chunks = [raw_content]
+    body = b"".join(chunks)
+    if len(body) > _VT_RESPONSE_MAX_BYTES:
+        raise VirusTotalError(
+            f"VirusTotal response exceeds size limit ({_VT_RESPONSE_MAX_BYTES} bytes)"
+        )
+    return body
+
+
+def _response_chunks(response: HTTPResponseProtocol) -> list[bytes] | None:
+    iter_content = getattr(response, "iter_content", None)
+    if not callable(iter_content):
+        return None
     chunks: list[bytes] = []
     total_bytes = 0
-    if hasattr(response, "iter_content") and callable(response.iter_content):
-        for chunk in response.iter_content(chunk_size=65536):
-            if chunk:
-                total_bytes += len(chunk)
-                if total_bytes > _VT_RESPONSE_MAX_BYTES:
-                    raise VirusTotalError(
-                        f"VirusTotal response exceeds size limit ({_VT_RESPONSE_MAX_BYTES} bytes)"
-                    )
-                chunks.append(chunk)
-    else:
-        # iter_content not available; enforce size limit on content attribute
-        raw_content = getattr(response, "content", None)
-        if raw_content is not None and isinstance(raw_content, bytes):
-            if len(raw_content) > _VT_RESPONSE_MAX_BYTES:
-                raise VirusTotalError(
-                    f"VirusTotal response exceeds size limit ({_VT_RESPONSE_MAX_BYTES} bytes)"
-                ) from None
-            chunks = [raw_content]
-
-    if chunks:
-        body = b"".join(chunks)
-        try:
-            payload = json.loads(body)
-        except (ValueError, UnicodeDecodeError, TypeError, RecursionError) as exc:
-            raise VirusTotalError(f"Invalid JSON in VirusTotal response: {exc}") from exc
-    else:
-        # Fallback: response supports json() but not iter_content/content.
-        # Enforce size limit via serialized size since Content-Length was
-        # already checked above and no streaming size accounting is available.
-        try:
-            payload = response.json()
-        except (ValueError, UnicodeDecodeError, TypeError, RecursionError) as exc:
-            raise VirusTotalError(f"Invalid JSON in VirusTotal response: {exc}") from exc
-        serialized_size = len(json.dumps(payload, default=str))
-        if serialized_size > _VT_RESPONSE_MAX_BYTES:
+    for chunk in iter_content(chunk_size=65536):
+        if not chunk:
+            continue
+        total_bytes += len(chunk)
+        if total_bytes > _VT_RESPONSE_MAX_BYTES:
             raise VirusTotalError(
-                f"VirusTotal response exceeds size limit ({serialized_size} bytes)"
+                f"VirusTotal response exceeds size limit ({_VT_RESPONSE_MAX_BYTES} bytes)"
             )
+        chunks.append(chunk)
+    return chunks
 
-    if not isinstance(payload, Mapping):
-        raise VirusTotalError("VirusTotal response body must be a JSON object")
+
+def _loads_response_body(body: bytes) -> object:
+    try:
+        return json.loads(body)
+    except (ValueError, UnicodeDecodeError, TypeError, RecursionError) as exc:
+        raise VirusTotalError(f"Invalid JSON in VirusTotal response: {exc}") from exc
+
+
+def _json_payload_from_method(response: HTTPResponseProtocol) -> object:
+    try:
+        payload = response.json()
+    except (ValueError, UnicodeDecodeError, TypeError, RecursionError) as exc:
+        raise VirusTotalError(f"Invalid JSON in VirusTotal response: {exc}") from exc
+    serialized_size = len(json.dumps(payload, default=str))
+    if serialized_size > _VT_RESPONSE_MAX_BYTES:
+        raise VirusTotalError(
+            f"VirusTotal response exceeds size limit ({serialized_size} bytes)"
+        )
+    return payload
+
+
+def _normalize_json_mapping(payload: Mapping[object, object]) -> dict[str, object]:
     normalized: dict[str, object] = {}
     for key, value in payload.items():
         if not isinstance(key, str):
@@ -226,6 +249,7 @@ class VirusTotalScanner(ISecurityScanner):
 
     VT_API_URL = "https://www.virustotal.com/api/v3"
     _VT_ALLOWED_DOMAINS = {"www.virustotal.com", "virustotal.com"}
+    _VT_PRIVATE_IP_ALLOWED_DOMAINS: set[str] = set()
     MALICIOUS_THRESHOLD = 5
     SUSPICIOUS_THRESHOLD = 1
     _MAX_REDIRECT_HOPS = 5
@@ -275,56 +299,66 @@ class VirusTotalScanner(ISecurityScanner):
 
     @staticmethod
     def _hostname_is_allowed(hostname: str) -> bool:
-        """Return True when *hostname* belongs to an allowlisted domain.
+        """Return True when *hostname* belongs to an allowlisted domain."""
+        return hostname.lower() in VirusTotalScanner._VT_ALLOWED_DOMAINS
 
-        Allowlisted domains are permitted even if they resolve to private
-        addresses (matching RequestsTransport's SSRF allowlist behavior).
+    @staticmethod
+    def _hostname_private_ip_is_allowed(hostname: str) -> bool:
+        """Return True for explicit local-test/private endpoint overrides."""
+        return hostname.lower() in VirusTotalScanner._VT_PRIVATE_IP_ALLOWED_DOMAINS
+
+    @staticmethod
+    def _hostname_resolves_to_private_ip(hostname: str) -> bool:
+        """Return True when *hostname* resolves to a private or reserved IP.
+
+        Fails closed on DNS resolution errors to prevent DNS-rebinding attacks.
         """
-        if hostname.lower() not in VirusTotalScanner._VT_ALLOWED_DOMAINS:
-            return False
-        return True
+        try:
+            addr = ipaddress.ip_address(hostname)
+            if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped is not None:
+                addr = addr.ipv4_mapped
+            return addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved or addr.is_multicast
+        except ValueError:
+            pass
+        try:
+            resolved = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+            for _family, _type, _proto, _canonname, sockaddr in resolved:
+                ip_str = sockaddr[0]
+                try:
+                    resolved_addr = ipaddress.ip_address(ip_str)
+                    if isinstance(resolved_addr, ipaddress.IPv6Address) and resolved_addr.ipv4_mapped is not None:
+                        resolved_addr = resolved_addr.ipv4_mapped
+                except ValueError:
+                    continue
+                if resolved_addr.is_private or resolved_addr.is_loopback or resolved_addr.is_link_local or resolved_addr.is_reserved or resolved_addr.is_multicast:
+                    return True
+        except (socket.gaierror, socket.herror, OSError):
+            return True
+        return False
 
-    def _safe_get(self, url: str, **kwargs: object) -> HTTPResponseProtocol:
+    def _safe_get(self, url: str, **kwargs: object) -> HTTPResponseProtocol:  # noqa: C901
         """Issue a GET request with SSRF and redirect validation."""
         kwargs.setdefault("allow_redirects", False)
         kwargs.setdefault("timeout", self._timeout)
         current_url = url
-        for hop in range(self._MAX_REDIRECT_HOPS):
-            parsed = urlparse(current_url)
-            if parsed.scheme not in ("http", "https"):
-                raise VirusTotalError(f"Request to non-HTTP scheme rejected: {current_url}")
-            if parsed.hostname and not self._hostname_is_allowed(parsed.hostname):
-                raise VirusTotalError(
-                    f"Request to disallowed or private-address hostname rejected: {parsed.hostname}"
-                )
-            response = self.session.get(current_url, **kwargs)  # type: ignore[arg-type]
+        for _hop in range(self._MAX_REDIRECT_HOPS):
+            self._validate_api_url(current_url, redirect=False)
+            response = self.session.get(current_url, **kwargs)
             if not response.is_redirect:
                 return response
             location = _header_value(dict(response.headers), "location") or ""
             self._close_response(response)
             if not location:
                 raise VirusTotalError(f"Redirect response missing Location header for {current_url}")
-            if location.startswith(("http://", "https://")):
-                if current_url.startswith("https://") and location.startswith("http://"):
-                    raise VirusTotalError(f"HTTPS to HTTP redirect rejected: {location}")
-                current_url = location
-            else:
-                from urllib.parse import urljoin
-                current_url = urljoin(current_url, location)
+            current_url = self._resolve_redirect_url(current_url, location)
         raise VirusTotalError(f"Too many redirects (> {self._MAX_REDIRECT_HOPS})")
 
-    def _safe_post(self, url: str, **kwargs: object) -> HTTPResponseProtocol:
+    def _safe_post(self, url: str, **kwargs: object) -> HTTPResponseProtocol:  # noqa: C901
         """Issue a POST request with SSRF validation (no redirects for POST)."""
         kwargs.setdefault("allow_redirects", False)
         kwargs.setdefault("timeout", self._timeout)
-        parsed = urlparse(url)
-        if parsed.scheme not in ("http", "https"):
-            raise VirusTotalError(f"Request to non-HTTP scheme rejected: {url}")
-        if parsed.hostname and not self._hostname_is_allowed(parsed.hostname):
-            raise VirusTotalError(
-                f"Request to disallowed or private-address hostname rejected: {parsed.hostname}"
-            )
-        response = self.session.post(url, **kwargs)  # type: ignore[arg-type]
+        self._validate_api_url(url, redirect=False)
+        response = self.session.post(url, **kwargs)
         # Follow redirects manually for POST requests to validate each hop.
         current_url = url
         hops = 0
@@ -334,29 +368,71 @@ class VirusTotalScanner(ISecurityScanner):
             self._close_response(response)
             if not location:
                 raise VirusTotalError(f"Redirect response missing Location header for {current_url}")
-            if location.startswith(("http://", "https://")):
-                if current_url.startswith("https://") and location.startswith("http://"):
-                    raise VirusTotalError(f"HTTPS to HTTP redirect rejected: {location}")
-                current_url = location
-            else:
-                from urllib.parse import urljoin
-                current_url = urljoin(current_url, location)
-            parsed = urlparse(current_url)
-            if parsed.scheme not in ("http", "https"):
-                raise VirusTotalError(f"Request to non-HTTP scheme rejected: {current_url}")
-            if parsed.hostname and not self._hostname_is_allowed(parsed.hostname):
-                raise VirusTotalError(
-                    f"Redirect to disallowed or private-address hostname rejected: {parsed.hostname}"
-                )
+            current_url = self._resolve_redirect_url(current_url, location)
+            self._validate_api_url(current_url, redirect=True)
             if response.status_code in (307, 308):
-                response = self.session.post(current_url, allow_redirects=False, timeout=self._timeout, **{k: v for k, v in kwargs.items() if k not in ("allow_redirects", "timeout")})  # type: ignore[arg-type]
+                response = self.session.post(
+                    current_url,
+                    allow_redirects=False,
+                    timeout=self._timeout,
+                    **{
+                        k: v
+                        for k, v in kwargs.items()
+                        if k not in ("allow_redirects", "timeout")
+                    },
+                )
             else:
-                response = self.session.get(current_url, allow_redirects=False, timeout=self._timeout)  # type: ignore[arg-type]
+                response = self.session.get(
+                    current_url,
+                    allow_redirects=False,
+                    timeout=self._timeout,
+                )
             hops += 1
         if response.is_redirect:
             self._close_response(response)
             raise VirusTotalError(f"Too many redirects (> {self._MAX_REDIRECT_HOPS})")
         return response
+
+    def _validate_api_url(self, url: str, *, redirect: bool) -> None:
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            raise VirusTotalError(f"Request to non-HTTP scheme rejected: {url}")
+        hostname = parsed.hostname
+        if hostname is None:
+            raise VirusTotalError("Request to URL without hostname rejected")
+        if not self._hostname_is_allowed(hostname):
+            prefix = "Redirect" if redirect else "Request"
+            raise VirusTotalError(
+                f"{prefix} to disallowed or private-address hostname rejected: {hostname}"
+            )
+        if (
+            self._hostname_resolves_to_private_ip(hostname)
+            and not self._hostname_private_ip_is_allowed(hostname)
+        ):
+            prefix = "Redirect" if redirect else "Request"
+            raise VirusTotalError(
+                f"{prefix} to hostname resolving to private IP rejected: {hostname}"
+            )
+
+    @staticmethod
+    def _resolve_redirect_url(current_url: str, location: str) -> str:
+        location = location.strip()
+        if not location.startswith(("http://", "https://")):
+            return urljoin(current_url, location)
+        if current_url.startswith("https://") and location.startswith("http://"):
+            raise VirusTotalError(f"HTTPS to HTTP redirect rejected: {location}")
+        return VirusTotalScanner._strip_url_credentials(location)
+
+    @staticmethod
+    def _strip_url_credentials(location: str) -> str:
+        redirect_parsed = urlparse(location)
+        if not redirect_parsed.username and not redirect_parsed.password:
+            return location
+        hostname = redirect_parsed.hostname or ""
+        netloc = hostname
+        if redirect_parsed.port:
+            netloc = f"{hostname}:{redirect_parsed.port}"
+        return redirect_parsed._replace(netloc=netloc).geturl()
 
     def __enter__(self) -> "VirusTotalScanner":
         return self
@@ -393,66 +469,14 @@ class VirusTotalScanner(ISecurityScanner):
             VirusTotalError: If the scan fails
         """
         if not self.is_available:
-            try:
-                content = Path(file_path).read_bytes()
-                computed_hash = calculate_sha256(content)
-            except OSError:
-                computed_hash = None
+            computed_hash = self._hash_file_when_unavailable(file_path)
             return ScanResult(
                 file_hash=computed_hash,
                 status=SecurityStatus.UNKNOWN,
                 error_message=_API_KEY_MISSING
             )
 
-        path = Path(file_path)
-        try:
-            # Use O_NONBLOCK to prevent blocking on FIFOs and other special files,
-            # then clear it before wrapping with fdopen so regular file reads work.
-            open_flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
-            fd = os.open(str(path), open_flags)
-        except FileNotFoundError:
-            raise VirusTotalError(
-                "File upload failed: path does not exist"
-            ) from None
-        except OSError as e:
-            if e.errno == errno.ELOOP:
-                raise VirusTotalError(
-                    "File upload failed: path is a symlink"
-                ) from e
-            raise VirusTotalError(f"File upload failed: {e}") from e
-
-        try:
-            st = os.fstat(fd)
-            if not stat.S_ISREG(st.st_mode):
-                os.close(fd)
-                fd = -1
-                raise VirusTotalError(
-                    "File upload failed: path is not a regular file"
-                )
-            file_size = st.st_size
-            if file_size > _VT_UPLOAD_MAX_BYTES:
-                raise VirusTotalError(
-                    f"File exceeds {_VT_UPLOAD_MAX_BYTES // (1024 * 1024)} MiB upload limit"
-                )
-            # Clear O_NONBLOCK for regular files so read() works normally.
-            os.set_blocking(fd, True)
-            with os.fdopen(fd, "rb") as f:
-                fd = -1
-                content = f.read()
-        except VirusTotalError:
-            raise
-        except OSError as e:
-            raise VirusTotalError(f"File upload failed: {e}") from e
-        finally:
-            if fd >= 0:
-                with contextlib.suppress(OSError):
-                    os.close(fd)
-
-        if len(content) > _VT_UPLOAD_MAX_BYTES:
-            raise VirusTotalError(
-                f"File exceeds {_VT_UPLOAD_MAX_BYTES // (1024 * 1024)} MiB upload limit"
-            )
-
+        content = self._read_upload_content(file_path)
         file_hash = calculate_sha256(content)
         upload_content = content
 
@@ -509,6 +533,64 @@ class VirusTotalScanner(ISecurityScanner):
         finally:
             if response is not None:
                 self._close_response(response)
+
+    def _hash_file_when_unavailable(self, file_path: str) -> str | None:
+        try:
+            return calculate_sha256(self._read_regular_file_content(file_path))
+        except VirusTotalError:
+            return None
+
+    def _read_upload_content(self, file_path: str) -> bytes:
+        content = self._read_regular_file_content(file_path)
+        if len(content) > _VT_UPLOAD_MAX_BYTES:
+            raise VirusTotalError(
+                f"File exceeds {_VT_UPLOAD_MAX_BYTES // (1024 * 1024)} MiB upload limit"
+            )
+        return content
+
+    def _read_regular_file_content(self, file_path: str) -> bytes:
+        path = Path(file_path)
+        fd = -1
+        try:
+            fd = os.open(str(path), _READ_FILE_FLAGS)
+        except FileNotFoundError:
+            raise VirusTotalError(
+                "File upload failed: path does not exist"
+            ) from None
+        except OSError as e:
+            if e.errno == errno.ELOOP:
+                raise VirusTotalError(
+                    "File upload failed: path is a symlink"
+                ) from e
+            raise VirusTotalError(f"File upload failed: {e}") from e
+
+        try:
+            st = os.fstat(fd)
+            if not stat.S_ISREG(st.st_mode):
+                os.close(fd)
+                fd = -1
+                raise VirusTotalError(
+                    "File upload failed: path is not a regular file"
+                )
+            file_size = st.st_size
+            if file_size > _VT_UPLOAD_MAX_BYTES:
+                raise VirusTotalError(
+                    f"File exceeds {_VT_UPLOAD_MAX_BYTES // (1024 * 1024)} MiB upload limit"
+                )
+            # Clear O_NONBLOCK for regular files so read() works normally.
+            os.set_blocking(fd, True)
+            with os.fdopen(fd, "rb") as f:
+                fd = -1
+                content = f.read()
+        except VirusTotalError:
+            raise
+        except OSError as e:
+            raise VirusTotalError(f"File upload failed: {e}") from e
+        finally:
+            if fd >= 0:
+                with contextlib.suppress(OSError):
+                    os.close(fd)
+        return content
 
     def scan_hash(self, file_hash: str) -> ScanResult:
         """

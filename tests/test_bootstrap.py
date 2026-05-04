@@ -83,7 +83,11 @@ class StubHTTPClient(CloseableHTTPClient):
     ) -> str:
         return "text"
 
-    def get_file_info(self, url: str) -> HTTPFileInfo:
+    def get_file_info(
+        self,
+        url: str,
+        headers: Mapping[str, str] | None = None,
+    ) -> HTTPFileInfo:
         return {
             "content_type": "application/octet-stream",
             "content_length": 4,

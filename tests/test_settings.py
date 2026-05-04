@@ -19,7 +19,7 @@ import tempfile
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
@@ -69,12 +69,19 @@ def _mock_dns_resolution() -> Iterator[None]:
     """Patch socket.getaddrinfo so unresolvable test URLs resolve to a public IP."""
     original_getaddrinfo = socket.getaddrinfo
 
-    def _patched_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
-        if host and not _is_ip_address(host):
+    def _patched_getaddrinfo(
+        host: str | bytes | None,
+        port: bytes | str | int | None,
+        family: int = 0,
+        type: int = 0,
+        proto: int = 0,
+        flags: int = 0,
+    ) -> list[tuple[Any, ...]]:
+        if isinstance(host, str) and not _is_ip_address(host):
             return [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", (_PUBLIC_IP, port))]
         return original_getaddrinfo(host, port, family, type, proto, flags)
 
-    socket.getaddrinfo = _patched_getaddrinfo
+    socket.getaddrinfo = cast(Any, _patched_getaddrinfo)
     try:
         yield
     finally:

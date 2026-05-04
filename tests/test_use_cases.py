@@ -331,9 +331,13 @@ class StubHTTPClient(IHTTPClient):
         """Fetch text content from URL."""
         return self.download(url).decode("utf-8", errors="replace")
 
-    def get_file_info(self, url: str) -> HTTPFileInfo:
+    def get_file_info(
+        self,
+        url: str,
+        headers: Mapping[str, str] | None = None,
+    ) -> HTTPFileInfo:
         """Get file metadata."""
-        content = self.download(url)
+        content = self.download(url, headers=headers)
         return {
             'content_type': 'application/zip',
             'content_length': len(content),
@@ -959,7 +963,7 @@ def test_download_dll_use_case_fails_when_zip_reader_is_invalid() -> None:
     )
 
     assert response.success is False
-    assert response.error_message == "Download failed: Downloaded content is not a valid DLL (invalid PE image layout)"
+    assert response.error_message == "Download failed: Downloaded archive is not a valid ZIP file"
 
 
 @pytest.mark.unit

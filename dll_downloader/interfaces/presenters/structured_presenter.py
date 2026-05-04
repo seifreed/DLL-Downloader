@@ -27,14 +27,14 @@ def _path_to_uri(file_path: str | None) -> str | None:
     try:
         return p.as_uri()
     except ValueError:
-        # For relative paths, produce a valid relative URI reference
-        # per RFC 3986 rather than an unqualified path string.
+        # For paths that cannot be converted to URIs (e.g., relative paths
+        # on platforms without drive letters), produce a valid URI reference.
         parts = file_path.replace("\\", "/").split("/")
-        if parts and not parts[0]:
-            # Absolute path without drive letter (e.g., "/foo/bar")
-            # Prepend a leading slash to form a valid relative URI.
-            return "/" + "/".join(quote(part, safe="-._~") for part in parts if part)
-        return "/".join(quote(part, safe="-._~") for part in parts)
+        quoted = [quote(part, safe="-._~") for part in parts if part]
+        if file_path.startswith("/"):
+            # Absolute path: produce a proper file:/// URI
+            return "file:///" + "/".join(quoted)
+        return "/".join(quoted)
 
 
 def _serialize_datetime(value: datetime | None) -> str | None:
@@ -168,7 +168,7 @@ class DownloadBatchSARIFPresenter:
                 }
             ],
             properties={
-                "architecture": "",
+                "architecture": None,
                 "successCount": 0,
                 "failureCount": failure_count,
                 "structuredOutputVersion": STRUCTURED_OUTPUT_VERSION,

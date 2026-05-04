@@ -101,10 +101,12 @@ class _VTTomlSettingsSource:
         fd = -1
         try:
             fd = os.open(str(vt_path), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-        except OSError:
+        except OSError as exc:
+            if exc.errno == errno.ELOOP:
+                raise OSError(f"Refusing to read VT configuration from symlink: {vt_path}") from exc
             return None
         try:
-            os.set_blocking(fd, False)
+            # Clear O_NONBLOCK for regular files so read() works normally.
             os.set_blocking(fd, True)
             st = os.fstat(fd)
             if not stat.S_ISREG(st.st_mode):

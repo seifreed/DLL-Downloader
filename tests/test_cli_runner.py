@@ -133,7 +133,7 @@ def test_download_cli_service_returns_rendered_lines() -> None:
 
     result = service.run(
         CLIBatchDownloadCommand(
-            dll_names=["test.dll"],
+            dll_names=("test.dll",),
             architecture=Architecture.X64,
             scan_enabled=False,
             force_download=False,
@@ -141,7 +141,7 @@ def test_download_cli_service_returns_rendered_lines() -> None:
         )
     )
 
-    assert result.lines == ["batch:x64"]
+    assert result.lines == ("batch:x64",)
     assert result.success_count == 1
     assert result.failure_count == 0
 
@@ -152,7 +152,7 @@ def test_download_cli_service_handles_unexpected_exception_as_failure() -> None:
 
     result = service.run_with_error_handling(
         CLIBatchDownloadCommand(
-            dll_names=["bad.dll"],
+            dll_names=("bad.dll",),
             architecture=Architecture.X64,
             scan_enabled=False,
             force_download=False,
@@ -171,7 +171,7 @@ def test_download_cli_service_handles_unexpected_exception_in_sarif_batch() -> N
 
     result = service.run_with_error_handling(
         CLIBatchDownloadCommand(
-            dll_names=["good.dll", "bad.dll", "other.dll"],
+            dll_names=("good.dll", "bad.dll", "other.dll"),
             architecture=Architecture.X64,
             scan_enabled=False,
             force_download=False,
@@ -228,7 +228,7 @@ def test_cli_application_service_run_closes_runtime_resources() -> None:
     result = service.run(
         Settings(),
         CLIInvocation(
-            dll_names=["a.dll"],
+            dll_names=("a.dll",),
             architecture=Architecture.X64,
             scan_enabled=False,
             force_download=False,
@@ -254,7 +254,7 @@ def test_cli_application_service_render_summary_batch_only() -> None:
     batch_summary = service.render_summary(
         CLIRunResult(
             invocation=CLIInvocation(
-                dll_names=["a.dll", "b.dll"],
+                dll_names=("a.dll", "b.dll"),
                 architecture=Architecture.X64,
                 scan_enabled=False,
                 force_download=False,
@@ -267,7 +267,7 @@ def test_cli_application_service_render_summary_batch_only() -> None:
     single_summary = service.render_summary(
         CLIRunResult(
             invocation=CLIInvocation(
-                dll_names=["a.dll"],
+                dll_names=("a.dll",),
                 architecture=Architecture.X64,
                 scan_enabled=False,
                 force_download=False,
@@ -385,7 +385,7 @@ def test_cli_application_service_create_invocation_uses_settings_and_args() -> N
     )
 
     assert invocation is not None
-    assert invocation.dll_names == ["kernel32.dll"]
+    assert invocation.dll_names == ("kernel32.dll",)
     assert invocation.architecture == Architecture.X86
     assert invocation.scan_enabled is False
     assert invocation.force_download is True
@@ -524,5 +524,5 @@ def test_cli_application_service_run_from_args_returns_result_on_success() -> No
     result = service.run_from_args(args, parser, Settings(), lambda path: [])
 
     assert result is not None
-    assert result.invocation.dll_names == ["a.dll"]
+    assert result.invocation.dll_names == ("a.dll",)
     assert result.session.exit_code == 0

@@ -60,10 +60,10 @@ class ScanResult:
     @property
     def detection_count(self) -> int:
         """Get the number of positive detections from the detailed engine results."""
-        _NON_DETECTION_VALUES = {"", "undetected", "clean", "safe"}
+        non_detection_values = {"", "undetected", "clean", "safe"}
         return len([
             d for d in self.detections.values()
-            if d and d.lower() not in _NON_DETECTION_VALUES
+            if d and d.lower() not in non_detection_values
         ])
 
 

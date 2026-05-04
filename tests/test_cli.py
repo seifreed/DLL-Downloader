@@ -15,6 +15,7 @@ import io
 import json
 import logging
 import os
+import runpy
 import sys
 import tempfile
 import zipfile
@@ -570,6 +571,17 @@ def test_read_dll_list_from_file_unreadable_file_raises_error(tmp_path: Path) ->
             read_dll_list_from_file(str(file_path))
     finally:
         file_path.chmod(0o600)
+
+
+@pytest.mark.unit
+def test_read_dll_list_from_file_rejects_overlong_padded_line(
+    tmp_path: Path,
+) -> None:
+    file_path = tmp_path / "dlls.txt"
+    file_path.write_text(f"{' ' * 260}a.dll\n")
+
+    with pytest.raises(ValueError, match="Line 1 .* exceeds maximum length"):
+        read_dll_list_from_file(str(file_path))
 
 
 @pytest.mark.unit
@@ -1536,7 +1548,7 @@ def test_main_json_output_for_unreadable_batch_file(
 
     payload = json.loads(capsys.readouterr().out)
     assert payload["format"] == "json"
-    assert "Failed to read file" in payload["error"]["message"]
+    assert "Refusing to read non-regular file" in payload["error"]["message"]
 
 
 @pytest.mark.unit
@@ -1688,19 +1700,20 @@ def test_main_prints_summary_for_multiple_dlls(
 @pytest.mark.unit
 def test_cleanup_resources_calls_close() -> None:
     """
-    Verify cleanup closes HTTP client and scanner.
+    Verify cleanup_runtime_resources closes HTTP client and scanner.
     """
-    class Dummy:
+    from dll_downloader.interfaces.cli_runner import cleanup_runtime_resources
+
+    class DummyCloseable:
         def __init__(self) -> None:
             self.closed = False
 
         def close(self) -> None:
             self.closed = True
 
-    http_client = Dummy()
-    scanner = Dummy()
-    http_client.close()
-    scanner.close()
+    http_client = DummyCloseable()
+    scanner = DummyCloseable()
+    cleanup_runtime_resources(http_client, scanner)
 
     assert http_client.closed is True
     assert scanner.closed is True
@@ -1715,6 +1728,20 @@ def test_main_returns_error_when_no_args() -> None:
         assert create_dependencies is not None
         assert parse_arguments is not None
         assert main() == 1
+
+
+@pytest.mark.unit
+def test_package_main_returns_cli_exit_code_for_missing_args(
+    capsys: CaptureFixture[str],
+) -> None:
+    with (
+        _temporary_argv(["python -m dll_downloader"]),
+        pytest.raises(SystemExit) as exc_info,
+    ):
+        runpy.run_module("dll_downloader", run_name="__main__")
+
+    assert exc_info.value.code == 1
+    assert "usage:" in capsys.readouterr().out
 
 
 @pytest.mark.unit

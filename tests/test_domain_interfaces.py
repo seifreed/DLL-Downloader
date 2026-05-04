@@ -56,8 +56,12 @@ class DummyHTTPClient(IHTTPClient):
     ) -> str:
         return IHTTPClient.get_text(self, url, headers)
 
-    def get_file_info(self, url: str) -> HTTPFileInfo:
-        return IHTTPClient.get_file_info(self, url)
+    def get_file_info(
+        self,
+        url: str,
+        headers: Mapping[str, str] | None = None,
+    ) -> HTTPFileInfo:
+        return IHTTPClient.get_file_info(self, url, headers)
 
 
 class DummyScanner(ISecurityScanner):

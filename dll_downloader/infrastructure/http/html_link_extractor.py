@@ -16,7 +16,7 @@ class HTMLLinkExtractor(HTMLParser):
     line_offsets: tuple[int, ...] = (0,)
     links: list[tuple[str, str]] = field(default_factory=list)
     links_with_positions: list[tuple[str, str, int]] = field(default_factory=list)
-    _anchor_stack: list[tuple[str | None, list[str], int]] = field(default_factory=list)
+    _anchor_stack: list[tuple[str, list[str], int]] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         HTMLParser.__init__(self, convert_charrefs=True)
@@ -73,6 +73,13 @@ def extract_links(html: str) -> list[tuple[str, str]]:
     """Return all anchor links found in the given HTML fragment."""
     parser = HTMLLinkExtractor(_line_start_offsets(html))
     parser.feed(html)
+    # Flush unclosed anchor tags from truncated/malformed HTML.
+    while parser._anchor_stack:
+        href, text_parts, position = parser._anchor_stack.pop()
+        text = "".join(text_parts).strip()
+        if href:
+            parser.links.append((href, text))
+            parser.links_with_positions.append((href, text, position))
     return parser.links
 
 
