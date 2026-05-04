@@ -7,14 +7,17 @@ for malware analysis and threat detection.
 
 import contextlib
 import errno
+import ipaddress
 import json
 import logging
 import os
+import socket
 import stat
 from collections.abc import Mapping
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
+from urllib.parse import urlparse
 
 import requests
 
@@ -27,6 +30,7 @@ from ..http_session import (
     HTTPSessionProtocol,
     HTTPSessionResource,
 )
+from ..http.transport import header_value as _header_value
 
 logger = logging.getLogger(__name__)
 _API_KEY_MISSING = "VirusTotal API key not configured"
@@ -129,7 +133,7 @@ def _safe_json(response: HTTPResponseProtocol) -> dict[str, object]:
     except AttributeError:
         # iter_content not available; enforce size limit on content attribute
         raw_content = getattr(response, "content", None)
-        if raw_content is not None:
+        if raw_content is not None and isinstance(raw_content, bytes):
             if len(raw_content) > _VT_RESPONSE_MAX_BYTES:
                 raise VirusTotalError(
                     f"VirusTotal response exceeds size limit ({_VT_RESPONSE_MAX_BYTES} bytes)"
@@ -144,11 +148,8 @@ def _safe_json(response: HTTPResponseProtocol) -> dict[str, object]:
             raise VirusTotalError(f"Invalid JSON in VirusTotal response: {exc}") from exc
     else:
         # Fallback: response supports json() but not iter_content/content.
-        # Enforce size limit via Content-Length header or serialized size.
-        if content_length is not None and content_length > _VT_RESPONSE_MAX_BYTES:
-            raise VirusTotalError(
-                f"VirusTotal response exceeds size limit ({content_length} bytes)"
-            )
+        # Enforce size limit via serialized size since Content-Length was
+        # already checked above and no streaming size accounting is available.
         try:
             payload = response.json()
         except (ValueError, UnicodeDecodeError) as exc:
@@ -211,8 +212,10 @@ class VirusTotalScanner(ISecurityScanner):
     """
 
     VT_API_URL = "https://www.virustotal.com/api/v3"
+    _VT_ALLOWED_DOMAINS = {"www.virustotal.com", "virustotal.com"}
     MALICIOUS_THRESHOLD = 5
     SUSPICIOUS_THRESHOLD = 1
+    _MAX_REDIRECT_HOPS = 5
 
     def __init__(
         self,
@@ -256,6 +259,82 @@ class VirusTotalScanner(ISecurityScanner):
 
     def close(self) -> None:
         self._session_resource.close()
+
+    @staticmethod
+    def _hostname_is_allowed(hostname: str) -> bool:
+        """Return True when *hostname* belongs to an allowlisted domain.
+
+        Allowlisted domains are permitted even if they resolve to private
+        addresses (matching RequestsTransport's SSRF allowlist behavior).
+        """
+        if hostname.lower() not in VirusTotalScanner._VT_ALLOWED_DOMAINS:
+            return False
+        return True
+
+    def _safe_get(self, url: str, **kwargs: object) -> HTTPResponseProtocol:
+        """Issue a GET request with SSRF and redirect validation."""
+        kwargs.setdefault("allow_redirects", False)
+        kwargs.setdefault("timeout", self._timeout)
+        current_url = url
+        for _ in range(self._MAX_REDIRECT_HOPS + 1):
+            parsed = urlparse(current_url)
+            if parsed.scheme not in ("http", "https"):
+                raise VirusTotalError(f"Request to non-HTTP scheme rejected: {current_url}")
+            if parsed.hostname and not self._hostname_is_allowed(parsed.hostname):
+                raise VirusTotalError(
+                    f"Request to disallowed or private-address hostname rejected: {parsed.hostname}"
+                )
+            response = self.session.get(current_url, **kwargs)  # type: ignore[arg-type]
+            if not response.is_redirect:
+                return response
+            location = _header_value(dict(response.headers), "location") or ""
+            self._close_response(response)
+            if not location:
+                raise VirusTotalError(f"Redirect response missing Location header for {current_url}")
+            if location.startswith(("http://", "https://")):
+                if current_url.startswith("https://") and location.startswith("http://"):
+                    raise VirusTotalError(f"HTTPS to HTTP redirect rejected: {location}")
+                current_url = location
+            else:
+                from urllib.parse import urljoin
+                current_url = urljoin(current_url, location)
+        raise VirusTotalError(f"Too many redirects (> {self._MAX_REDIRECT_HOPS})")
+
+    def _safe_post(self, url: str, **kwargs: object) -> HTTPResponseProtocol:
+        """Issue a POST request with SSRF validation (no redirects for POST)."""
+        kwargs.setdefault("allow_redirects", False)
+        kwargs.setdefault("timeout", self._timeout)
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            raise VirusTotalError(f"Request to non-HTTP scheme rejected: {url}")
+        if parsed.hostname and not self._hostname_is_allowed(parsed.hostname):
+            raise VirusTotalError(
+                f"Request to disallowed or private-address hostname rejected: {parsed.hostname}"
+            )
+        response = self.session.post(url, **kwargs)  # type: ignore[arg-type]
+        # Follow redirects manually for POST requests to validate each hop.
+        current_url = url
+        hops = 0
+        while response.is_redirect and hops < self._MAX_REDIRECT_HOPS:
+            location = _header_value(dict(response.headers), "location") or ""
+            self._close_response(response)
+            if not location:
+                raise VirusTotalError(f"Redirect response missing Location header for {current_url}")
+            if location.startswith(("http://", "https://")):
+                if current_url.startswith("https://") and location.startswith("http://"):
+                    raise VirusTotalError(f"HTTPS to HTTP redirect rejected: {location}")
+                current_url = location
+            else:
+                from urllib.parse import urljoin
+                current_url = urljoin(current_url, location)
+            parsed = urlparse(current_url)
+            if parsed.hostname and not self._hostname_is_allowed(parsed.hostname):
+                raise VirusTotalError(
+                    f"Redirect to disallowed or private-address hostname rejected: {parsed.hostname}"
+                )
+            response = self.session.get(current_url, allow_redirects=False, timeout=self._timeout)  # type: ignore[arg-type]
+            hops += 1
+        return response
 
     def __enter__(self) -> "VirusTotalScanner":
         return self
@@ -377,10 +456,9 @@ class VirusTotalScanner(ISecurityScanner):
         try:
             filename = Path(file_path).name
             files = {'file': (filename, upload_content)}
-            response = self.session.post(
+            response = self._safe_post(
                 f"{self.VT_API_URL}/files",
                 files=files,
-                timeout=self._timeout,
             )
 
             if response.status_code != 200:
@@ -435,9 +513,8 @@ class VirusTotalScanner(ISecurityScanner):
 
         response: HTTPResponseProtocol | None = None
         try:
-            response = self.session.get(
+            response = self._safe_get(
                 f"{self.VT_API_URL}/files/{file_hash}",
-                timeout=self._timeout,
             )
             if response.status_code == 404:
                 raise HashNotFoundError(f"No results found for hash: {file_hash}")
@@ -515,7 +592,7 @@ class VirusTotalScanner(ISecurityScanner):
         response: HTTPResponseProtocol | None = None
         try:
             url = f"{self.VT_API_URL}/files/{file_hash}"
-            response = self.session.get(url, timeout=self._timeout)
+            response = self._safe_get(url)
 
             if response.status_code == 404:
                 raise HashNotFoundError(f"No report found for hash: {file_hash}")

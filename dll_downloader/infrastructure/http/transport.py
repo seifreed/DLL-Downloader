@@ -382,4 +382,11 @@ class RequestsTransport:
                     url=original_url,
                 )
             return location
+        # Reject absolute URLs with non-HTTP schemes (ftp://, file://, etc.)
+        # to prevent protocol-injection redirects.
+        if "://" in location and not location.startswith(("//", "/")):
+            raise HTTPClientError(
+                f"Redirect to non-HTTP scheme rejected: {location}",
+                url=original_url,
+            )
         return urljoin(original_url, location)

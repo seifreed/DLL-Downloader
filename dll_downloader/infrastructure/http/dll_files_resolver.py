@@ -93,11 +93,6 @@ class DllFilesResolver:
         if matched_href:
             return matched_href
 
-        if architecture == Architecture.X64 and not self._candidates_have_architecture_hints(
-            candidates
-        ):
-            return None
-
         return None
 
     def _download_link_candidates(self, html: str) -> list[DownloadLinkCandidate]:

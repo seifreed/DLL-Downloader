@@ -253,12 +253,18 @@ def test_virustotal_scanner_parse_response_with_non_mapping_stats_defaults_unkno
 @pytest.mark.unit
 def test_virustotal_safe_json_rejects_non_string_keys() -> None:
     class DummyResponse:
+        is_redirect = False
         status_code = 200
         is_redirect = False
         headers: MutableMapping[str, str] = {}
         content = b""
         url = "https://example.com"
         ok = True
+        is_redirect = False
+
+        @property
+        def is_redirect(self):
+            return False
 
         def json(self) -> WeirdMapping:
             return WeirdMapping({1: "bad"})
@@ -502,8 +508,9 @@ def test_virustotal_scanner_scan_hash_with_mock_server(vt_mock_server: int) -> N
     """
     # Create scanner pointing to mock server
     scanner = VirusTotalScanner(api_key="test_key")
-    # Override API URL to point to mock server
+    # Override API URL and allowlist to point to mock server
     scanner.VT_API_URL = f"http://localhost:{vt_mock_server}"
+    VirusTotalScanner._VT_ALLOWED_DOMAINS = {"www.virustotal.com", "virustotal.com", "localhost"}
 
     file_hash = "a" * 64  # Mock server recognizes this as clean
 
@@ -868,6 +875,7 @@ def test_scan_file_upload_success(
     Verify scan_file uploads when hash not found and returns pending result.
     """
     class DummyResponse:
+        is_redirect = False
         def __init__(self, status_code: int, payload: dict[str, object]) -> None:
             self.status_code = status_code
             self._payload = payload
@@ -923,6 +931,7 @@ def test_scan_file_upload_failure_raises(
     Verify scan_file raises on upload failure.
     """
     class DummyResponse:
+        is_redirect = False
         def __init__(self, status_code: int) -> None:
             self.status_code = status_code
 
@@ -961,6 +970,7 @@ def test_scan_file_upload_type_error_raises(
     tmp_download_dir: Path,
 ) -> None:
     class DummyResponse:
+        is_redirect = False
         status_code = 200
         is_redirect = False
 
@@ -999,6 +1009,7 @@ def test_scan_file_upload_runtime_json_error_raises_virustotal_error(
     tmp_download_dir: Path,
 ) -> None:
     class DummyResponse:
+        is_redirect = False
         status_code = 200
         is_redirect = False
 
@@ -1038,6 +1049,7 @@ def test_scan_hash_404_raises() -> None:
     Verify scan_hash raises HashNotFoundError on 404.
     """
     class DummyResponse:
+        is_redirect = False
         def __init__(self, status_code: int) -> None:
             self.status_code = status_code
 
@@ -1071,6 +1083,7 @@ def test_scan_hash_404_raises() -> None:
 @pytest.mark.unit
 def test_scan_hash_passes_configured_timeout() -> None:
     class DummyResponse:
+        is_redirect = False
         status_code = 404
         is_redirect = False
 
@@ -1111,6 +1124,7 @@ def test_scan_hash_passes_configured_timeout() -> None:
 @pytest.mark.unit
 def test_scan_hash_closes_response() -> None:
     class DummyResponse:
+        is_redirect = False
         status_code = 200
         is_redirect = False
 
@@ -1168,6 +1182,7 @@ def test_scan_hash_non_200_raises() -> None:
     Verify scan_hash raises VirusTotalError on non-200.
     """
     class DummyResponse:
+        is_redirect = False
         def __init__(self, status_code: int) -> None:
             self.status_code = status_code
 
@@ -1289,6 +1304,7 @@ def test_get_detailed_report_success() -> None:
     Verify get_detailed_report returns JSON on success.
     """
     class DummyResponse:
+        is_redirect = False
         def __init__(self, status_code: int, payload: dict[str, object]) -> None:
             self.status_code = status_code
             self._payload = payload
@@ -1328,6 +1344,7 @@ def test_get_detailed_report_success() -> None:
 @pytest.mark.unit
 def test_get_detailed_report_closes_response() -> None:
     class DummyResponse:
+        is_redirect = False
         status_code = 200
         is_redirect = False
 
@@ -1373,6 +1390,7 @@ def test_get_detailed_report_non_200_raises() -> None:
     Verify get_detailed_report raises on non-200 response.
     """
     class DummyResponse:
+        is_redirect = False
         def __init__(self, status_code: int) -> None:
             self.status_code = status_code
 
@@ -1435,6 +1453,7 @@ def test_get_detailed_report_exception_raises() -> None:
 @pytest.mark.unit
 def test_get_detailed_report_invalid_json_raises() -> None:
     class DummyResponse:
+        is_redirect = False
         status_code = 200
         is_redirect = False
 

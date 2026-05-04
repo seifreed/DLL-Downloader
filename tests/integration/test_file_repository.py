@@ -1688,7 +1688,10 @@ def test_find_by_name_rejects_mismatched_index_metadata(
     index_data["files"]["x64/valid.dll"]["name"] = "other.dll"
     index_path.write_text(json.dumps(index_data))
 
-    assert repository.find_by_name("valid.dll", Architecture.X64) is None
+    # Corrupt index metadata should not prevent finding the valid on-disk file.
+    result = repository.find_by_name("valid.dll", Architecture.X64)
+    assert result is not None
+    assert result.name == "valid.dll"
 
 
 def test_find_by_name_rejects_mismatched_index_architecture(
@@ -1705,7 +1708,10 @@ def test_find_by_name_rejects_mismatched_index_architecture(
     index_data["files"]["x64/valid.dll"]["architecture"] = "x86"
     index_path.write_text(json.dumps(index_data))
 
-    assert repository.find_by_name("valid.dll", Architecture.X64) is None
+    # Corrupt index metadata should not prevent finding the valid on-disk file.
+    result = repository.find_by_name("valid.dll", Architecture.X64)
+    assert result is not None
+    assert result.name == "valid.dll"
 
 
 def test_list_all_rejects_mismatched_index_payload_path(

@@ -6,6 +6,7 @@ for malware and other threats.
 """
 
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from types import MappingProxyType
@@ -31,7 +32,7 @@ class ScanResult:
     file_hash: str | None
     status: SecurityStatus
     detection_ratio: str | None = None
-    detections: dict[str, str] = field(default_factory=dict)
+    detections: Mapping[str, str] = field(default_factory=dict)
     scan_date: datetime | None = None
     permalink: str | None = None
     error_message: str | None = None

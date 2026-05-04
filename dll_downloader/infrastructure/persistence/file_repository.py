@@ -283,11 +283,27 @@ class FileSystemDLLRepository(IDLLRepository):
                     f"Refusing to write outside repository: {file_path}"
                 ) from exc
 
+    @staticmethod
+    def _read_file_no_follow(file_path: Path) -> bytes:
+        """Read file bytes with O_NOFOLLOW to prevent symlink traversal."""
+        fd = os.open(str(file_path), os.O_RDONLY | os.O_NOFOLLOW)
+        try:
+            with os.fdopen(fd, "rb") as f:
+                fd = -1
+                return f.read()
+        finally:
+            if fd >= 0:
+                with contextlib.suppress(OSError):
+                    os.close(fd)
+
     def _atomic_write_bytes(self, file_path: Path, content: bytes) -> None:
         """Write bytes through a same-directory temp file and atomic replace."""
         self._validate_repository_write_path(file_path)
+        # Use the resolved parent directory to prevent TOCTOU via symlink
+        # replacement of file_path.parent between validation and mkstemp.
+        resolved_parent = file_path.parent.resolve(strict=True)
         fd, temp_name = tempfile.mkstemp(
-            dir=file_path.parent,
+            dir=str(resolved_parent),
             prefix=".dll_tmp_",
         )
         fd_opened = False
@@ -364,13 +380,14 @@ class FileSystemDLLRepository(IDLLRepository):
             # Determine file path
             file_path = self._get_file_path(dll_file.name, dll_file.architecture)
             self._validate_payload_content(dll_file, content)
-            self._validate_repository_write_path(file_path)
-            self._validate_repository_write_path(self._index_path)
 
-            # Acquire lock before reading previous content to prevent TOCTOU.
+            # Acquire lock before path validation and writes to prevent TOCTOU.
             with self._with_index_lock():
+                self._validate_repository_write_path(file_path)
+                self._validate_repository_write_path(self._index_path)
+
                 try:
-                    previous_content = file_path.read_bytes()
+                    previous_content = self._read_file_no_follow(file_path)
                 except FileNotFoundError:
                     previous_content = None
 
@@ -433,7 +450,6 @@ class FileSystemDLLRepository(IDLLRepository):
         name = normalize_dll_name(name)
 
         index = self._load_index()
-        invalid_index_architectures: set[Architecture] = set()
 
         for arch in self._iter_architectures(architecture):
             key = self._get_file_key(name, arch)
@@ -445,12 +461,11 @@ class FileSystemDLLRepository(IDLLRepository):
                     expected_architecture=arch,
                 ):
                     return indexed_dll
-                invalid_index_architectures.add(arch)
 
-        # Check if file exists on disk without index entry
+        # Check if file exists on disk without index entry. Even architectures
+        # with corrupt index entries may have valid on-disk files; the index
+        # corruption should not suppress legitimate fallback candidates.
         for arch in self._iter_architectures(architecture):
-            if arch in invalid_index_architectures:
-                continue
             file_path = self._get_file_path(name, arch)
             fallback_path = self._validated_fallback_payload_path(file_path, arch)
             if fallback_path is not None:
@@ -495,7 +510,7 @@ class FileSystemDLLRepository(IDLLRepository):
     ) -> bool:
         """Return True when an orphaned disk payload is a DLL or DLL ZIP."""
         try:
-            content = file_path.read_bytes()
+            content = cls._read_file_no_follow(file_path)
         except OSError as exc:
             logger.warning("Skipping unreadable fallback DLL payload: %s", exc)
             return False
@@ -1181,7 +1196,7 @@ class FileSystemDLLRepository(IDLLRepository):
     ) -> bool:
         """Return True when indexed hash and size match actual payload bytes."""
         try:
-            content = file_path.read_bytes()
+            content = cls._read_file_no_follow(file_path)
         except OSError as exc:
             logger.warning("Skipping DLL index entry with unreadable payload: %s", exc)
             return False

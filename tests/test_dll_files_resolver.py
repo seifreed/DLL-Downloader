@@ -86,7 +86,7 @@ def resolver_server(tmp_path: Path) -> Generator[str]:
 @pytest.mark.unit
 def test_resolver_resolves_x64(resolver_server: str) -> None:
     resolver = DllFilesResolver(
-        http_client=RequestsHTTPClient(timeout=5),
+        http_client=RequestsHTTPClient(timeout=5, verify_ssl=False, allowed_redirect_domains={"localhost"}),
         base_url=resolver_server,
     )
     url = resolver.resolve_download_url("msvcp140.dll", Architecture.X64)
@@ -96,7 +96,7 @@ def test_resolver_resolves_x64(resolver_server: str) -> None:
 @pytest.mark.unit
 def test_resolver_resolves_x86(resolver_server: str) -> None:
     resolver = DllFilesResolver(
-        http_client=RequestsHTTPClient(timeout=5),
+        http_client=RequestsHTTPClient(timeout=5, verify_ssl=False, allowed_redirect_domains={"localhost"}),
         base_url=resolver_server,
     )
     url = resolver.resolve_download_url("msvcp140.dll", Architecture.X86)
@@ -132,7 +132,7 @@ def test_resolver_uses_injected_http_contract() -> None:
 @pytest.mark.unit
 def test_resolver_unknown_architecture_uses_first_link(resolver_server: str) -> None:
     resolver = DllFilesResolver(
-        http_client=RequestsHTTPClient(timeout=5),
+        http_client=RequestsHTTPClient(timeout=5, verify_ssl=False, allowed_redirect_domains={"localhost"}),
         base_url=resolver_server,
     )
     url = resolver.resolve_download_url("msvcp140.dll", Architecture.UNKNOWN)

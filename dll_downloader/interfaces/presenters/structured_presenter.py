@@ -27,7 +27,13 @@ def _path_to_uri(file_path: str | None) -> str | None:
     try:
         return p.as_uri()
     except ValueError:
+        # For relative paths, produce a valid relative URI reference
+        # per RFC 3986 rather than an unqualified path string.
         parts = file_path.replace("\\", "/").split("/")
+        if parts and not parts[0]:
+            # Absolute path without drive letter (e.g., "/foo/bar")
+            # Prepend a leading slash to form a valid relative URI.
+            return "/" + "/".join(quote(part, safe="") for part in parts if part)
         return "/".join(quote(part, safe="") for part in parts)
 
 
