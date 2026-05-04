@@ -6,6 +6,7 @@ Implements the IDLLRepository interface using the local filesystem for storage.
 
 import contextlib
 import copy
+import errno
 import fcntl
 import json
 import logging
@@ -289,7 +290,6 @@ class FileSystemDLLRepository(IDLLRepository):
             dir=file_path.parent,
             prefix=".dll_tmp_",
         )
-        temp_path = Path(temp_name)
         fd_opened = False
         try:
             try:
@@ -300,28 +300,48 @@ class FileSystemDLLRepository(IDLLRepository):
                 if not fd_opened:
                     os.close(fd)
                 raise
-            if file_path.exists():
-                if self._is_symlink(file_path):
-                    raise RepositoryError(
-                        f"Refusing to replace symlink: {file_path}"
-                    )
-            elif self._is_symlink(file_path):
-                raise RepositoryError(
-                    f"Refusing to write through dangling symlink: {file_path}"
-                )
             # Set explicit read/write permissions instead of copying from
             # the target file (which could be replaced via TOCTOU).
             with contextlib.suppress(OSError):
                 os.chmod(temp_name, 0o644)
-            # TOCTOU hardening: re-check for symlink between earlier validation
-            # and the atomic replace to prevent symlink replacement attacks.
-            if self._is_symlink(file_path):
-                raise RepositoryError(
-                    f"Refusing to replace symlink: {file_path}"
+            # TOCTOU hardening: open the target with O_NOFOLLOW immediately
+            # before the atomic rename to catch symlink replacement attacks.
+            # If the target exists, O_NOFOLLOW prevents following a symlink
+            # that was swapped in between earlier validation and now.
+            # If the target doesn't exist, the rename is inherently safe
+            # because os.rename() won't follow a symlink for the destination.
+            target_fd = -1
+            try:
+                target_fd = os.open(
+                    str(file_path),
+                    os.O_RDONLY | os.O_NOFOLLOW,
                 )
-            temp_path.replace(file_path)
+                target_st = os.fstat(target_fd)
+                if stat.S_ISLNK(target_st.st_mode):
+                    raise RepositoryError(
+                        f"Refusing to replace symlink: {file_path}"
+                    )
+            except FileNotFoundError:
+                pass  # target doesn't exist yet; rename is safe
+            except OSError as exc:
+                if exc.errno == errno.ELOOP:
+                    raise RepositoryError(
+                        f"Refusing to replace symlink: {file_path}"
+                    ) from exc
+                raise RepositoryError(
+                    f"Cannot verify target path for atomic write: {file_path}"
+                ) from exc
+            finally:
+                if target_fd >= 0:
+                    with contextlib.suppress(OSError):
+                        os.close(target_fd)
+            os.rename(temp_name, str(file_path))
+            # Prevent double-unlink in the outer except if rename succeeded
+            temp_name = ""
         except BaseException:
-            temp_path.unlink(missing_ok=True)
+            if temp_name:
+                with contextlib.suppress(OSError):
+                    os.unlink(temp_name)
             raise
 
     def save(self, dll_file: DLLFile, content: bytes) -> DLLFile:

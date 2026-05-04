@@ -8,6 +8,7 @@ for malware and other threats.
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
+from types import MappingProxyType
 
 from ..entities.dll_file import DLLFile, SecurityStatus
 
@@ -35,6 +36,9 @@ class ScanResult:
     permalink: str | None = None
     error_message: str | None = None
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, 'detections', MappingProxyType(self.detections))
+
     def __hash__(self) -> int:
         detections_tuple = tuple(sorted(self.detections.items()))
         return hash((
@@ -55,7 +59,11 @@ class ScanResult:
     @property
     def detection_count(self) -> int:
         """Get the number of positive detections from the detailed engine results."""
-        return len([d for d in self.detections.values() if d])
+        _NON_DETECTION_VALUES = {"", "undetected", "clean", "safe"}
+        return len([
+            d for d in self.detections.values()
+            if d and d.lower() not in _NON_DETECTION_VALUES
+        ])
 
 
 class ISecurityScanner(ABC):

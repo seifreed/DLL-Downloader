@@ -58,6 +58,9 @@ class StubRepository(IDLLRepository):
     def exists(self, name: str, architecture: Architecture | None = None) -> bool:
         return False
 
+    def update_metadata(self, dll_file: DLLFile) -> DLLFile:
+        return dll_file
+
 
 class StubHTTPClient(CloseableHTTPClient):
     def __init__(self) -> None:

@@ -34,6 +34,7 @@ class PEDllInspection:
 
 _PE_POINTER_OFFSET = 0x3C
 _PE_SIGNATURE = b"PE\x00\x00"
+_PE_MIN_PE_OFFSET = 0x40
 _PE_COFF_HEADER_SIZE = 20
 _PE_NUMBER_OF_SECTIONS_OFFSET_FROM_MACHINE = 2
 _PE_SIZE_OF_OPTIONAL_HEADER_OFFSET_FROM_MACHINE = 16
@@ -41,10 +42,10 @@ _PE_CHARACTERISTICS_OFFSET_FROM_MACHINE = 18
 _PE_DLL_CHARACTERISTIC = 0x2000
 _PE_OPTIONAL_HEADER_MAGIC_PE32 = 0x10B
 _PE_OPTIONAL_HEADER_MAGIC_PE32_PLUS = 0x20B
+_PE_MAX_OPTIONAL_HEADER_SIZE = 240
 _PE_SECTION_HEADER_SIZE = 40
 _PE_SECTION_NAME_SIZE = 8
 _PE_SECTION_VIRTUAL_SIZE_OFFSET = 8
-_PE_SECTION_VIRTUAL_ADDRESS_OFFSET = 12
 _PE_SECTION_RAW_SIZE_OFFSET = 16
 _PE_SECTION_RAW_POINTER_OFFSET = 20
 _PE_MAX_SECTIONS = 96
@@ -78,6 +79,8 @@ def inspect_pe_dll_architecture(content: bytes) -> PEDllInspection:
         content[_PE_POINTER_OFFSET:_PE_POINTER_OFFSET + 4],
         "little",
     )
+    if pe_offset < _PE_MIN_PE_OFFSET or pe_offset > len(content) - 4:
+        return PEDllInspection()
     machine_offset = pe_offset + len(_PE_SIGNATURE)
     if (
         len(content) < machine_offset + _PE_COFF_HEADER_SIZE
@@ -127,9 +130,9 @@ def pe_image_layout_is_valid(
         ],
         "little",
     )
-    optional_header_offset = machine_offset + _PE_COFF_HEADER_SIZE
-    if optional_header_size < 2:
+    if optional_header_size < 2 or optional_header_size > _PE_MAX_OPTIONAL_HEADER_SIZE:
         return False
+    optional_header_offset = machine_offset + _PE_COFF_HEADER_SIZE
 
     section_table_offset = optional_header_offset + optional_header_size
     if len(content) < section_table_offset:
@@ -163,21 +166,11 @@ def has_loadable_section(
         section_header = content[
             section_offset:section_offset + _PE_SECTION_HEADER_SIZE
         ]
-        section_name = section_header[:_PE_SECTION_NAME_SIZE].rstrip(b"\x00")
-        if not section_name:
-            continue
 
         virtual_size = int.from_bytes(
             section_header[
                 _PE_SECTION_VIRTUAL_SIZE_OFFSET:
                 _PE_SECTION_VIRTUAL_SIZE_OFFSET + 4
-            ],
-            "little",
-        )
-        virtual_address = int.from_bytes(
-            section_header[
-                _PE_SECTION_VIRTUAL_ADDRESS_OFFSET:
-                _PE_SECTION_VIRTUAL_ADDRESS_OFFSET + 4
             ],
             "little",
         )
@@ -193,7 +186,7 @@ def has_loadable_section(
             ],
             "little",
         )
-        if virtual_address == 0 or (virtual_size == 0 and raw_size == 0):
+        if virtual_size == 0 and raw_size == 0:
             continue
         if (
             raw_size > 0

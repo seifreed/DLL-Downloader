@@ -11,6 +11,7 @@ import zlib
 from dataclasses import dataclass, replace
 from io import BytesIO
 from pathlib import Path
+from urllib.parse import quote
 
 from ...domain.entities.dll_file import (
     Architecture,
@@ -259,18 +260,10 @@ class DownloadDLLUseCase:
         """Persist refreshed scanner metadata for a cache hit."""
         if not cached_dll.file_path:
             return scanned_dll
-
-        cache_path = Path(cached_dll.file_path)
-        if cache_path.is_symlink() or not cache_path.is_file():
-            logger.warning("Cached DLL path is invalid or a symlink: %s", cached_dll.file_path)
-            return scanned_dll
-
         try:
-            content = cache_path.read_bytes()
-        except OSError as exc:
-            logger.warning("Failed to read cached DLL for metadata update: %s", exc)
+            return self._repository.update_metadata(scanned_dll)
+        except RepositoryOperationError:
             return scanned_dll
-        return self._save_dll(scanned_dll, content)
 
     @classmethod
     def _cached_payload_satisfies_extract(
@@ -420,7 +413,7 @@ class DownloadDLLUseCase:
         """
         arch_path = architecture.value if architecture != Architecture.UNKNOWN else "x64"
         base = self._download_base_url.rstrip("/")
-        return f"{base}/{arch_path}/{dll_name}"
+        return f"{base}/{arch_path}/{quote(dll_name, safe='')}"
 
     def _calculate_hash(self, content: bytes) -> str:
         """
@@ -479,7 +472,7 @@ class DownloadDLLUseCase:
                 self._validate_zip_contains_valid_dll(content, request)
                 return content
             return self._extract_valid_dll_from_zip(content, request)
-        except (RuntimeError, NotImplementedError, zipfile.BadZipFile, zlib.error, ValueError) as exc:
+        except (RuntimeError, NotImplementedError, zipfile.BadZipFile, zlib.error, ValueError, OverflowError) as exc:
             raise ArchiveExtractionError("Downloaded archive is not a valid ZIP file") from exc
 
     def _validate_zip_contains_valid_dll(

@@ -105,7 +105,7 @@ class DLLFile:
     @property
     def is_scanned(self) -> bool:
         """Check if the DLL has been security scanned."""
-        return self.security_status != SecurityStatus.NOT_SCANNED
+        return self.security_status not in {SecurityStatus.NOT_SCANNED, SecurityStatus.UNKNOWN}
 
     @property
     def is_safe(self) -> bool:

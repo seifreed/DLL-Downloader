@@ -57,7 +57,7 @@ def emit_command_result(writer: OutputWriter, result: CLICommandResult) -> None:
         return
     # Structured output (JSON/SARIF) must go to stderr to avoid
     # producing concatenated invalid JSON on stdout.
-    use_stderr = not result.boundary_failure.is_structured or bool(result.stdout_lines)
+    use_stderr = result.boundary_failure.is_structured or bool(result.stdout_lines)
     writer.write(result.boundary_failure.message, error=use_stderr)
     if result.boundary_failure.traceback_text:
         writer.write(result.boundary_failure.traceback_text, error=True)

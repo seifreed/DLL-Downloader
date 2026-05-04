@@ -258,6 +258,14 @@ class InMemoryRepository(IDLLRepository):
         key = self._make_key(name, architecture or Architecture.UNKNOWN)
         return key in self._storage
 
+    def update_metadata(self, dll_file: DLLFile) -> DLLFile:
+        """Update metadata for an existing DLL without rewriting the payload."""
+        key = self._make_key(dll_file.name, dll_file.architecture)
+        if key not in self._storage:
+            raise RepositoryOperationError(f"DLL not found: {dll_file.name}")
+        self._storage[key] = dll_file
+        return dll_file
+
     def get_content(self, dll_file: DLLFile) -> bytes | None:
         """Get stored content for testing purposes."""
         key = self._make_key(dll_file.name, dll_file.architecture)

@@ -291,6 +291,11 @@ class RequestsTransport:
 
             return response
 
+        raise HTTPClientError(
+            f"{method_name} request failed: no successful response",
+            url=url,
+        )
+
     def _resolve_request_method(
         self,
         method_name: str,

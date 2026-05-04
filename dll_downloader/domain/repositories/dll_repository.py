@@ -90,6 +90,22 @@ class IDLLRepository(ABC):
         pass
 
     @abstractmethod
+    def update_metadata(self, dll_file: DLLFile) -> DLLFile:
+        """
+        Update metadata for an existing DLL without rewriting the payload.
+
+        Args:
+            dll_file: The DLL entity with updated metadata
+
+        Returns:
+            Updated DLLFile entity
+
+        Raises:
+            RepositoryOperationError: If the update fails
+        """
+        pass
+
+    @abstractmethod
     def exists(self, name: str, architecture: Architecture | None = None) -> bool:
         """
         Check if a DLL exists in the repository.

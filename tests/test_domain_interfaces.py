@@ -37,6 +37,9 @@ class DummyRepository(IDLLRepository):
     def exists(self, name: str, architecture: Architecture | None = None) -> bool:
         return IDLLRepository.exists(self, name, architecture)
 
+    def update_metadata(self, dll_file: DLLFile) -> DLLFile:
+        return IDLLRepository.update_metadata(self, dll_file)
+
 
 class DummyHTTPClient(IHTTPClient):
     def download(

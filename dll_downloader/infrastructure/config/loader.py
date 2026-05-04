@@ -2,10 +2,13 @@
 Load settings from external configuration sources.
 """
 
+import contextlib
+import errno
 import json
 import logging
 import os
 import re
+import stat
 from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
@@ -46,10 +49,28 @@ class _JSONSettingsSource:
     @staticmethod
     def load(config_path: str) -> SettingsInitKwargs:
         path = Path(config_path)
-        if path.exists() and not path.is_file():
-            raise OSError(f"Configuration path is not a regular file: {config_path}")
-        with path.open(encoding="utf-8") as file_handle:
-            config_data = json.load(file_handle)
+        fd = -1
+        try:
+            fd = os.open(str(path), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        except OSError as exc:
+            if exc.errno == errno.ELOOP:
+                raise OSError(f"Refusing to read configuration from symlink: {config_path}") from exc
+            raise OSError(f"Cannot open configuration file: {config_path}") from exc
+        try:
+            st = os.fstat(fd)
+            if not stat.S_ISREG(st.st_mode):
+                os.close(fd)
+                fd = -1
+                raise OSError(f"Configuration path is not a regular file: {config_path}")
+            # Clear O_NONBLOCK for regular files so read() works normally.
+            os.set_blocking(fd, True)
+            with os.fdopen(fd, encoding="utf-8") as file_handle:
+                fd = -1
+                config_data = json.load(file_handle)
+        finally:
+            if fd >= 0:
+                with contextlib.suppress(OSError):
+                    os.close(fd)
         if not isinstance(config_data, Mapping):
             raise ValueError("Configuration file must contain a JSON object")
         return SettingsLoader._mapped_kwargs(
@@ -77,28 +98,33 @@ class _VTTomlSettingsSource:
             if home_override is not None
             else Path("~/.vt.toml").expanduser()
         )
+        fd = -1
         try:
-            if not vt_path.exists() or not vt_path.is_file():
-                return None
+            fd = os.open(str(vt_path), os.O_RDONLY | os.O_NOFOLLOW)
         except OSError:
             return None
-
         try:
-            mode = vt_path.stat().st_mode
-            if mode & 0o077:
+            st = os.fstat(fd)
+            if not stat.S_ISREG(st.st_mode):
+                os.close(fd)
+                fd = -1
+                return None
+            if st.st_mode & 0o077:
                 logging.warning(
                     "VT config file %s has overly permissive permissions (%o); "
                     "consider restricting to 0600",
                     vt_path,
-                    mode & 0o777,
+                    st.st_mode & 0o777,
                 )
-        except OSError:
-            pass
-
-        try:
-            contents = vt_path.read_text(encoding="utf-8")
+            with os.fdopen(fd, encoding="utf-8") as f:
+                fd = -1
+                contents = f.read()
         except (OSError, UnicodeDecodeError):
             return None
+        finally:
+            if fd >= 0:
+                with contextlib.suppress(OSError):
+                    os.close(fd)
 
         for line in contents.splitlines():
             match = _VT_API_KEY_LINE_PATTERN.fullmatch(line)
@@ -418,7 +444,14 @@ class SettingsLoader:
     @classmethod
     def _find_config_path(cls) -> str | None:
         for candidate in map(os.path.expanduser, cls.DEFAULT_CONFIG_PATHS):
-            if os.path.isfile(candidate):
+            try:
+                st = os.lstat(candidate)
+            except OSError:
+                continue
+            if stat.S_ISLNK(st.st_mode):
+                logging.warning("Skipping symlink configuration path: %s", candidate)
+                continue
+            if stat.S_ISREG(st.st_mode):
                 return candidate
         return None
 

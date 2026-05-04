@@ -2,6 +2,7 @@
 Settings model for the DLL Downloader application.
 """
 
+import ipaddress
 from dataclasses import dataclass, field
 from math import isfinite
 from pathlib import Path
@@ -67,9 +68,19 @@ def _validate_https_url(value: object, field_name: str) -> None:
     _validate_not_private_url(value, field_name)
 
 
+def _normalize_ip(addr: ipaddress.IPv4Address | ipaddress.IPv6Address) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
+    """Convert IPv4-mapped IPv6 addresses to their IPv4 equivalent."""
+    if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped is not None:
+        return addr.ipv4_mapped
+    return addr
+
+
 def _validate_not_private_url(value: str, field_name: str) -> None:
-    """Reject URLs that resolve to private or loopback IP ranges (SSRF protection)."""
-    import ipaddress
+    """Reject URLs that resolve to private or loopback IP ranges (SSRF protection).
+
+    Fails closed on DNS resolution errors to prevent DNS-rebinding attacks.
+    Consistent with transport-layer SSRF checks.
+    """
     import socket
     from urllib.parse import urlparse
 
@@ -79,27 +90,33 @@ def _validate_not_private_url(value: str, field_name: str) -> None:
         return
     try:
         addr = ipaddress.ip_address(hostname)
-    except ValueError:
-        # Not an IP literal; resolve hostname to check for DNS rebinding
-        try:
-            resolved = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
-            for _family, _type, _proto, _canonname, sockaddr in resolved:
-                ip_str = sockaddr[0]
-                try:
-                    resolved_addr = ipaddress.ip_address(ip_str)
-                except ValueError:
-                    continue
-                if resolved_addr.is_private or resolved_addr.is_loopback or resolved_addr.is_link_local or resolved_addr.is_reserved:
-                    raise ValueError(
-                        f"{field_name} must not resolve to a private, loopback, or reserved address"
-                    )
-        except socket.gaierror:
-            return  # unresolvable hostname, let it fail at request time
+        addr = _normalize_ip(addr)
+        if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved or addr.is_multicast:
+            raise ValueError(
+                f"{field_name} must not point to a private, loopback, reserved, or multicast address"
+            )
         return
-    if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved:
+    except ValueError:
+        pass
+    # Not an IP literal; resolve hostname to check for DNS rebinding.
+    # Fail closed on DNS errors (consistent with transport layer).
+    try:
+        resolved = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+        for _family, _type, _proto, _canonname, sockaddr in resolved:
+            ip_str = sockaddr[0]
+            try:
+                resolved_addr = ipaddress.ip_address(ip_str)
+                resolved_addr = _normalize_ip(resolved_addr)
+            except ValueError:
+                continue
+            if resolved_addr.is_private or resolved_addr.is_loopback or resolved_addr.is_link_local or resolved_addr.is_reserved or resolved_addr.is_multicast:
+                raise ValueError(
+                    f"{field_name} must not resolve to a private, loopback, reserved, or multicast address"
+                )
+    except (socket.gaierror, socket.herror, OSError) as exc:
         raise ValueError(
-            f"{field_name} must not point to a private, loopback, or reserved address"
-        )
+            f"{field_name} hostname does not resolve; cannot verify it is not private"
+        ) from exc
 
 
 def _validate_log_level(value: object) -> None:
@@ -136,7 +153,7 @@ class Settings:
     Application configuration values plus local validation helpers.
     """
 
-    virustotal_api_key: str | None = None
+    virustotal_api_key: str | None = field(default=None, repr=False)
     download_directory: str = field(default_factory=lambda: str(Path.cwd() / "downloads"))
     download_base_url: str = "https://es.dll-files.com"
     http_timeout: int = 60

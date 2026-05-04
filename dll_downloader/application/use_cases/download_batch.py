@@ -91,6 +91,8 @@ class DownloadBatchUseCase:
                         extract_archive=request.extract_archive,
                     )
                 )
+            except MemoryError:
+                raise
             except Exception as exc:
                 logger.error("Unexpected error downloading %s: %s", normalized_name, exc)
                 response = DownloadDLLResponse(

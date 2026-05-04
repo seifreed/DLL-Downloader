@@ -43,25 +43,27 @@ _LOG_LEVELS = {
 }
 
 
-_PATH_PATTERN = re.compile(r"(?:^|\s|['\"])/[^\s'\"]+")
-_URL_CREDENTIALS_PATTERN = re.compile(r"://[^/\s:]+:[^/\s@]+@")
+_PATH_PATTERN = re.compile(r"(^|\s|['\"])(/[^\s'\"]+)")
+_URL_CREDENTIALS_PATTERN = re.compile(r"://[^/\s:@]+:[^/\s@]+@|://[^/\s:@]+@")
+
+_MAX_DLL_NAME_LENGTH = 260
+
+
+def _path_replacer(m: re.Match) -> str:
+    prefix = m.group(1) or ""
+    return f"{prefix}<path>"
 
 
 def _sanitize_boundary_message(exc: Exception) -> str:
     """Remove filesystem paths and URL credentials from exception messages."""
     msg = str(exc)
-    msg = _PATH_PATTERN.sub(" <path>", msg)
+    msg = _PATH_PATTERN.sub(_path_replacer, msg)
     msg = _URL_CREDENTIALS_PATTERN.sub("://<credentials>@", msg)
     return msg
 
 
 def set_debug_mode(enabled: bool) -> None:
-    """
-    Set debug mode environment variable.
-
-    Args:
-        enabled: Whether to enable debug mode.
-    """
+    """Set debug mode environment variable."""
     os.environ['DEBUG_MODE'] = '1' if enabled else '0'
 
 
@@ -80,18 +82,7 @@ _MAX_DLL_LIST_LINES = 10_000
 
 
 def read_dll_list_from_file(file_path: str) -> list[str]:
-    """
-    Read DLL names from a file, one per line.
-
-    Args:
-        file_path: Path to the file containing DLL names.
-
-    Returns:
-        A list of DLL names read from the file.
-
-    Raises:
-        ValueError: If the file does not exist or is empty.
-    """
+    """Read DLL names from a file, one per line."""
     raw_path = Path(file_path)
     fd = -1
     try:
@@ -113,6 +104,10 @@ def read_dll_list_from_file(file_path: str) -> list[str]:
             for i, line in enumerate(f):
                 if i >= _MAX_DLL_LIST_LINES:
                     raise ValueError(f"File '{file_path}' exceeds maximum line count")
+                if len(line) > _MAX_DLL_NAME_LENGTH:
+                    raise ValueError(
+                        f"Line {i + 1} in '{file_path}' exceeds maximum length"
+                    )
                 stripped = line.strip()
                 if stripped:
                     dll_names.append(normalize_dll_name(stripped))
@@ -134,29 +129,12 @@ def read_dll_list_from_file(file_path: str) -> list[str]:
 
 
 def get_architecture(arch_str: str) -> Architecture:
-    """
-    Convert architecture string to Architecture enum.
-
-    Args:
-        arch_str: Architecture string ('x86', 'x64', 'arm', or 'arm64')
-
-    Returns:
-        Architecture enum value
-
-    Raises:
-        ValueError: If the architecture string is not recognized.
-    """
+    """Convert architecture string to Architecture enum."""
     return parse_architecture(arch_str)
 
 
 def format_response(response: DownloadDLLResponse, dll_name: str) -> None:
-    """
-    Format and print the download response to console.
-
-    Args:
-        response: The download response from the use case
-        dll_name: Name of the DLL that was requested
-    """
+    """Format and print the download response to console."""
     print(DownloadConsolePresenter().format(response, dll_name))
 
 
@@ -207,16 +185,7 @@ def _run_cli_session(
     return result.session.exit_code
 
 def main(settings: Settings | None = None) -> int:
-    """
-    CLI entry point using Clean Architecture.
-
-    Args:
-        settings: Optional settings instance for dependency injection.
-                  If None, settings are loaded from environment/config files.
-
-    Returns:
-        Exit code (0 for success, 1 for failure)
-    """
+    """CLI entry point. Returns exit code (0 for success, 1 for failure)."""
     try:
         return _main_inner(settings)
     except KeyboardInterrupt:
@@ -269,11 +238,4 @@ if __name__ == "__main__":
     sys.exit(main())
 
 
-__all__ = [
-    "parse_arguments",
-    "set_debug_mode",
-    "read_dll_list_from_file",
-    "get_architecture",
-    "format_response",
-    "main",
-]
+__all__ = ["parse_arguments", "set_debug_mode", "read_dll_list_from_file", "get_architecture", "format_response", "main"]

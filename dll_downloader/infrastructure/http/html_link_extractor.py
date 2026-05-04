@@ -5,6 +5,9 @@ HTML link extraction helpers for infrastructure adapters.
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
 
+_MAX_ANCHOR_DEPTH = 256
+_MAX_EXTRACTED_LINKS = 10_000
+
 
 @dataclass
 class HTMLLinkExtractor(HTMLParser):
@@ -25,16 +28,21 @@ class HTMLLinkExtractor(HTMLParser):
     ) -> None:
         if tag != "a":
             return
+        if len(self._anchor_stack) >= _MAX_ANCHOR_DEPTH:
+            return
 
-        href = ""
+        href: str = ""
         for key, value in attrs:
             if key == "href":
                 href = value or ""
 
-        self._anchor_stack.append((href, [], self._absolute_position()))
+        self._anchor_stack.append((href or "", [], self._absolute_position()))
 
     def handle_endtag(self, tag: str) -> None:
         if tag != "a" or not self._anchor_stack:
+            return
+        if len(self.links) >= _MAX_EXTRACTED_LINKS:
+            self._anchor_stack.clear()
             return
 
         href, text_parts, position = self._anchor_stack.pop()

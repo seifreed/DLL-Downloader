@@ -7,6 +7,7 @@ import logging
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from ...application.use_cases.download_batch import (
     DownloadBatchItem,
@@ -26,9 +27,8 @@ def _path_to_uri(file_path: str | None) -> str | None:
     try:
         return p.as_uri()
     except ValueError:
-        # For relative paths, produce a relative URI reference per SARIF spec.
-        # Convert backslashes to forward slashes for URI compatibility.
-        return file_path.replace("\\", "/")
+        parts = file_path.replace("\\", "/").split("/")
+        return "/".join(quote(part, safe="") for part in parts)
 
 
 def _serialize_datetime(value: datetime | None) -> str | None:

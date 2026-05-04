@@ -12,6 +12,7 @@ I/O and environment manipulation.
 
 import json
 import os
+import socket
 import subprocess
 import sys
 import tempfile
@@ -58,6 +59,35 @@ def _temporary_cwd(path: Path) -> Iterator[None]:
         yield
     finally:
         os.chdir(original)
+
+
+_PUBLIC_IP = "93.184.216.34"
+
+
+@contextmanager
+def _mock_dns_resolution() -> Iterator[None]:
+    """Patch socket.getaddrinfo so unresolvable test URLs resolve to a public IP."""
+    original_getaddrinfo = socket.getaddrinfo
+
+    def _patched_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+        if host and not _is_ip_address(host):
+            return [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", (_PUBLIC_IP, port))]
+        return original_getaddrinfo(host, port, family, type, proto, flags)
+
+    socket.getaddrinfo = _patched_getaddrinfo
+    try:
+        yield
+    finally:
+        socket.getaddrinfo = original_getaddrinfo
+
+
+def _is_ip_address(host: str) -> bool:
+    try:
+        import ipaddress
+        ipaddress.ip_address(host)
+        return True
+    except ValueError:
+        return False
 
 # ============================================================================
 # Settings Initialization Tests
@@ -164,7 +194,7 @@ def test_settings_from_env_all_variables() -> None:
             "DLL_USER_AGENT": "EnvAgent/1.0",
             "DLL_USER_AGENT_POOL": "AgentA, AgentB",
         }
-    ):
+    ), _mock_dns_resolution():
         settings = SettingsLoader.from_env()
 
     assert settings.virustotal_api_key == "env_api_key"
@@ -483,7 +513,8 @@ def test_settings_from_json_all_fields() -> None:
         temp_path = f.name
 
     try:
-        settings = SettingsLoader.from_json(temp_path)
+        with _mock_dns_resolution():
+            settings = SettingsLoader.from_json(temp_path)
 
         assert settings.virustotal_api_key == "json_api_key"
         assert settings.download_directory == "/json/downloads"
@@ -597,9 +628,9 @@ def test_settings_from_json_nonexistent_file_raises_error() -> None:
         Verify proper error handling for missing files.
 
     Expected Behavior:
-        FileNotFoundError is raised.
+        OSError is raised (FileNotFoundError is a subclass).
     """
-    with pytest.raises(FileNotFoundError):
+    with pytest.raises(OSError):
         SettingsLoader.from_json("/nonexistent/config.json")
 
 

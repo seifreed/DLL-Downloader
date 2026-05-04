@@ -53,18 +53,42 @@ class HashNotFoundError(VirusTotalError):
     pass
 
 
-def _safe_int(value: object) -> int:
-    """Safely coerce API values to int, handling float-like strings."""
-    if isinstance(value, int) and not isinstance(value, bool):
+def _safe_int(value: object, *, strict: bool = False) -> int:
+    """Safely coerce API values to int, handling float-like strings.
+
+    When *strict* is True (used for security-critical fields like
+    ``malicious`` and ``suspicious`` counts), unparseable or negative
+    values raise :class:`VirusTotalError` instead of defaulting to 0,
+    ensuring the scanner fails closed rather than classifying a file as clean
+    on malformed data.
+    """
+    if isinstance(value, bool):
+        if strict:
+            raise VirusTotalError(f"VT API returned boolean for integer field: {value!r}")
+        logger.warning("VT API returned boolean for integer field: %r, defaulting to 0", value)
+        return 0
+    if isinstance(value, int):
+        if strict and value < 0:
+            raise VirusTotalError(f"VT API returned negative count: {value}")
         return value
     if isinstance(value, float):
-        return int(round(value))
+        result = int(round(value))
+        if strict and result < 0:
+            raise VirusTotalError(f"VT API returned negative count: {result}")
+        return result
     if isinstance(value, str):
         try:
-            return int(round(float(value)))
-        except (ValueError, OverflowError):
+            result = int(round(float(value)))
+            if strict and result < 0:
+                raise VirusTotalError(f"VT API returned negative count: {result}")
+            return result
+        except (ValueError, OverflowError) as exc:
+            if strict:
+                raise VirusTotalError(f"VT API returned unparseable integer value: {value!r}") from exc
             logger.warning("VT API returned unparseable integer value: %r, defaulting to 0", value)
             return 0
+    if strict:
+        raise VirusTotalError(f"VT API returned unexpected type for integer field: {value!r}")
     logger.warning("VT API returned unexpected type for integer field: %r, defaulting to 0", value)
     return 0
 
@@ -110,6 +134,7 @@ def _safe_json(response: HTTPResponseProtocol) -> dict[str, object]:
                 raise VirusTotalError(
                     f"VirusTotal response exceeds size limit ({_VT_RESPONSE_MAX_BYTES} bytes)"
                 ) from None
+            chunks = [raw_content]
 
     if chunks:
         body = b"".join(chunks)
@@ -118,10 +143,21 @@ def _safe_json(response: HTTPResponseProtocol) -> dict[str, object]:
         except (ValueError, UnicodeDecodeError) as exc:
             raise VirusTotalError(f"Invalid JSON in VirusTotal response: {exc}") from exc
     else:
+        # Fallback: response supports json() but not iter_content/content.
+        # Enforce size limit via Content-Length header or serialized size.
+        if content_length is not None and content_length > _VT_RESPONSE_MAX_BYTES:
+            raise VirusTotalError(
+                f"VirusTotal response exceeds size limit ({content_length} bytes)"
+            )
         try:
             payload = response.json()
         except (ValueError, UnicodeDecodeError) as exc:
             raise VirusTotalError(f"Invalid JSON in VirusTotal response: {exc}") from exc
+        serialized_size = len(json.dumps(payload, default=str))
+        if serialized_size > _VT_RESPONSE_MAX_BYTES:
+            raise VirusTotalError(
+                f"VirusTotal response exceeds size limit ({serialized_size} bytes)"
+            )
 
     if not isinstance(payload, Mapping):
         raise VirusTotalError("VirusTotal response body must be a JSON object")
@@ -142,6 +178,8 @@ def _data_section(payload: Mapping[str, object]) -> dict[str, object]:
     for key, value in data.items():
         if isinstance(key, str):
             normalized[key] = value
+        else:
+            logger.warning("VT API response data section has non-string key: %r", key)
     return normalized
 
 
@@ -193,7 +231,7 @@ class VirusTotalScanner(ISecurityScanner):
             suspicious_threshold: Number of positive detections to mark as suspicious
             timeout: Timeout in seconds for VirusTotal API requests
         """
-        self._api_key = api_key
+        self._api_key = api_key.strip() if api_key else None
         self._malicious_threshold = malicious_threshold
         self._suspicious_threshold = suspicious_threshold
         self._timeout = timeout
@@ -238,7 +276,7 @@ class VirusTotalScanner(ISecurityScanner):
         Returns:
             True if API key is set and valid
         """
-        return bool(self._api_key)
+        return bool(self._api_key and self._api_key.strip())
 
     def scan_file(self, file_path: str) -> ScanResult:
         """
@@ -323,11 +361,12 @@ class VirusTotalScanner(ISecurityScanner):
             pass
         except VirusTotalError as exc:
             # Re-raise non-retryable errors (auth failures, forbidden, etc.)
-            # rather than silently falling through to a second doomed request.
+            # and transient errors (rate limits, server errors) rather than
+            # silently falling through to a second doomed request.
             error_message = str(exc).lower()
             if any(
                 indicator in error_message
-                for indicator in ("401", "403", "unauthorized", "forbidden")
+                for indicator in ("401", "403", "429", "unauthorized", "forbidden", "rate limit")
             ):
                 raise
             logger.info(
@@ -391,6 +430,8 @@ class VirusTotalScanner(ISecurityScanner):
 
         if not _is_valid_hash(file_hash):
             raise VirusTotalError(f"Invalid file hash: {file_hash!r}")
+
+        file_hash = file_hash.lower()
 
         response: HTTPResponseProtocol | None = None
         try:
@@ -469,11 +510,15 @@ class VirusTotalScanner(ISecurityScanner):
         if not _is_valid_hash(file_hash):
             raise VirusTotalError(f"Invalid file hash: {file_hash!r}")
 
+        file_hash = file_hash.lower()
+
         response: HTTPResponseProtocol | None = None
         try:
             url = f"{self.VT_API_URL}/files/{file_hash}"
             response = self.session.get(url, timeout=self._timeout)
 
+            if response.status_code == 404:
+                raise HashNotFoundError(f"No report found for hash: {file_hash}")
             if response.status_code != 200:
                 raise VirusTotalError(
                     f"Failed to get report: {response.status_code}"
@@ -566,8 +611,8 @@ class VirusTotalScanner(ISecurityScanner):
         if not isinstance(stats, dict):
             stats = {}
 
-        malicious = _safe_int(stats.get('malicious', 0))
-        suspicious = _safe_int(stats.get('suspicious', 0))
+        malicious = _safe_int(stats.get('malicious', 0), strict=True)
+        suspicious = _safe_int(stats.get('suspicious', 0), strict=True)
         total = sum(_safe_int(v) for v in stats.values())
         total_positives = malicious + suspicious
 

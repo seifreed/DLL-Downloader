@@ -7,7 +7,7 @@ Resolves DLL names into direct download URLs by scraping search and download pag
 import re
 from dataclasses import dataclass, field
 from html import unescape
-from urllib.parse import urljoin, urlparse
+from urllib.parse import quote, urljoin, urlparse
 
 from ...domain.entities.dll_file import Architecture, normalize_dll_name
 from ...domain.errors import DownloadResolutionError, HTTPServiceError
@@ -35,7 +35,7 @@ class DllFilesResolver:
 
     def resolve_download_url(self, dll_name: str, architecture: Architecture) -> str:
         name = normalize_dll_name(dll_name)
-        search_url = f"{self.base_url}/search/?q={name}"
+        search_url = f"{self.base_url}/search/?q={quote(name, safe='')}"
         search_html = self._get(search_url)
 
         dll_page = self._extract_dll_page(search_html, name)
@@ -96,7 +96,7 @@ class DllFilesResolver:
         if architecture == Architecture.X64 and not self._candidates_have_architecture_hints(
             candidates
         ):
-            return candidates[0][0]
+            return None
 
         return None
 
@@ -255,7 +255,11 @@ class DllFilesResolver:
         for href, _ in self._iter_links(html):
             if self._is_official_zip_link(href):
                 parsed = urlparse(href)
+                if parsed.username is not None:
+                    continue
                 if parsed.scheme == "https":
+                    if parsed.port is not None and parsed.port != 443:
+                        continue
                     return href
                 if parsed.scheme == "" and parsed.netloc:
                     if "@" in parsed.netloc:
