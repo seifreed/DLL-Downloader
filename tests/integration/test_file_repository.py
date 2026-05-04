@@ -751,6 +751,26 @@ class TestFileSystemDLLRepositorySave:
         assert saved_path == tmp_path / "x64" / "zipped.dll"
         assert saved_path.read_bytes() == zip_payload
 
+    def test_save_accepts_zip_member_with_backslash_path(
+        self,
+        repository: FileSystemDLLRepository,
+        tmp_path: Path,
+    ) -> None:
+        dll = DLLFile(name="zipped.dll", architecture=Architecture.X64)
+        archive_buffer = io.BytesIO()
+        with zipfile.ZipFile(archive_buffer, "w") as archive:
+            archive.writestr(
+                "nested\\zipped.dll",
+                _build_pe_payload(Architecture.X64),
+            )
+        zip_payload = archive_buffer.getvalue()
+
+        saved = repository.save(dll, zip_payload)
+
+        saved_path = Path(_require_str(saved.file_path))
+        assert saved_path == tmp_path / "x64" / "zipped.dll"
+        assert saved_path.read_bytes() == zip_payload
+
     def test_save_accepts_duplicate_zip_member_when_requested_architecture_exists(
         self,
         repository: FileSystemDLLRepository,

@@ -681,7 +681,9 @@ class FileSystemDLLRepository(IDLLRepository):
                             member.file_size,
                         )
                         continue
-                    member_name = member.filename.rsplit("/", 1)[-1].lower()
+                    member_name = (
+                        member.filename.replace("\\", "/").rsplit("/", 1)[-1].lower()
+                    )
                     if member_name != expected_name:
                         continue
                     try:

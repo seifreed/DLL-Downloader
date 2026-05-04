@@ -408,17 +408,7 @@ class RequestsTransport:
                     f"HTTPS to HTTP redirect rejected: {location}",
                     url=original_url,
                 )
-            # Strip credentials from redirect URLs to prevent leakage.
-            parsed_location = urlparse(location)
-            if parsed_location.username or parsed_location.password:
-                hostname = parsed_location.hostname or ""
-                sanitized = parsed_location._replace(netloc=hostname)
-                if parsed_location.port:
-                    sanitized = sanitized._replace(
-                        netloc=f"{hostname}:{parsed_location.port}"
-                    )
-                return sanitized.geturl()
-            return location
+            return RequestsTransport._strip_url_credentials(location)
         # Reject absolute URLs with non-HTTP schemes (ftp://, file://, etc.)
         # and scheme-less forms like data: or javascript: that use `:` without `://`.
         if "://" in location and not location.startswith(("//", "/")):
@@ -431,4 +421,21 @@ class RequestsTransport:
                 f"Redirect to non-HTTP scheme rejected: {location}",
                 url=original_url,
             )
-        return urljoin(original_url, location)
+        resolved = urljoin(original_url, location)
+        if original_url.startswith("https://") and resolved.startswith("http://"):
+            raise HTTPClientError(
+                f"HTTPS to HTTP redirect rejected: {resolved}",
+                url=original_url,
+            )
+        return RequestsTransport._strip_url_credentials(resolved)
+
+    @staticmethod
+    def _strip_url_credentials(location: str) -> str:
+        parsed_location = urlparse(location)
+        if not parsed_location.username and not parsed_location.password:
+            return location
+        hostname = parsed_location.hostname or ""
+        netloc = hostname
+        if parsed_location.port:
+            netloc = f"{hostname}:{parsed_location.port}"
+        return parsed_location._replace(netloc=netloc).geturl()

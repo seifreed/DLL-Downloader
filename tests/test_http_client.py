@@ -25,6 +25,7 @@ from dll_downloader.infrastructure.http.http_client import (
 )
 from dll_downloader.infrastructure.http.request_headers import RequestHeaderBuilder
 from dll_downloader.infrastructure.http.retry_policy import RetryPolicy
+from dll_downloader.infrastructure.http.transport import RequestsTransport
 from dll_downloader.infrastructure.http.user_agents import RandomUserAgentProvider
 from dll_downloader.infrastructure.http_session import (
     HTTPResponseProtocol,
@@ -317,6 +318,19 @@ def test_requests_http_client_get_real_request(test_http_server: int) -> None:
     assert len(response.content) > 0
     assert isinstance(response.headers, dict)
     assert response.url.startswith("http://localhost")
+
+
+@pytest.mark.unit
+def test_transport_scheme_relative_redirect_strips_credentials() -> None:
+    class DummyResponse:
+        headers = {"Location": "//user:pass@example.com/next?token=1"}
+
+    redirect_url = RequestsTransport._resolve_redirect(
+        "https://source.example/start",
+        cast(HTTPResponseProtocol, DummyResponse()),
+    )
+
+    assert redirect_url == "https://example.com/next?token=1"
 
 
 @pytest.mark.integration

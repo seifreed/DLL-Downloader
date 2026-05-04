@@ -189,7 +189,7 @@ def cleanup_runtime_resources(
 ) -> None:
     """Close runtime adapters created by the composition root."""
     _close_runtime_resource(http_client, "HTTP client")
-    if scanner:
+    if scanner is not None:
         _close_runtime_resource(scanner, "security scanner")
 
 

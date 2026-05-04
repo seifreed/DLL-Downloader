@@ -336,6 +336,28 @@ def test_settings_loader_load_reads_vt_toml_when_api_key_missing(tmp_path: Path)
 
 
 @pytest.mark.unit
+def test_settings_loader_ignores_symlink_vt_toml(tmp_path: Path) -> None:
+    target = tmp_path / "real-vt.toml"
+    target.write_text("apikey = 'vt-test-key'")
+    (tmp_path / ".vt.toml").symlink_to(target)
+
+    with (
+        _temporary_env(
+            {
+                "HOME": str(tmp_path),
+                "USERPROFILE": str(tmp_path),
+                "DLL_VIRUSTOTAL_API_KEY": None,
+            }
+        ),
+        _temporary_cwd(tmp_path),
+    ):
+        settings = SettingsLoader.load(config_path=None)
+
+    assert _VTTomlSettingsSource.load(str(tmp_path)) is None
+    assert settings.virustotal_api_key is None
+
+
+@pytest.mark.unit
 def test_settings_loader_json_null_api_key_disables_vt_toml_fallback(
     tmp_path: Path,
 ) -> None:

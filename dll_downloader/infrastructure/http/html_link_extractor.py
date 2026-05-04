@@ -69,17 +69,22 @@ def _line_start_offsets(html: str) -> tuple[int, ...]:
     return tuple(offsets)
 
 
-def extract_links(html: str) -> list[tuple[str, str]]:
-    """Return all anchor links found in the given HTML fragment."""
-    parser = HTMLLinkExtractor(_line_start_offsets(html))
-    parser.feed(html)
-    # Flush unclosed anchor tags from truncated/malformed HTML.
-    while parser._anchor_stack:
+def _flush_unclosed_anchors(parser: HTMLLinkExtractor) -> None:
+    while parser._anchor_stack and len(parser.links) < _MAX_EXTRACTED_LINKS:
         href, text_parts, position = parser._anchor_stack.pop()
         text = "".join(text_parts).strip()
         if href:
             parser.links.append((href, text))
             parser.links_with_positions.append((href, text, position))
+    if len(parser.links) >= _MAX_EXTRACTED_LINKS:
+        parser._anchor_stack.clear()
+
+
+def extract_links(html: str) -> list[tuple[str, str]]:
+    """Return all anchor links found in the given HTML fragment."""
+    parser = HTMLLinkExtractor(_line_start_offsets(html))
+    parser.feed(html)
+    _flush_unclosed_anchors(parser)
     return parser.links
 
 
@@ -87,4 +92,5 @@ def extract_links_with_positions(html: str) -> list[tuple[str, str, int]]:
     """Return all anchor links with their absolute ``<a>`` start offsets."""
     parser = HTMLLinkExtractor(_line_start_offsets(html))
     parser.feed(html)
+    _flush_unclosed_anchors(parser)
     return parser.links_with_positions

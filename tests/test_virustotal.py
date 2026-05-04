@@ -55,6 +55,11 @@ class HashErrorScanner(VirusTotalScanner):
         raise VirusTotalError("err")
 
 
+class HashStatusErrorScanner(VirusTotalScanner):
+    def scan_hash(self, file_hash: str) -> ScanResult:
+        raise VirusTotalError("API request failed with status 500", status_code=500)
+
+
 class FixedResultScanner(VirusTotalScanner):
     def __init__(
         self,
@@ -718,7 +723,26 @@ def test_virustotal_error_creation() -> None:
     error = VirusTotalError("API request failed")
 
     assert str(error) == "API request failed"
+    assert error.status_code is None
     assert isinstance(error, Exception)
+
+
+@pytest.mark.unit
+def test_virustotal_error_preserves_status_code() -> None:
+    error = VirusTotalError("API request failed", status_code=503)
+
+    assert str(error) == "API request failed"
+    assert error.status_code == 503
+
+
+@pytest.mark.unit
+def test_virustotal_scheme_relative_redirect_strips_credentials() -> None:
+    redirect_url = VirusTotalScanner._resolve_redirect_url(
+        "https://www.virustotal.com/api/v3/files",
+        "//user:pass@www.virustotal.com/api/v3/next",
+    )
+
+    assert redirect_url == "https://www.virustotal.com/api/v3/next"
 
 
 # ============================================================================
@@ -993,6 +1017,42 @@ def test_scan_file_upload_failure_raises(
 
     with pytest.raises(VirusTotalError):
         scanner.scan_file(str(sample))
+
+
+@pytest.mark.unit
+def test_scan_file_does_not_upload_after_hash_lookup_status_error(
+    tmp_download_dir: Path,
+) -> None:
+    class DummySession:
+        def __init__(self) -> None:
+            self.headers: dict[str, str] = {}
+            self.post_calls = 0
+
+        def get(self, *args: Any, **kwargs: Any) -> Any:
+            raise NotImplementedError
+
+        def post(self, *args: Any, **kwargs: Any) -> Any:
+            self.post_calls += 1
+            raise AssertionError("upload should not be attempted")
+
+        def head(self, *args: Any, **kwargs: Any) -> Any:
+            raise NotImplementedError
+
+        def close(self) -> None:
+            pass
+
+    session = DummySession()
+    scanner = HashStatusErrorScanner(
+        api_key="key",
+        session_resource=_resource_with_session(cast(HTTPSessionProtocol, session)),
+    )
+    sample = tmp_download_dir / "file.dll"
+    sample.write_bytes(b"data")
+
+    with pytest.raises(VirusTotalError, match="status 500"):
+        scanner.scan_file(str(sample))
+
+    assert session.post_calls == 0
 
 
 @pytest.mark.unit

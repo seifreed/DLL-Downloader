@@ -8,6 +8,9 @@ from dll_downloader.infrastructure.http.dll_files_resolver import (
     DllFilesResolver,
     DllFilesResolverError,
 )
+from dll_downloader.infrastructure.http.html_link_extractor import (
+    extract_links_with_positions,
+)
 from dll_downloader.infrastructure.http.http_client import (
     HTTPClientError,
     RequestsHTTPClient,
@@ -551,6 +554,15 @@ def test_extract_link_context_at_handles_unclosed_section() -> None:
         html.find("/download/abc/file.dll.html"),
         "Download",
     ) == html
+
+
+@pytest.mark.unit
+def test_extract_links_with_positions_flushes_unclosed_anchor() -> None:
+    html = '<a href="/download/abc/file.dll.html">Download 64-bit'
+
+    assert extract_links_with_positions(html) == [
+        ("/download/abc/file.dll.html", "Download 64-bit", 0)
+    ]
 
 
 @pytest.mark.unit

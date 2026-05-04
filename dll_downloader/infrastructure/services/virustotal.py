@@ -50,7 +50,10 @@ def _is_valid_hash(value: str) -> bool:
 
 class VirusTotalError(SecurityServiceError):
     """Exception raised for VirusTotal API errors."""
-    pass
+
+    def __init__(self, message: str, *, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
 
 
 class HashNotFoundError(VirusTotalError):
@@ -418,10 +421,12 @@ class VirusTotalScanner(ISecurityScanner):
     def _resolve_redirect_url(current_url: str, location: str) -> str:
         location = location.strip()
         if not location.startswith(("http://", "https://")):
-            return urljoin(current_url, location)
-        if current_url.startswith("https://") and location.startswith("http://"):
-            raise VirusTotalError(f"HTTPS to HTTP redirect rejected: {location}")
-        return VirusTotalScanner._strip_url_credentials(location)
+            resolved_url = urljoin(current_url, location)
+        else:
+            resolved_url = location
+        if current_url.startswith("https://") and resolved_url.startswith("http://"):
+            raise VirusTotalError(f"HTTPS to HTTP redirect rejected: {resolved_url}")
+        return VirusTotalScanner._strip_url_credentials(resolved_url)
 
     @staticmethod
     def _strip_url_credentials(location: str) -> str:
@@ -495,7 +500,7 @@ class VirusTotalScanner(ISecurityScanner):
             ):
                 raise
             status_code = getattr(exc, 'status_code', None)
-            if status_code in (401, 403, 429):
+            if status_code is not None:
                 raise
             logger.info(
                 "Hash lookup failed for %s, proceeding with upload: %s", file_hash, exc
@@ -511,7 +516,10 @@ class VirusTotalScanner(ISecurityScanner):
             )
 
             if response.status_code != 200:
-                raise VirusTotalError(f"Upload failed: {response.status_code}")
+                raise VirusTotalError(
+                    f"Upload failed: {response.status_code}",
+                    status_code=response.status_code,
+                )
 
             logger.info(
                 "File submitted for analysis: %s",
@@ -627,7 +635,8 @@ class VirusTotalScanner(ISecurityScanner):
                 raise HashNotFoundError(f"No results found for hash: {file_hash}")
             if response.status_code != 200:
                 raise VirusTotalError(
-                    f"API request failed with status {response.status_code}"
+                    f"API request failed with status {response.status_code}",
+                    status_code=response.status_code,
                 )
             return self._parse_response(file_hash, _safe_json(response))
         except HashNotFoundError:
@@ -705,7 +714,8 @@ class VirusTotalScanner(ISecurityScanner):
                 raise HashNotFoundError(f"No report found for hash: {file_hash}")
             if response.status_code != 200:
                 raise VirusTotalError(
-                    f"Failed to get report: {response.status_code}"
+                    f"Failed to get report: {response.status_code}",
+                    status_code=response.status_code,
                 )
 
             return dict(_safe_json(response))
