@@ -277,7 +277,11 @@ def test_extract_download_link_ignores_external_non_download() -> None:
         'Microsoft</a>'
         '<a href="/download/abc/file.dll.html">Download</a>'
     )
-    assert resolver._extract_download_link(html, Architecture.X64) == "/download/abc/file.dll.html"
+    # The download link has no architecture hints, so a specific
+    # architecture request returns None (only UNKNOWN falls back
+    # to the first candidate).
+    assert resolver._extract_download_link(html, Architecture.X64) is None
+    assert resolver._extract_download_link(html, Architecture.UNKNOWN) == "/download/abc/file.dll.html"
 
 
 @pytest.mark.unit
@@ -736,7 +740,10 @@ def test_extract_download_link_fallback_first() -> None:
         '<a href="/other/link.html">Other</a>'
         '<a href="/download/aaa/file.dll.html">Download</a>'
     )
-    assert resolver._extract_download_link(html, Architecture.X64) == "/download/aaa/file.dll.html"
+    # No architecture hints in the HTML; X64 request returns None.
+    assert resolver._extract_download_link(html, Architecture.X64) is None
+    # UNKNOWN architecture falls back to the first valid download link.
+    assert resolver._extract_download_link(html, Architecture.UNKNOWN) == "/download/aaa/file.dll.html"
 
 
 @pytest.mark.unit

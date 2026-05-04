@@ -100,10 +100,12 @@ class _VTTomlSettingsSource:
         )
         fd = -1
         try:
-            fd = os.open(str(vt_path), os.O_RDONLY | os.O_NOFOLLOW)
+            fd = os.open(str(vt_path), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
         except OSError:
             return None
         try:
+            os.set_blocking(fd, False)
+            os.set_blocking(fd, True)
             st = os.fstat(fd)
             if not stat.S_ISREG(st.st_mode):
                 os.close(fd)

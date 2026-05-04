@@ -1072,10 +1072,11 @@ def test_delete_rejects_mismatched_internal_file_path(
 def test_path_locations_match_rejects_missing_parent(tmp_download_dir: Path) -> None:
     repository = FileSystemDLLRepository(tmp_download_dir)
 
-    assert not repository._path_locations_match(
-        tmp_download_dir / "missing-parent" / "missing.dll",
-        tmp_download_dir / "x64" / "missing.dll",
-    )
+    with pytest.raises(RepositoryError):
+        repository._path_locations_match(
+            tmp_download_dir / "missing-parent" / "missing.dll",
+            tmp_download_dir / "x64" / "missing.dll",
+        )
 
 
 def test_delete_rejects_file_path_outside_repository(tmp_download_dir: Path, tmp_path: Path) -> None:

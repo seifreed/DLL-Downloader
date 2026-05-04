@@ -132,13 +132,18 @@ class FileSystemDLLRepository(IDLLRepository):
                 (self._base_path / arch.value).mkdir(exist_ok=True)
 
     @contextmanager
-    def _with_index_lock(self) -> None:
-        """Acquire an advisory file lock for index read-modify-write safety."""
+    def _with_index_lock(self, shared: bool = False) -> None:
+        """Acquire an advisory file lock for index safety.
+
+        Args:
+            shared: If True, acquire a shared (read) lock; otherwise exclusive (write).
+        """
         lock_path = self._base_path / ".dll_index.lock"
         fd = -1
+        lock_type = fcntl.LOCK_SH if shared else fcntl.LOCK_EX
         try:
             fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
-            fcntl.flock(fd, fcntl.LOCK_EX)
+            fcntl.flock(fd, lock_type)
         except OSError as exc:
             if fd >= 0:
                 with contextlib.suppress(OSError):
@@ -223,28 +228,49 @@ class FileSystemDLLRepository(IDLLRepository):
         return self._base_path / arch_value / name.lower()
 
     def _path_is_within_repository(self, file_path: Path) -> bool:
-        """Return True when a filesystem path is owned by this repository."""
+        """Return True when a filesystem path is owned by this repository.
+
+        Fails closed: ValueError (path escapes root) returns False,
+        but OSError (filesystem error) is propagated so security checks
+        cannot be silently bypassed.
+        """
         try:
             file_path.resolve().relative_to(self._base_path.resolve())
-        except (OSError, ValueError):
+        except ValueError:
             return False
+        except OSError as exc:
+            raise RepositoryError(
+                f"Cannot verify path is within repository: {file_path}"
+            ) from exc
         return True
 
     def _path_location_is_within_repository(self, file_path: Path) -> bool:
-        """Return True when the path itself is located under the repository root."""
+        """Return True when the path itself is located under the repository root.
+
+        Fails closed: ValueError returns False, OSError is propagated.
+        """
         try:
             file_path.parent.resolve(strict=True).relative_to(self._base_path.resolve())
-        except (OSError, ValueError):
+        except ValueError:
             return False
+        except OSError as exc:
+            raise RepositoryError(
+                f"Cannot verify path location is within repository: {file_path}"
+            ) from exc
         return True
 
     def _path_locations_match(self, left: Path, right: Path) -> bool:
-        """Return True when two paths identify the same repository entry location."""
+        """Return True when two paths identify the same repository entry location.
+
+        Fails closed: OSError is propagated.
+        """
         try:
             left_parent = left.parent.resolve(strict=True)
             right_parent = right.parent.resolve(strict=True)
-        except OSError:
-            return False
+        except OSError as exc:
+            raise RepositoryError(
+                f"Cannot verify path locations match: {left} vs {right}"
+            ) from exc
         return left_parent == right_parent and left.name.lower() == right.name.lower()
 
     @staticmethod
@@ -253,14 +279,35 @@ class FileSystemDLLRepository(IDLLRepository):
 
         Uses os.lstat to detect symlinks without following them,
         which catches both dangling and valid symlinks.
+
+        Fails closed: OSError is propagated so symlink checks cannot
+        be silently bypassed by filesystem errors.
+        """
+        try:
+            return stat.S_ISLNK(os.lstat(path).st_mode)
+        except FileNotFoundError:
+            return False
+
+    @staticmethod
+    def _is_symlink_safe(path: Path) -> bool:
+        """Return True when path is any symlink; treat errors as not-symlink.
+
+        Non-security contexts (e.g., skipping directories during iteration)
+        treat filesystem errors as non-symlink rather than propagating.
         """
         try:
             return stat.S_ISLNK(os.lstat(path).st_mode)
         except OSError:
             return False
 
-    def _validate_repository_write_path(self, file_path: Path) -> None:
-        """Reject writes through symlinks or paths escaping the repository root."""
+    def _validate_repository_write_path(
+        self, file_path: Path
+    ) -> Path:
+        """Reject writes through symlinks or paths escaping the repository root.
+
+        Returns the resolved parent directory to close the TOCTOU window
+        between validation and atomic write.
+        """
         repository_root = self._base_path.resolve()
         try:
             resolved_parent = file_path.parent.resolve(strict=True)
@@ -282,6 +329,7 @@ class FileSystemDLLRepository(IDLLRepository):
                 raise RepositoryError(
                     f"Refusing to write outside repository: {file_path}"
                 ) from exc
+        return resolved_parent
 
     @staticmethod
     def _read_file_no_follow(file_path: Path) -> bytes:
@@ -298,10 +346,9 @@ class FileSystemDLLRepository(IDLLRepository):
 
     def _atomic_write_bytes(self, file_path: Path, content: bytes) -> None:
         """Write bytes through a same-directory temp file and atomic replace."""
-        self._validate_repository_write_path(file_path)
-        # Use the resolved parent directory to prevent TOCTOU via symlink
-        # replacement of file_path.parent between validation and mkstemp.
-        resolved_parent = file_path.parent.resolve(strict=True)
+        # Validate and get the resolved parent in one step to close the
+        # TOCTOU window between validation and mkstemp.
+        resolved_parent = self._validate_repository_write_path(file_path)
         fd, temp_name = tempfile.mkstemp(
             dir=str(resolved_parent),
             prefix=".dll_tmp_",
@@ -449,29 +496,30 @@ class FileSystemDLLRepository(IDLLRepository):
         """
         name = normalize_dll_name(name)
 
-        index = self._load_index()
+        with self._with_index_lock(shared=True):
+            index = self._load_index()
 
-        for arch in self._iter_architectures(architecture):
-            key = self._get_file_key(name, arch)
-            if key in index["files"]:
-                indexed_dll = self._try_deserialize_dll(index["files"][key])
-                if indexed_dll and self._indexed_payload_is_valid(
-                    indexed_dll,
-                    expected_name=name,
-                    expected_architecture=arch,
-                ):
-                    return indexed_dll
+            for arch in self._iter_architectures(architecture):
+                key = self._get_file_key(name, arch)
+                if key in index["files"]:
+                    indexed_dll = self._try_deserialize_dll(index["files"][key])
+                    if indexed_dll and self._indexed_payload_is_valid(
+                        indexed_dll,
+                        expected_name=name,
+                        expected_architecture=arch,
+                    ):
+                        return indexed_dll
 
-        # Check if file exists on disk without index entry. Even architectures
-        # with corrupt index entries may have valid on-disk files; the index
-        # corruption should not suppress legitimate fallback candidates.
-        for arch in self._iter_architectures(architecture):
-            file_path = self._get_file_path(name, arch)
-            fallback_path = self._validated_fallback_payload_path(file_path, arch)
-            if fallback_path is not None:
-                return self._create_dll_from_file(fallback_path, name, arch)
+            # Check if file exists on disk without index entry. Even architectures
+            # with corrupt index entries may have valid on-disk files; the index
+            # corruption should not suppress legitimate fallback candidates.
+            for arch in self._iter_architectures(architecture):
+                file_path = self._get_file_path(name, arch)
+                fallback_path = self._validated_fallback_payload_path(file_path, arch)
+                if fallback_path is not None:
+                    return self._create_dll_from_file(fallback_path, name, arch)
 
-        return None
+            return None
 
     def _validated_fallback_payload_path(
         self,
@@ -720,23 +768,24 @@ class FileSystemDLLRepository(IDLLRepository):
             return None
 
         normalized_hash = file_hash.lower()
-        index = self._load_index()
-        for data in index["files"].values():
-            if data.get("file_hash") != normalized_hash:
-                continue
-            indexed_dll = self._try_deserialize_dll(data)
-            if indexed_dll and self._indexed_payload_is_valid(
-                indexed_dll,
-                expected_hash=normalized_hash,
-            ):
-                return indexed_dll
-        return self._find_fallback_by_hash(normalized_hash)
+        with self._with_index_lock(shared=True):
+            index = self._load_index()
+            for data in index["files"].values():
+                if data.get("file_hash") != normalized_hash:
+                    continue
+                indexed_dll = self._try_deserialize_dll(data)
+                if indexed_dll and self._indexed_payload_is_valid(
+                    indexed_dll,
+                    expected_hash=normalized_hash,
+                ):
+                    return indexed_dll
+            return self._find_fallback_by_hash(normalized_hash)
 
     def _find_fallback_by_hash(self, file_hash: str) -> DLLFile | None:
         """Find a valid orphaned repository payload by its actual content hash."""
         for arch in self._iter_architectures(None):
             arch_dir = self._base_path / arch.value
-            if self._is_symlink(arch_dir) or not arch_dir.is_dir():
+            if self._is_symlink_safe(arch_dir) or not arch_dir.is_dir():
                 continue
             for file_path in self._iter_repository_directory(arch_dir):
                 if file_path.suffix.lower() != ".dll":
@@ -760,29 +809,30 @@ class FileSystemDLLRepository(IDLLRepository):
         Returns:
             List of all DLLFile entities in the repository
         """
-        index = self._load_index()
-        dll_files: list[DLLFile] = []
-        indexed_keys = {
-            *self._load_raw_index_keys(),
-            *(key.lower() for key in index["files"]),
-        }
-        returned_keys: set[str] = set()
-        for data in index["files"].values():
-            indexed_dll = self._try_deserialize_dll(data)
-            if indexed_dll and self._indexed_payload_is_valid(indexed_dll):
-                dll_files.append(indexed_dll)
-                returned_keys.add(
-                    self._get_file_key(indexed_dll.name, indexed_dll.architecture)
-                )
-        dll_files.extend(self._list_fallback_payloads(indexed_keys | returned_keys))
-        return dll_files
+        with self._with_index_lock(shared=True):
+            index = self._load_index()
+            dll_files: list[DLLFile] = []
+            indexed_keys = {
+                *self._load_raw_index_keys(),
+                *(key.lower() for key in index["files"]),
+            }
+            returned_keys: set[str] = set()
+            for data in index["files"].values():
+                indexed_dll = self._try_deserialize_dll(data)
+                if indexed_dll and self._indexed_payload_is_valid(indexed_dll):
+                    dll_files.append(indexed_dll)
+                    returned_keys.add(
+                        self._get_file_key(indexed_dll.name, indexed_dll.architecture)
+                    )
+            dll_files.extend(self._list_fallback_payloads(indexed_keys | returned_keys))
+            return dll_files
 
     def _list_fallback_payloads(self, blocked_keys: set[str]) -> list[DLLFile]:
         """List valid orphaned disk payloads that are not represented in the index."""
         dll_files: list[DLLFile] = []
         for arch in self._iter_architectures(None):
             arch_dir = self._base_path / arch.value
-            if self._is_symlink(arch_dir) or not arch_dir.is_dir():
+            if self._is_symlink_safe(arch_dir) or not arch_dir.is_dir():
                 continue
             for file_path in self._iter_repository_directory(arch_dir):
                 if file_path.suffix.lower() != ".dll":

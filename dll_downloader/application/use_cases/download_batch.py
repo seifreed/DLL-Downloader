@@ -8,6 +8,7 @@ from typing import Protocol
 
 from ...domain.entities.dll_file import Architecture, normalize_dll_name
 from ...domain.errors import DomainPortError
+from ..errors import ApplicationError
 from .download_dll import DownloadDLLRequest, DownloadDLLResponse
 
 logger = logging.getLogger(__name__)
@@ -92,12 +93,10 @@ class DownloadBatchUseCase:
                         extract_archive=request.extract_archive,
                     )
                 )
-            except MemoryError:
-                raise
-            except DomainPortError:
+            except (MemoryError, DomainPortError, ApplicationError):
                 raise
             except Exception as exc:
-                logger.error("Unexpected error downloading %s: %s", normalized_name, exc)
+                logger.error("Unexpected error downloading %s: %s", normalized_name, exc, exc_info=True)
                 response = DownloadDLLResponse(
                     success=False,
                     error_message="Unexpected download error",

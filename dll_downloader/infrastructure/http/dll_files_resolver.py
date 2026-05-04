@@ -163,17 +163,6 @@ class DllFilesResolver:
             or self._context_architecture(context) is not None
         )
 
-    def _candidates_have_architecture_hints(
-        self,
-        candidates: list[DownloadLinkCandidate],
-    ) -> bool:
-        return any(
-            self._context_has_architecture_hint(link_text)
-            or self._context_has_architecture_hint(context)
-            or self._href_has_architecture_hint(href)
-            for href, link_text, context in candidates
-        )
-
     def _context_matches_architecture(
         self,
         context: str,
@@ -260,6 +249,13 @@ class DllFilesResolver:
                     if "@" in parsed.netloc:
                         continue
                     if ":" in parsed.netloc:
+                        continue
+                    parsed_base = urlparse(self.base_url)
+                    allowed_netlocs = {
+                        parsed_base.netloc.lower(),
+                        "download.zip.dll-files.com",
+                    }
+                    if parsed.netloc.lower() not in allowed_netlocs:
                         continue
                     query = f"?{parsed.query}" if parsed.query else ""
                     return f"https://{parsed.netloc}{parsed.path}{query}"

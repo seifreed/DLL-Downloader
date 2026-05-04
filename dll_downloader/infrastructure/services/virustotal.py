@@ -65,6 +65,10 @@ def _safe_int(value: object, *, strict: bool = False) -> int:
     values raise :class:`VirusTotalError` instead of defaulting to 0,
     ensuring the scanner fails closed rather than classifying a file as clean
     on malformed data.
+
+    Unexpected types (None, list, dict, etc.) always raise VirusTotalError
+    regardless of the strict flag, since defaulting to 0 would understate
+    threat severity.
     """
     if isinstance(value, bool):
         if strict:
@@ -91,10 +95,7 @@ def _safe_int(value: object, *, strict: bool = False) -> int:
                 raise VirusTotalError(f"VT API returned unparseable integer value: {value!r}") from exc
             logger.warning("VT API returned unparseable integer value: %r, defaulting to 0", value)
             return 0
-    if strict:
-        raise VirusTotalError(f"VT API returned unexpected type for integer field: {value!r}")
-    logger.warning("VT API returned unexpected type for integer field: %r, defaulting to 0", value)
-    return 0
+    raise VirusTotalError(f"VT API returned unexpected type for integer field: {value!r}")
 
 
 def _safe_json(response: HTTPResponseProtocol) -> dict[str, object]:
@@ -121,7 +122,7 @@ def _safe_json(response: HTTPResponseProtocol) -> dict[str, object]:
     # responses that omit Content-Length or use chunked transfer encoding.
     chunks: list[bytes] = []
     total_bytes = 0
-    try:
+    if hasattr(response, "iter_content") and callable(response.iter_content):
         for chunk in response.iter_content(chunk_size=65536):
             if chunk:
                 total_bytes += len(chunk)
@@ -130,7 +131,7 @@ def _safe_json(response: HTTPResponseProtocol) -> dict[str, object]:
                         f"VirusTotal response exceeds size limit ({_VT_RESPONSE_MAX_BYTES} bytes)"
                     )
                 chunks.append(chunk)
-    except AttributeError:
+    else:
         # iter_content not available; enforce size limit on content attribute
         raw_content = getattr(response, "content", None)
         if raw_content is not None and isinstance(raw_content, bytes):
@@ -144,7 +145,7 @@ def _safe_json(response: HTTPResponseProtocol) -> dict[str, object]:
         body = b"".join(chunks)
         try:
             payload = json.loads(body)
-        except (ValueError, UnicodeDecodeError) as exc:
+        except (ValueError, UnicodeDecodeError, TypeError) as exc:
             raise VirusTotalError(f"Invalid JSON in VirusTotal response: {exc}") from exc
     else:
         # Fallback: response supports json() but not iter_content/content.
@@ -152,7 +153,7 @@ def _safe_json(response: HTTPResponseProtocol) -> dict[str, object]:
         # already checked above and no streaming size accounting is available.
         try:
             payload = response.json()
-        except (ValueError, UnicodeDecodeError) as exc:
+        except (ValueError, UnicodeDecodeError, TypeError) as exc:
             raise VirusTotalError(f"Invalid JSON in VirusTotal response: {exc}") from exc
         serialized_size = len(json.dumps(payload, default=str))
         if serialized_size > _VT_RESPONSE_MAX_BYTES:
@@ -276,7 +277,7 @@ class VirusTotalScanner(ISecurityScanner):
         kwargs.setdefault("allow_redirects", False)
         kwargs.setdefault("timeout", self._timeout)
         current_url = url
-        for _ in range(self._MAX_REDIRECT_HOPS + 1):
+        for _ in range(self._MAX_REDIRECT_HOPS):
             parsed = urlparse(current_url)
             if parsed.scheme not in ("http", "https"):
                 raise VirusTotalError(f"Request to non-HTTP scheme rejected: {current_url}")
@@ -334,6 +335,9 @@ class VirusTotalScanner(ISecurityScanner):
                 )
             response = self.session.get(current_url, allow_redirects=False, timeout=self._timeout)  # type: ignore[arg-type]
             hops += 1
+        if response.is_redirect:
+            self._close_response(response)
+            raise VirusTotalError(f"Too many redirects (> {self._MAX_REDIRECT_HOPS})")
         return response
 
     def __enter__(self) -> "VirusTotalScanner":
