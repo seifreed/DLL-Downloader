@@ -179,6 +179,18 @@ def test_http_response_content_length_returns_none_for_invalid_header() -> None:
     assert response.content_length is None
 
 
+@pytest.mark.unit
+def test_http_response_content_length_returns_none_for_negative_header() -> None:
+    response = HTTPResponse(
+        status_code=200,
+        content=b"",
+        headers={"Content-Length": "-1"},
+        url="https://example.com",
+    )
+
+    assert response.content_length is None
+
+
 # ============================================================================
 # RequestsHTTPClient Initialization Tests
 # ============================================================================
@@ -331,6 +343,19 @@ def test_transport_scheme_relative_redirect_strips_credentials() -> None:
     )
 
     assert redirect_url == "https://example.com/next?token=1"
+
+
+@pytest.mark.unit
+def test_transport_uppercase_https_redirect_is_supported() -> None:
+    class DummyResponse:
+        headers = {"Location": "HTTPS://user:pass@example.com/next"}
+
+    redirect_url = RequestsTransport._resolve_redirect(
+        "https://source.example/start",
+        cast(HTTPResponseProtocol, DummyResponse()),
+    )
+
+    assert redirect_url == "https://example.com/next"
 
 
 @pytest.mark.integration
@@ -1042,6 +1067,19 @@ def test_get_file_info_invalid_content_length() -> None:
 
 
 @pytest.mark.unit
+def test_get_file_info_ignores_negative_content_length() -> None:
+    class NegativeHeadClient(RequestsHTTPClient):
+        def head(self, url: str, headers: Mapping[str, str] | None = None) -> dict[str, str]:
+            return {"content-length": "-1"}
+
+    client = NegativeHeadClient()
+
+    info = client.get_file_info("https://example.com/file.dll")
+
+    assert info["content_length"] is None
+
+
+@pytest.mark.unit
 def test_get_file_info_uses_case_insensitive_headers() -> None:
     class UppercaseHeadClient(RequestsHTTPClient):
         def head(self, url: str, headers: Mapping[str, str] | None = None) -> dict[str, str]:
@@ -1111,6 +1149,142 @@ def test_http_client_download_ignores_empty_chunks() -> None:
         session_resource=_resource_with_session(cast(HTTPSessionProtocol, session))
     )
     assert client.download("https://example.com/file.dll") == b"abc"
+    assert session.response.closed is True
+
+
+@pytest.mark.unit
+def test_http_client_download_accepts_exact_max_bytes() -> None:
+    class DummyResponse:
+        ok = True
+        is_redirect = False
+        status_code = 200
+        headers = {"Content-Length": "3"}
+        url = "https://example.com/file.dll"
+
+        def __init__(self) -> None:
+            self.closed = False
+
+        def iter_content(self, chunk_size: int = 8192) -> Iterator[bytes]:
+            yield b"abc"
+
+        def close(self) -> None:
+            self.closed = True
+
+    class DummySession:
+        def __init__(self) -> None:
+            self.headers: dict[str, str] = {}
+            self.response = DummyResponse()
+
+        def get(self, *args: Any, **kwargs: Any) -> HTTPResponseProtocol:
+            return cast(HTTPResponseProtocol, self.response)
+
+        def head(self, *args: Any, **kwargs: Any) -> HTTPResponseProtocol:
+            raise NotImplementedError
+
+        def post(self, *args: Any, **kwargs: Any) -> HTTPResponseProtocol:
+            raise NotImplementedError
+
+        def close(self) -> None:
+            pass
+
+    session = DummySession()
+    client = RequestsHTTPClient(
+        max_download_bytes=3,
+        session_resource=_resource_with_session(cast(HTTPSessionProtocol, session)),
+    )
+
+    assert client.download("https://example.com/file.dll") == b"abc"
+    assert session.response.closed is True
+
+
+@pytest.mark.unit
+def test_http_client_download_rejects_negative_content_length() -> None:
+    class DummyResponse:
+        ok = True
+        is_redirect = False
+        status_code = 200
+        headers = {"Content-Length": "-1"}
+        url = "https://example.com/file.dll"
+
+        def __init__(self) -> None:
+            self.closed = False
+
+        def iter_content(self, chunk_size: int = 8192) -> Iterator[bytes]:
+            yield b""
+
+        def close(self) -> None:
+            self.closed = True
+
+    class DummySession:
+        def __init__(self) -> None:
+            self.headers: dict[str, str] = {}
+            self.response = DummyResponse()
+
+        def get(self, *args: Any, **kwargs: Any) -> HTTPResponseProtocol:
+            return cast(HTTPResponseProtocol, self.response)
+
+        def head(self, *args: Any, **kwargs: Any) -> HTTPResponseProtocol:
+            raise NotImplementedError
+
+        def post(self, *args: Any, **kwargs: Any) -> HTTPResponseProtocol:
+            raise NotImplementedError
+
+        def close(self) -> None:
+            pass
+
+    session = DummySession()
+    client = RequestsHTTPClient(
+        session_resource=_resource_with_session(cast(HTTPSessionProtocol, session)),
+    )
+
+    with pytest.raises(HTTPClientError, match="Invalid Content-Length header"):
+        client.download("https://example.com/file.dll")
+    assert session.response.closed is True
+
+
+@pytest.mark.unit
+def test_http_client_download_rejects_body_over_max_without_declared_length() -> None:
+    class DummyResponse:
+        ok = True
+        is_redirect = False
+        status_code = 200
+        headers: dict[str, str] = {}
+        url = "https://example.com/file.dll"
+
+        def __init__(self) -> None:
+            self.closed = False
+
+        def iter_content(self, chunk_size: int = 8192) -> Iterator[bytes]:
+            yield b"abcd"
+
+        def close(self) -> None:
+            self.closed = True
+
+    class DummySession:
+        def __init__(self) -> None:
+            self.headers: dict[str, str] = {}
+            self.response = DummyResponse()
+
+        def get(self, *args: Any, **kwargs: Any) -> HTTPResponseProtocol:
+            return cast(HTTPResponseProtocol, self.response)
+
+        def head(self, *args: Any, **kwargs: Any) -> HTTPResponseProtocol:
+            raise NotImplementedError
+
+        def post(self, *args: Any, **kwargs: Any) -> HTTPResponseProtocol:
+            raise NotImplementedError
+
+        def close(self) -> None:
+            pass
+
+    session = DummySession()
+    client = RequestsHTTPClient(
+        max_download_bytes=3,
+        session_resource=_resource_with_session(cast(HTTPSessionProtocol, session)),
+    )
+
+    with pytest.raises(HTTPClientError, match="Download exceeds size limit 3"):
+        client.download("https://example.com/file.dll")
     assert session.response.closed is True
 
 

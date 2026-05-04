@@ -80,21 +80,33 @@ def _safe_int(value: object, *, strict: bool = False) -> int:  # noqa: C901
         logger.warning("VT API returned boolean for integer field: %r, defaulting to 0", value)
         return 0
     if isinstance(value, int):
-        if strict and value < 0:
-            raise VirusTotalError(f"VT API returned negative count: {value}")
+        if value < 0:
+            if strict:
+                raise VirusTotalError(f"VT API returned negative count: {value}")
+            logger.warning("VT API returned negative count: %r, defaulting to 0", value)
+            return 0
         return value
     if isinstance(value, float):
         if value != value or value == float('inf') or value == float('-inf'):
             raise VirusTotalError(f"VT API returned non-finite float: {value!r}")
         result = int(round(value))
-        if strict and result < 0:
-            raise VirusTotalError(f"VT API returned negative count: {result}")
+        if result < 0:
+            if strict:
+                raise VirusTotalError(f"VT API returned negative count: {result}")
+            logger.warning("VT API returned negative count: %r, defaulting to 0", value)
+            return 0
         return result
     if isinstance(value, str):
         try:
             result = int(round(float(value)))
-            if strict and result < 0:
-                raise VirusTotalError(f"VT API returned negative count: {result}")
+            if result < 0:
+                if strict:
+                    raise VirusTotalError(f"VT API returned negative count: {result}")
+                logger.warning(
+                    "VT API returned negative count: %r, defaulting to 0",
+                    value,
+                )
+                return 0
             return result
         except (ValueError, OverflowError) as exc:
             if strict:

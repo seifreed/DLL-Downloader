@@ -256,6 +256,29 @@ def test_virustotal_scanner_parse_response_with_non_mapping_stats_defaults_unkno
 
 
 @pytest.mark.unit
+def test_virustotal_scanner_parse_response_ignores_negative_noncritical_stats() -> None:
+    scanner = VirusTotalScanner(api_key="test_key")
+    result = scanner._parse_response(
+        "a" * 64,
+        {
+            "data": {
+                "attributes": {
+                    "last_analysis_stats": {
+                        "malicious": 0,
+                        "suspicious": 0,
+                        "harmless": -10,
+                        "undetected": 72,
+                    },
+                }
+            }
+        },
+    )
+
+    assert result.status == SecurityStatus.CLEAN
+    assert result.detection_ratio == "0/72"
+
+
+@pytest.mark.unit
 def test_virustotal_safe_json_rejects_non_string_keys() -> None:
     class DummyResponse:
         status_code = 200
@@ -740,6 +763,16 @@ def test_virustotal_scheme_relative_redirect_strips_credentials() -> None:
     redirect_url = VirusTotalScanner._resolve_redirect_url(
         "https://www.virustotal.com/api/v3/files",
         "//user:pass@www.virustotal.com/api/v3/next",
+    )
+
+    assert redirect_url == "https://www.virustotal.com/api/v3/next"
+
+
+@pytest.mark.unit
+def test_virustotal_uppercase_https_redirect_is_supported() -> None:
+    redirect_url = VirusTotalScanner._resolve_redirect_url(
+        "https://www.virustotal.com/api/v3/files",
+        "HTTPS://user:pass@www.virustotal.com/api/v3/next",
     )
 
     assert redirect_url == "https://www.virustotal.com/api/v3/next"

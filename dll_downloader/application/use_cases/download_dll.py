@@ -272,7 +272,11 @@ class DownloadDLLUseCase:
         should_scan: bool,
     ) -> tuple[DLLFile, str | None]:
         """Scan a cache hit when requested, otherwise preserve known warnings."""
-        if should_scan and self._scanner and self._scanner.is_available:
+        if (
+            should_scan
+            and self._scanner is not None
+            and self._scanner.is_available
+        ):
             scanned_dll, security_warning = self._scan_for_malware(
                 dll_file,
                 should_scan,
@@ -379,7 +383,11 @@ class DownloadDLLUseCase:
         Returns:
             Tuple of (updated DLLFile, security warning message or None)
         """
-        if not should_scan or not self._scanner or not self._scanner.is_available:
+        if (
+            not should_scan
+            or self._scanner is None
+            or not self._scanner.is_available
+        ):
             return dll_file, None
 
         try:
@@ -461,7 +469,7 @@ class DownloadDLLUseCase:
 
     def _resolve_download_url(self, request: DownloadDLLRequest) -> str:
         """Resolve download URL using resolver if available, else build from base."""
-        if self._resolver:
+        if self._resolver is not None:
             try:
                 return self._resolver.resolve_download_url(
                     request.dll_name,

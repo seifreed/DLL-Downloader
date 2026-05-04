@@ -116,9 +116,10 @@ class HTTPResponse:
         if not length:
             return None
         try:
-            return int(length)
+            parsed_length = int(length)
         except ValueError:
             return None
+        return parsed_length if parsed_length >= 0 else None
 
 
 class HTTPClientError(HTTPServiceError):
@@ -402,8 +403,10 @@ class RequestsTransport:
                 url=original_url,
             )
         location = location.strip()
-        if location.startswith(("http://", "https://")):
-            if original_url.startswith("https://") and location.startswith("http://"):
+        location_lower = location.lower()
+        original_url_lower = original_url.lower()
+        if location_lower.startswith(("http://", "https://")):
+            if original_url_lower.startswith("https://") and location_lower.startswith("http://"):
                 raise HTTPClientError(
                     f"HTTPS to HTTP redirect rejected: {location}",
                     url=original_url,
@@ -422,7 +425,7 @@ class RequestsTransport:
                 url=original_url,
             )
         resolved = urljoin(original_url, location)
-        if original_url.startswith("https://") and resolved.startswith("http://"):
+        if original_url_lower.startswith("https://") and resolved.lower().startswith("http://"):
             raise HTTPClientError(
                 f"HTTPS to HTTP redirect rejected: {resolved}",
                 url=original_url,

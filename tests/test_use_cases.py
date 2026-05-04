@@ -426,6 +426,11 @@ class StubSecurityScanner(ISecurityScanner):
         return self._available
 
 
+class FalseySecurityScanner(StubSecurityScanner):
+    def __bool__(self) -> bool:
+        return False
+
+
 class FailingSecurityScanner(StubSecurityScanner):
     def scan_dll(self, _dll_file: DLLFile) -> DLLFile:
         raise SecurityServiceError("scanner down")
@@ -648,6 +653,48 @@ def test_download_dll_use_case_uses_resolver() -> None:
 
     response = use_case.execute(request)
     assert response.success is True
+
+
+@pytest.mark.unit
+def test_download_dll_use_case_uses_falsey_resolver() -> None:
+    repository = InMemoryRepository()
+    http_client = StubHTTPClient()
+    custom_url = "https://example.com/custom.dll"
+    custom_payload = _build_zip_payload(
+        "test.dll",
+        _build_pe_payload(Architecture.X64, b"custom resolver content"),
+    )
+    http_client.add_response(custom_url, custom_payload)
+
+    class FalseyResolver:
+        def __bool__(self) -> bool:
+            return False
+
+        def resolve_download_url(
+            self,
+            dll_name: str,
+            architecture: Architecture,
+        ) -> str:
+            del dll_name, architecture
+            return custom_url
+
+    use_case = DownloadDLLUseCase(
+        repository=repository,
+        http_client=http_client,
+        download_base_url="https://dll.website/download",
+        resolver=FalseyResolver(),
+    )
+
+    response = use_case.execute(
+        DownloadDLLRequest(
+            dll_name="test.dll",
+            architecture=Architecture.X64,
+            scan_before_save=False,
+        )
+    )
+
+    assert response.success is True
+    assert _require_dll_file(response.dll_file).download_url == custom_url
 
 
 @pytest.mark.unit
@@ -2049,6 +2096,51 @@ def test_download_dll_use_case_scans_cached_dll_when_requested(
 
 
 @pytest.mark.unit
+def test_download_dll_use_case_scans_cached_dll_with_falsey_scanner(
+    tmp_path: Path,
+) -> None:
+    repository = InMemoryRepository()
+    scanner = FalseySecurityScanner()
+    cache_path = tmp_path / "falseyscan.dll"
+    cache_payload = _build_zip_payload(
+        "falseyscan.dll",
+        _build_pe_payload(Architecture.X64),
+    )
+    cache_path.write_bytes(cache_payload)
+    file_hash = calculate_sha256(cache_payload)
+    scanner.configure_result(file_hash, SecurityStatus.SUSPICIOUS, "2/72")
+    repository._storage[
+        repository._make_key("falseyscan.dll", Architecture.X64)
+    ] = DLLFile(
+        name="falseyscan.dll",
+        architecture=Architecture.X64,
+        file_hash=file_hash,
+        file_path=str(cache_path),
+        security_status=SecurityStatus.NOT_SCANNED,
+    )
+
+    use_case = DownloadDLLUseCase(
+        repository=repository,
+        http_client=NoDownloadHTTPClient(),
+        download_base_url="https://dll.website/download",
+        scanner=scanner,
+    )
+
+    response = use_case.execute(
+        DownloadDLLRequest(
+            dll_name="falseyscan.dll",
+            architecture=Architecture.X64,
+            scan_before_save=True,
+        )
+    )
+
+    assert response.success is True
+    assert response.was_cached is True
+    assert _require_dll_file(response.dll_file).security_status == SecurityStatus.SUSPICIOUS
+    assert response.security_warning is not None
+
+
+@pytest.mark.unit
 def test_download_dll_use_case_cached_scan_error_returns_failure(
     tmp_path: Path,
 ) -> None:
@@ -2391,6 +2483,44 @@ def test_download_dll_use_case_scanner_error_returns_failure() -> None:
     assert response.success is False
     assert response.error_message == "Download failed: scanner down"
     assert repository.list_all() == []
+
+
+@pytest.mark.unit
+def test_download_dll_use_case_scans_download_with_falsey_scanner() -> None:
+    repository = InMemoryRepository()
+    http_client = StubHTTPClient()
+    scanner = FalseySecurityScanner()
+    payload = _build_zip_payload(
+        "falseyscan.dll",
+        _build_pe_payload(Architecture.X64, b"fresh falsey scan"),
+    )
+    http_client.add_response(
+        "https://dll.website/download/x64/falseyscan.dll",
+        payload,
+    )
+    scanner.configure_result(
+        calculate_sha256(payload),
+        SecurityStatus.SUSPICIOUS,
+        "2/72",
+    )
+    use_case = DownloadDLLUseCase(
+        repository=repository,
+        http_client=http_client,
+        download_base_url="https://dll.website/download",
+        scanner=scanner,
+    )
+
+    response = use_case.execute(
+        DownloadDLLRequest(
+            dll_name="falseyscan.dll",
+            architecture=Architecture.X64,
+            scan_before_save=True,
+        )
+    )
+
+    assert response.success is True
+    assert _require_dll_file(response.dll_file).security_status == SecurityStatus.SUSPICIOUS
+    assert response.security_warning is not None
 
 
 @pytest.mark.unit

@@ -63,9 +63,7 @@ class RequestsHTTPClient:
                 "SSL certificate verification is disabled; "
                 "HTTPS connections will be vulnerable to man-in-the-middle attacks"
             )
-        self._user_agent_provider = user_agent_provider or self._default_user_agent_provider(
-            user_agent
-        )
+        self._user_agent_provider = user_agent_provider or self._default_user_agent_provider(user_agent)
         self._retry_policy = retry_policy or RetryPolicy(
             max_attempts=max_retries,
             backoff_seconds=retry_backoff_seconds,
@@ -207,7 +205,9 @@ class RequestsHTTPClient:
         length_value: int | None = None
         if content_length:
             try:
-                length_value = int(content_length)
+                parsed_length = int(content_length)
+                if parsed_length >= 0:
+                    length_value = parsed_length
             except ValueError:
                 length_value = None
         accept_ranges = header_value(response_headers, "accept-ranges")

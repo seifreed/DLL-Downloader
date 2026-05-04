@@ -28,7 +28,13 @@ def declared_content_length(
             status_code=response.status_code,
             url=url,
         ) from exc
-    if declared_size >= max_bytes:
+    if declared_size < 0:
+        raise HTTPClientError(
+            f"Invalid Content-Length header: {content_length!r}",
+            status_code=response.status_code,
+            url=url,
+        )
+    if declared_size > max_bytes:
         raise HTTPClientError(
             f"Content-Length {declared_size} exceeds {operation} limit {max_bytes}",
             status_code=response.status_code,
@@ -61,7 +67,7 @@ def read_bounded_response(
         if not chunk:
             continue
         total_bytes += len(chunk)
-        if total_bytes >= max_bytes:
+        if total_bytes > max_bytes:
             raise HTTPClientError(
                 f"{operation} exceeds size limit {max_bytes}",
                 status_code=response.status_code,
