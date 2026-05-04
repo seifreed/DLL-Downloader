@@ -778,6 +778,24 @@ def test_virustotal_uppercase_https_redirect_is_supported() -> None:
     assert redirect_url == "https://www.virustotal.com/api/v3/next"
 
 
+@pytest.mark.unit
+def test_virustotal_uppercase_http_redirect_is_rejected() -> None:
+    with pytest.raises(VirusTotalError, match="HTTPS to HTTP redirect rejected"):
+        VirusTotalScanner._resolve_redirect_url(
+            "https://www.virustotal.com/api/v3/files",
+            "HTTP://www.virustotal.com/api/v3/next",
+        )
+
+
+@pytest.mark.unit
+def test_virustotal_redirect_with_invalid_port_raises_virustotal_error() -> None:
+    with pytest.raises(VirusTotalError, match="invalid port"):
+        VirusTotalScanner._resolve_redirect_url(
+            "https://www.virustotal.com/api/v3/files",
+            "https://www.virustotal.com:bad/api/v3/next",
+        )
+
+
 # ============================================================================
 # Threshold Logic Tests
 # ============================================================================

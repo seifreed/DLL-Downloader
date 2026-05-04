@@ -1294,6 +1294,26 @@ def test_settings_validate_rejects_blank_required_strings(
 
 @pytest.mark.unit
 @pytest.mark.parametrize(
+    ("download_base_url", "message"),
+    [
+        ("https://user:pass@example.com", "must not include credentials"),
+        ("https://user@example.com", "must not include credentials"),
+        ("https://example.com:bad", "must have a valid port"),
+        ("https://example.com:99999", "must have a valid port"),
+    ],
+)
+def test_settings_validate_rejects_unsafe_download_base_url_authority(
+    download_base_url: str,
+    message: str,
+) -> None:
+    settings = Settings(download_base_url=download_base_url)
+
+    with _mock_dns_resolution(), pytest.raises(ValueError, match=message):
+        settings.validate()
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
     ("settings", "field_name"),
     [
         (Settings(virustotal_api_key=""), "virustotal_api_key"),

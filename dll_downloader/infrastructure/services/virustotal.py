@@ -415,6 +415,12 @@ class VirusTotalScanner(ISecurityScanner):
         hostname = parsed.hostname
         if hostname is None:
             raise VirusTotalError("Request to URL without hostname rejected")
+        try:
+            _ = parsed.port
+        except ValueError as exc:
+            raise VirusTotalError(f"Request URL has invalid port: {url}") from exc
+        if parsed.username is not None or parsed.password is not None:
+            raise VirusTotalError("Request URL credentials rejected")
         if not self._hostname_is_allowed(hostname):
             prefix = "Redirect" if redirect else "Request"
             raise VirusTotalError(
@@ -432,23 +438,31 @@ class VirusTotalScanner(ISecurityScanner):
     @staticmethod
     def _resolve_redirect_url(current_url: str, location: str) -> str:
         location = location.strip()
-        if not location.startswith(("http://", "https://")):
+        location_lower = location.lower()
+        if not location_lower.startswith(("http://", "https://")):
             resolved_url = urljoin(current_url, location)
         else:
             resolved_url = location
-        if current_url.startswith("https://") and resolved_url.startswith("http://"):
+        if (
+            current_url.lower().startswith("https://")
+            and resolved_url.lower().startswith("http://")
+        ):
             raise VirusTotalError(f"HTTPS to HTTP redirect rejected: {resolved_url}")
         return VirusTotalScanner._strip_url_credentials(resolved_url)
 
     @staticmethod
     def _strip_url_credentials(location: str) -> str:
         redirect_parsed = urlparse(location)
+        try:
+            port = redirect_parsed.port
+        except ValueError as exc:
+            raise VirusTotalError(f"Redirect URL has invalid port: {location}") from exc
         if not redirect_parsed.username and not redirect_parsed.password:
             return location
         hostname = redirect_parsed.hostname or ""
         netloc = hostname
-        if redirect_parsed.port:
-            netloc = f"{hostname}:{redirect_parsed.port}"
+        if port:
+            netloc = f"{hostname}:{port}"
         return redirect_parsed._replace(netloc=netloc).geturl()
 
     def __enter__(self) -> "VirusTotalScanner":

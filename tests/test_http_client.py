@@ -358,6 +358,18 @@ def test_transport_uppercase_https_redirect_is_supported() -> None:
     assert redirect_url == "https://example.com/next"
 
 
+@pytest.mark.unit
+def test_transport_redirect_with_invalid_port_raises_http_client_error() -> None:
+    class DummyResponse:
+        headers = {"Location": "https://example.com:bad/next"}
+
+    with pytest.raises(HTTPClientError, match="invalid port"):
+        RequestsTransport._resolve_redirect(
+            "https://source.example/start",
+            cast(HTTPResponseProtocol, DummyResponse()),
+        )
+
+
 @pytest.mark.integration
 def test_requests_http_client_get_with_custom_headers(test_http_server: int) -> None:
     """
@@ -876,6 +888,63 @@ def test_http_client_download_request_exception_raises() -> None:
 
     with pytest.raises(HTTPClientError):
         client.download("https://example.com/file.dll")
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("url", "message"),
+    [
+        ("file:///tmp/file.dll", "non-HTTP scheme"),
+        ("http:///file.dll", "without hostname"),
+        ("https://example.com:bad/file.dll", "invalid port"),
+        ("https://user:pass@example.com/file.dll", "credentials"),
+    ],
+)
+def test_http_client_download_rejects_invalid_target_before_session_call(
+    url: str,
+    message: str,
+) -> None:
+    class DummyResponse:
+        ok = True
+        is_redirect = False
+        status_code = 200
+        content = b"ok"
+        headers: dict[str, str] = {}
+        url = "https://example.com/file.dll"
+
+        def json(self) -> object:
+            return {}
+
+        def iter_content(self, chunk_size: int = 8192) -> Iterator[bytes]:
+            yield self.content
+
+    class DummySession:
+        def __init__(self) -> None:
+            self.headers: dict[str, str] = {}
+            self.calls = 0
+
+        def get(self, *args: Any, **kwargs: Any) -> DummyResponse:
+            self.calls += 1
+            return DummyResponse()
+
+        def head(self, *args: Any, **kwargs: Any) -> Any:
+            raise NotImplementedError
+
+        def post(self, *args: Any, **kwargs: Any) -> Any:
+            raise NotImplementedError
+
+        def close(self) -> None:
+            pass
+
+    session = DummySession()
+    client = RequestsHTTPClient(
+        session_resource=_resource_with_session(cast(HTTPSessionProtocol, session))
+    )
+
+    with pytest.raises(HTTPClientError, match=message):
+        client.download(url)
+
+    assert session.calls == 0
 
 
 @pytest.mark.unit

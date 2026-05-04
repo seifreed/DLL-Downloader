@@ -31,6 +31,7 @@ from dll_downloader.domain.services import (
 from dll_downloader.infrastructure.composition import build_default_download_application
 from dll_downloader.infrastructure.config.settings import Settings
 from dll_downloader.infrastructure.http.http_client import RequestsHTTPClient
+from dll_downloader.infrastructure.persistence.file_repository import RepositoryError
 from dll_downloader.infrastructure.services.virustotal import VirusTotalScanner
 
 
@@ -213,6 +214,45 @@ def test_build_default_download_application_expands_custom_output_dir(
 
     assert (home_dir / "dll-cache" / "x64").is_dir()
     assert not (work_dir / "~" / "dll-cache").exists()
+
+
+@pytest.mark.unit
+def test_build_default_download_application_rejects_symlink_download_directory(
+    tmp_path: Path,
+) -> None:
+    target_dir = tmp_path / "target"
+    target_dir.mkdir()
+    symlink_dir = tmp_path / "downloads-link"
+    try:
+        symlink_dir.symlink_to(target_dir, target_is_directory=True)
+    except OSError:
+        pytest.skip("directory symlinks are not supported on this platform")
+
+    settings = Settings(download_directory=str(symlink_dir), virustotal_api_key=None)
+
+    with pytest.raises(RepositoryError, match="symlinked base path"):
+        build_default_download_application(settings)
+
+
+@pytest.mark.unit
+def test_build_default_download_application_rejects_symlink_output_dir(
+    tmp_path: Path,
+) -> None:
+    target_dir = tmp_path / "target"
+    target_dir.mkdir()
+    symlink_dir = tmp_path / "output-link"
+    try:
+        symlink_dir.symlink_to(target_dir, target_is_directory=True)
+    except OSError:
+        pytest.skip("directory symlinks are not supported on this platform")
+
+    settings = Settings(
+        download_directory=str(tmp_path / "safe"),
+        virustotal_api_key=None,
+    )
+
+    with pytest.raises(RepositoryError, match="symlinked base path"):
+        build_default_download_application(settings, output_dir=str(symlink_dir))
 
 
 @pytest.mark.unit

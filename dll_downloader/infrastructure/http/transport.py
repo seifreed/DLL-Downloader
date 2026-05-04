@@ -300,7 +300,29 @@ class RequestsTransport:
 
     def _validate_single_request_target(self, url: str) -> None:
         parsed_target = urlparse(url)
+        if parsed_target.scheme.lower() not in {"http", "https"}:
+            raise HTTPClientError(
+                f"Request to non-HTTP scheme rejected: {url}",
+                url=url,
+            )
         target_hostname = parsed_target.hostname
+        if target_hostname is None:
+            raise HTTPClientError(
+                "Request to URL without hostname rejected",
+                url=url,
+            )
+        try:
+            _ = parsed_target.port
+        except ValueError as exc:
+            raise HTTPClientError(
+                f"Request URL has invalid port: {url}",
+                url=url,
+            ) from exc
+        if parsed_target.username is not None or parsed_target.password is not None:
+            raise HTTPClientError(
+                "Request URL credentials rejected",
+                url=url,
+            )
         is_allowlisted = (
             self._allowed_redirect_domains is not None
             and target_hostname in self._allowed_redirect_domains
@@ -435,10 +457,17 @@ class RequestsTransport:
     @staticmethod
     def _strip_url_credentials(location: str) -> str:
         parsed_location = urlparse(location)
+        try:
+            port = parsed_location.port
+        except ValueError as exc:
+            raise HTTPClientError(
+                f"Redirect URL has invalid port: {location}",
+                url=location,
+            ) from exc
         if not parsed_location.username and not parsed_location.password:
             return location
         hostname = parsed_location.hostname or ""
         netloc = hostname
-        if parsed_location.port:
-            netloc = f"{hostname}:{parsed_location.port}"
+        if port:
+            netloc = f"{hostname}:{port}"
         return parsed_location._replace(netloc=netloc).geturl()

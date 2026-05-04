@@ -92,7 +92,7 @@ class FactoryBackedDownloadApplicationAssembler:
         output_dir: str | None = None,
     ) -> DownloadApplication:
         download_path = (
-            Path(output_dir).expanduser().resolve()
+            Path(output_dir).expanduser().absolute()
             if output_dir
             else settings.downloads_path
         )

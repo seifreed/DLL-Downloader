@@ -6,6 +6,7 @@ import ipaddress
 from dataclasses import dataclass, field
 from math import isfinite
 from pathlib import Path
+from urllib.parse import ParseResult, urlparse
 
 _VALID_LOG_LEVELS = frozenset(
     {"CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG", "NOTSET"}
@@ -63,7 +64,8 @@ def _validate_https_url(value: object, field_name: str) -> None:
     _validate_string(value, field_name)
     # _validate_string guarantees value is a non-empty string.
     assert isinstance(value, str)
-    if not value.lower().startswith("https://"):
+    parsed = urlparse(value)
+    if parsed.scheme.lower() != "https":
         raise ValueError(f"{field_name} must use HTTPS")
     _validate_not_private_url(value, field_name)
 
@@ -75,6 +77,19 @@ def _normalize_ip(addr: ipaddress.IPv4Address | ipaddress.IPv6Address) -> ipaddr
     return addr
 
 
+def _validated_url_hostname(parsed: ParseResult, field_name: str) -> str:
+    try:
+        _ = parsed.port
+    except ValueError as exc:
+        raise ValueError(f"{field_name} must have a valid port") from exc
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError(f"{field_name} must not include credentials")
+    hostname = parsed.hostname
+    if not hostname:
+        raise ValueError(f"{field_name} must have a valid hostname")
+    return hostname
+
+
 def _validate_not_private_url(value: str, field_name: str) -> None:
     """Reject URLs that resolve to private or loopback IP ranges (SSRF protection).
 
@@ -82,12 +97,8 @@ def _validate_not_private_url(value: str, field_name: str) -> None:
     Consistent with transport-layer SSRF checks.
     """
     import socket
-    from urllib.parse import urlparse
-
     parsed = urlparse(value)
-    hostname = parsed.hostname
-    if not hostname:
-        raise ValueError(f"{field_name} must have a valid hostname")
+    hostname = _validated_url_hostname(parsed, field_name)
     try:
         addr = ipaddress.ip_address(hostname)
     except ValueError:
@@ -206,4 +217,4 @@ class Settings:
     @property
     def downloads_path(self) -> Path:
         """Get the downloads directory as a Path object."""
-        return Path(self.download_directory).expanduser().resolve()
+        return Path(self.download_directory).expanduser().absolute()
