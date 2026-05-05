@@ -5,7 +5,6 @@ import contextlib
 import errno
 import logging
 import os
-import re
 import stat
 import sys
 from pathlib import Path
@@ -24,6 +23,7 @@ from .cli_formatters import (
     get_output_format,
 )
 from .cli_runner import CLIApplicationService
+from .cli_sanitization import sanitize_boundary_message as _sanitize_boundary_message
 from .presenters.download_presenter import DownloadConsolePresenter
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -37,29 +37,13 @@ _LOG_LEVELS = {
 }
 
 
-_PATH_PATTERN = re.compile(r"(^|\s|['\"])(/[^\s'\"]+)")
-_URL_CREDENTIALS_PATTERN = re.compile(r"://[^/\s:@]+:[^/\s@]+@|://[^/\s:@]+@")
-
 _MAX_DLL_NAME_LENGTH = 260
 _READ_FILE_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0)
 
 
-def _path_replacer(m: re.Match[str]) -> str:
-    prefix = m.group(1) or ""
-    return f"{prefix}<path>"
-
-
-def _sanitize_boundary_message(exc: Exception) -> str:
-    """Remove filesystem paths and URL credentials from exception messages."""
-    msg = str(exc)
-    msg = _PATH_PATTERN.sub(_path_replacer, msg)
-    msg = _URL_CREDENTIALS_PATTERN.sub("://<credentials>@", msg)
-    return msg
-
-
 def set_debug_mode(enabled: bool) -> None:
     """Set debug mode environment variable."""
-    os.environ['DEBUG_MODE'] = '1' if enabled else '0'
+    os.environ["DEBUG_MODE"] = "1" if enabled else "0"
 
 
 def apply_logging_settings(settings: Settings, debug_enabled: bool) -> None:
@@ -84,7 +68,9 @@ def _open_regular_dll_list(file_path: str) -> int:
         raise ValueError(f"File '{file_path}' not found.") from None
     except OSError as exc:
         if exc.errno == errno.ELOOP:
-            raise ValueError(f"Refusing to read DLL list from symlink: '{file_path}'") from exc
+            raise ValueError(
+                f"Refusing to read DLL list from symlink: '{file_path}'"
+            ) from exc
         raise ValueError(f"Failed to read file '{file_path}': {exc}") from exc
 
     try:
@@ -131,9 +117,7 @@ def read_dll_list_from_file(file_path: str) -> list[str]:
                 os.close(fd)
 
     if not dll_names:
-        raise ValueError(
-            f"File '{file_path}' is empty or contains no valid DLL names."
-        )
+        raise ValueError(f"File '{file_path}' is empty or contains no valid DLL names.")
 
     return dll_names
 
@@ -185,7 +169,9 @@ def _run_cli_session(
     except Exception as exc:
         emit_cli_input_error(
             service,
-            create_batch_presenter(output_format).boundary_error(_sanitize_boundary_message(exc)),
+            create_batch_presenter(output_format).boundary_error(
+                _sanitize_boundary_message(exc)
+            ),
         )
         return 1
 
@@ -274,4 +260,11 @@ if __name__ == "__main__":
     sys.exit(main())
 
 
-__all__ = ["parse_arguments", "set_debug_mode", "read_dll_list_from_file", "get_architecture", "format_response", "main"]
+__all__ = [
+    "parse_arguments",
+    "set_debug_mode",
+    "read_dll_list_from_file",
+    "get_architecture",
+    "format_response",
+    "main",
+]

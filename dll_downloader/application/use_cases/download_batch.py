@@ -3,6 +3,7 @@ Batch download use case.
 """
 
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Protocol
 
@@ -44,7 +45,10 @@ class DownloadBatchRequest:
 class DownloadBatchResponse:
     """Structured batch response for interface adapters."""
 
-    items: list[DownloadBatchItem] = field(default_factory=list)
+    items: Sequence[DownloadBatchItem] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "items", tuple(self.items))
 
     @property
     def success_count(self) -> int:
@@ -96,7 +100,12 @@ class DownloadBatchUseCase:
             except (MemoryError, DomainPortError, ApplicationError):
                 raise
             except Exception as exc:
-                logger.error("Unexpected error downloading %s: %s", normalized_name, exc, exc_info=True)
+                logger.error(
+                    "Unexpected error downloading %s: %s",
+                    normalized_name,
+                    exc,
+                    exc_info=True,
+                )
                 response = DownloadDLLResponse(
                     success=False,
                     error_message="Unexpected download error",

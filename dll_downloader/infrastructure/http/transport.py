@@ -22,7 +22,9 @@ from .retry_policy import RetryPolicy
 _MAX_REDIRECT_HOPS = 10
 
 
-def _normalize_ip(addr: "ipaddress.IPv4Address | ipaddress.IPv6Address") -> "ipaddress.IPv4Address | ipaddress.IPv6Address":
+def _normalize_ip(
+    addr: "ipaddress.IPv4Address | ipaddress.IPv6Address",
+) -> "ipaddress.IPv4Address | ipaddress.IPv6Address":
     """Convert IPv4-mapped IPv6 addresses to their IPv4 equivalent.
 
     ``::ffff:127.0.0.1`` is NOT private under ``IPv6Address.is_private``,
@@ -49,12 +51,20 @@ def _hostname_resolves_to_private_ip(hostname: str) -> bool:
     try:
         addr = ipaddress.ip_address(hostname)
         addr = _normalize_ip(addr)
-        return addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved or addr.is_multicast
+        return (
+            addr.is_private
+            or addr.is_loopback
+            or addr.is_link_local
+            or addr.is_reserved
+            or addr.is_multicast
+        )
     except ValueError:
         pass
 
     try:
-        resolved = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+        resolved = socket.getaddrinfo(
+            hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM
+        )
         for _family, _type, _proto, _canonname, sockaddr in resolved:
             ip_str = sockaddr[0]
             try:
@@ -62,11 +72,18 @@ def _hostname_resolves_to_private_ip(hostname: str) -> bool:
                 resolved_addr = _normalize_ip(resolved_addr)
             except ValueError:
                 continue
-            if resolved_addr.is_private or resolved_addr.is_loopback or resolved_addr.is_link_local or resolved_addr.is_reserved or resolved_addr.is_multicast:
+            if (
+                resolved_addr.is_private
+                or resolved_addr.is_loopback
+                or resolved_addr.is_link_local
+                or resolved_addr.is_reserved
+                or resolved_addr.is_multicast
+            ):
                 return True
     except (socket.gaierror, socket.herror, OSError):
         return True
     return False
+
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +114,35 @@ def header_value(headers: Mapping[str, str], name: str) -> str | None:
     return ", ".join(values)
 
 
+class _FrozenHeaders(dict[str, str]):
+    def __init__(self, headers: Mapping[str, str]) -> None:
+        super().__init__(headers)
+
+    def __setitem__(self, key: str, value: str) -> None:
+        raise TypeError("HTTPResponse headers are immutable")
+
+    def __delitem__(self, key: str) -> None:
+        raise TypeError("HTTPResponse headers are immutable")
+
+    def clear(self) -> None:
+        raise TypeError("HTTPResponse headers are immutable")
+
+    def pop(self, key: str, default: object = None) -> object:  # type: ignore[override]
+        raise TypeError("HTTPResponse headers are immutable")
+
+    def popitem(self) -> tuple[str, str]:
+        raise TypeError("HTTPResponse headers are immutable")
+
+    def setdefault(self, key: str, default: str = "") -> str:
+        raise TypeError("HTTPResponse headers are immutable")
+
+    def update(self, *args: object, **kwargs: str) -> None:
+        raise TypeError("HTTPResponse headers are immutable")
+
+    def __ior__(self, value: object) -> "_FrozenHeaders":  # type: ignore[misc,override]
+        raise TypeError("HTTPResponse headers are immutable")
+
+
 @dataclass(frozen=True)
 class HTTPResponse:
     """Normalized HTTP response returned by infrastructure adapters."""
@@ -106,16 +152,18 @@ class HTTPResponse:
     headers: dict[str, str]
     url: str
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "headers", _FrozenHeaders(self.headers))
+
     @property
     def is_success(self) -> bool:
         return 200 <= self.status_code < 300
 
     @property
     def is_redirect(self) -> bool:
-        return (
-            300 <= self.status_code < 400
-            and "location" in {k.lower(): v for k, v in self.headers.items()}
-        )
+        return 300 <= self.status_code < 400 and "location" in {
+            k.lower(): v for k, v in self.headers.items()
+        }
 
     @property
     def content_length(self) -> int | None:
@@ -228,7 +276,11 @@ class RequestsTransport:
                     url=current_url,
                 )
             response = self._single_request(
-                method_name, current_url, headers, stream=stream, allow_redirects=False,
+                method_name,
+                current_url,
+                headers,
+                stream=stream,
+                allow_redirects=False,
             )
             if not response.is_redirect:
                 return response
@@ -255,7 +307,10 @@ class RequestsTransport:
         # Check domain allowlist once (URL does not change across retries).
         if self._allowed_redirect_domains is not None:
             parsed = urlparse(url)
-            if parsed.hostname and parsed.hostname not in self._allowed_redirect_domains:
+            if (
+                parsed.hostname
+                and parsed.hostname not in self._allowed_redirect_domains
+            ):
                 raise HTTPClientError(
                     f"Request to disallowed domain: {parsed.hostname}",
                     url=url,
@@ -285,12 +340,14 @@ class RequestsTransport:
                 continue
 
             if self._status_should_retry(response.status_code, attempt):
-                self._log_retryable_status(method_name, url, attempt, response.status_code)
+                self._log_retryable_status(
+                    method_name, url, attempt, response.status_code
+                )
                 self._close_retryable_response(response)
                 self._retry_policy.pause_before_retry(attempt)
                 continue
 
-            if not getattr(response, 'ok', False) and method_name == "HEAD":
+            if not getattr(response, "ok", False) and method_name == "HEAD":
                 self._close_retryable_response(response)
                 raise HTTPClientError(
                     f"{method_name} request failed with status {response.status_code}",
@@ -435,7 +492,9 @@ class RequestsTransport:
         location_lower = location.lower()
         original_url_lower = original_url.lower()
         if location_lower.startswith(("http://", "https://")):
-            if original_url_lower.startswith("https://") and location_lower.startswith("http://"):
+            if original_url_lower.startswith("https://") and location_lower.startswith(
+                "http://"
+            ):
                 raise HTTPClientError(
                     f"HTTPS to HTTP redirect rejected: {location}",
                     url=original_url,
@@ -448,13 +507,19 @@ class RequestsTransport:
                 f"Redirect to non-HTTP scheme rejected: {location}",
                 url=original_url,
             )
-        if ":" in location and not location.startswith(("//", "/")) and "/" not in location.split(":")[0]:
+        if (
+            ":" in location
+            and not location.startswith(("//", "/"))
+            and "/" not in location.split(":")[0]
+        ):
             raise HTTPClientError(
                 f"Redirect to non-HTTP scheme rejected: {location}",
                 url=original_url,
             )
         resolved = urljoin(original_url, location)
-        if original_url_lower.startswith("https://") and resolved.lower().startswith("http://"):
+        if original_url_lower.startswith("https://") and resolved.lower().startswith(
+            "http://"
+        ):
             raise HTTPClientError(
                 f"HTTPS to HTTP redirect rejected: {resolved}",
                 url=original_url,

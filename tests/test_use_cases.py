@@ -16,16 +16,20 @@ import zipfile
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
 from dll_downloader.application.errors import DownloadExecutionError
 from dll_downloader.application.use_cases.download_batch import (
+    DownloadBatchItem,
     DownloadBatchRequest,
+    DownloadBatchResponse,
     DownloadBatchUseCase,
 )
 from dll_downloader.application.use_cases.download_dll import (
     DownloadDLLRequest,
+    DownloadDLLResponse,
     DownloadDLLUseCase,
 )
 from dll_downloader.domain.entities.dll_file import (
@@ -74,8 +78,8 @@ def _build_encrypted_zip_payload(dll_name: str, dll_bytes: bytes) -> bytes:
     local_header = payload.index(b"PK\x03\x04")
     central_directory_header = payload.index(b"PK\x01\x02")
     for flag_offset in (local_header + 6, central_directory_header + 8):
-        flags = int.from_bytes(payload[flag_offset:flag_offset + 2], "little")
-        payload[flag_offset:flag_offset + 2] = (flags | 0x01).to_bytes(2, "little")
+        flags = int.from_bytes(payload[flag_offset : flag_offset + 2], "little")
+        payload[flag_offset : flag_offset + 2] = (flags | 0x01).to_bytes(2, "little")
     return bytes(payload)
 
 
@@ -99,29 +103,33 @@ def _build_pe_payload(
     payload = bytearray(section_table_offset + 40)
     payload[0:2] = b"MZ"
     payload[0x3C:0x40] = pe_offset.to_bytes(4, "little")
-    payload[pe_offset:pe_offset + 4] = b"PE\x00\x00"
-    payload[pe_offset + 4:pe_offset + 6] = machine.to_bytes(2, "little")
-    payload[pe_offset + 6:pe_offset + 8] = (1).to_bytes(2, "little")
-    payload[pe_offset + 20:pe_offset + 22] = optional_header_size.to_bytes(2, "little")
-    characteristics = 0x2000 if is_dll else 0x0002
-    payload[pe_offset + 22:pe_offset + 24] = characteristics.to_bytes(2, "little")
-    optional_magic = 0x20B if architecture == Architecture.X64 else 0x10B
-    payload[optional_header_offset:optional_header_offset + 2] = optional_magic.to_bytes(
-        2,
-        "little",
+    payload[pe_offset : pe_offset + 4] = b"PE\x00\x00"
+    payload[pe_offset + 4 : pe_offset + 6] = machine.to_bytes(2, "little")
+    payload[pe_offset + 6 : pe_offset + 8] = (1).to_bytes(2, "little")
+    payload[pe_offset + 20 : pe_offset + 22] = optional_header_size.to_bytes(
+        2, "little"
     )
-    payload[section_table_offset:section_table_offset + 5] = b".text"
-    payload[section_table_offset + 8:section_table_offset + 12] = len(
+    characteristics = 0x2000 if is_dll else 0x0002
+    payload[pe_offset + 22 : pe_offset + 24] = characteristics.to_bytes(2, "little")
+    optional_magic = 0x20B if architecture == Architecture.X64 else 0x10B
+    payload[optional_header_offset : optional_header_offset + 2] = (
+        optional_magic.to_bytes(
+            2,
+            "little",
+        )
+    )
+    payload[section_table_offset : section_table_offset + 5] = b".text"
+    payload[section_table_offset + 8 : section_table_offset + 12] = len(
         raw_data
     ).to_bytes(4, "little")
-    payload[section_table_offset + 12:section_table_offset + 16] = (0x1000).to_bytes(
+    payload[section_table_offset + 12 : section_table_offset + 16] = (0x1000).to_bytes(
         4,
         "little",
     )
-    payload[section_table_offset + 16:section_table_offset + 20] = len(
+    payload[section_table_offset + 16 : section_table_offset + 20] = len(
         raw_data
     ).to_bytes(4, "little")
-    payload[section_table_offset + 20:section_table_offset + 24] = len(
+    payload[section_table_offset + 20 : section_table_offset + 24] = len(
         payload
     ).to_bytes(4, "little")
     return bytes(payload) + raw_data
@@ -133,9 +141,9 @@ def _build_pe_payload_with_machine(machine: int) -> bytes:
     payload = bytearray(pe_offset + 24)
     payload[0:2] = b"MZ"
     payload[0x3C:0x40] = pe_offset.to_bytes(4, "little")
-    payload[pe_offset:pe_offset + 4] = b"PE\x00\x00"
-    payload[pe_offset + 4:pe_offset + 6] = machine.to_bytes(2, "little")
-    payload[pe_offset + 22:pe_offset + 24] = (0x2000).to_bytes(2, "little")
+    payload[pe_offset : pe_offset + 4] = b"PE\x00\x00"
+    payload[pe_offset + 4 : pe_offset + 6] = machine.to_bytes(2, "little")
+    payload[pe_offset + 22 : pe_offset + 24] = (0x2000).to_bytes(2, "little")
     return bytes(payload)
 
 
@@ -150,11 +158,11 @@ def _build_pe_header_stub(architecture: Architecture) -> bytes:
     payload = bytearray(pe_offset + 24)
     payload[0:2] = b"MZ"
     payload[0x3C:0x40] = pe_offset.to_bytes(4, "little")
-    payload[pe_offset:pe_offset + 4] = b"PE\x00\x00"
-    payload[pe_offset + 4:pe_offset + 6] = machine.to_bytes(2, "little")
-    payload[pe_offset + 6:pe_offset + 8] = (0).to_bytes(2, "little")
-    payload[pe_offset + 20:pe_offset + 22] = (0).to_bytes(2, "little")
-    payload[pe_offset + 22:pe_offset + 24] = (0x2000).to_bytes(2, "little")
+    payload[pe_offset : pe_offset + 4] = b"PE\x00\x00"
+    payload[pe_offset + 4 : pe_offset + 6] = machine.to_bytes(2, "little")
+    payload[pe_offset + 6 : pe_offset + 8] = (0).to_bytes(2, "little")
+    payload[pe_offset + 20 : pe_offset + 22] = (0).to_bytes(2, "little")
+    payload[pe_offset + 22 : pe_offset + 24] = (0x2000).to_bytes(2, "little")
     return bytes(payload)
 
 
@@ -172,15 +180,19 @@ def _build_pe_payload_with_blank_section(architecture: Architecture) -> bytes:
     payload = bytearray(section_table_offset + 40)
     payload[0:2] = b"MZ"
     payload[0x3C:0x40] = pe_offset.to_bytes(4, "little")
-    payload[pe_offset:pe_offset + 4] = b"PE\x00\x00"
-    payload[pe_offset + 4:pe_offset + 6] = machine.to_bytes(2, "little")
-    payload[pe_offset + 6:pe_offset + 8] = (1).to_bytes(2, "little")
-    payload[pe_offset + 20:pe_offset + 22] = optional_header_size.to_bytes(2, "little")
-    payload[pe_offset + 22:pe_offset + 24] = (0x2000).to_bytes(2, "little")
+    payload[pe_offset : pe_offset + 4] = b"PE\x00\x00"
+    payload[pe_offset + 4 : pe_offset + 6] = machine.to_bytes(2, "little")
+    payload[pe_offset + 6 : pe_offset + 8] = (1).to_bytes(2, "little")
+    payload[pe_offset + 20 : pe_offset + 22] = optional_header_size.to_bytes(
+        2, "little"
+    )
+    payload[pe_offset + 22 : pe_offset + 24] = (0x2000).to_bytes(2, "little")
     optional_magic = 0x20B if architecture == Architecture.X64 else 0x10B
-    payload[optional_header_offset:optional_header_offset + 2] = optional_magic.to_bytes(
-        2,
-        "little",
+    payload[optional_header_offset : optional_header_offset + 2] = (
+        optional_magic.to_bytes(
+            2,
+            "little",
+        )
     )
     return bytes(payload)
 
@@ -191,9 +203,11 @@ def _architecture_from_url(url: str) -> Architecture:
         return Architecture.X86
     return Architecture.X64
 
+
 # ============================================================================
 # Test Implementations (Lightweight, Real Implementations)
 # ============================================================================
+
 
 @dataclass
 class InMemoryRepository(IDLLRepository):
@@ -204,6 +218,7 @@ class InMemoryRepository(IDLLRepository):
     instead of on disk. It provides all the same guarantees and behaviors
     as a real repository without requiring filesystem access.
     """
+
     _storage: dict[str, DLLFile] = field(default_factory=dict)
     _content_storage: dict[str, bytes] = field(default_factory=dict)
 
@@ -216,9 +231,7 @@ class InMemoryRepository(IDLLRepository):
         return dll_file
 
     def find_by_name(
-        self,
-        name: str,
-        architecture: Architecture | None = None
+        self, name: str, architecture: Architecture | None = None
     ) -> DLLFile | None:
         """Find DLL by name and architecture, matching real repository behavior."""
         normalized = normalize_dll_name(name)
@@ -284,6 +297,7 @@ class StubHTTPClient(IHTTPClient):
     This is a deterministic HTTP client that returns predefined content
     for testing purposes, avoiding real network calls.
     """
+
     _responses: dict[str, bytes] = field(default_factory=dict)
     _should_fail: bool = False
     _failure_exception: Exception | None = None
@@ -309,7 +323,7 @@ class StubHTTPClient(IHTTPClient):
         if self._failure_exception is not None:
             raise self._failure_exception
         if self._should_fail:
-            return b''
+            return b""
 
         # Return registered response or generate default content
         return self._responses.get(
@@ -318,9 +332,9 @@ class StubHTTPClient(IHTTPClient):
                 Path(url).name,
                 _build_pe_payload(
                     _architecture_from_url(url),
-                    f'DLL content for {url}'.encode() * 10,
+                    f"DLL content for {url}".encode() * 10,
                 ),
-            )
+            ),
         )
 
     def get_text(
@@ -339,11 +353,11 @@ class StubHTTPClient(IHTTPClient):
         """Get file metadata."""
         content = self.download(url, headers=headers)
         return {
-            'content_type': 'application/zip',
-            'content_length': len(content),
-            'last_modified': None,
-            'etag': None,
-            'accept_ranges': False,
+            "content_type": "application/zip",
+            "content_length": len(content),
+            "last_modified": None,
+            "etag": None,
+            "accept_ranges": False,
         }
 
 
@@ -355,15 +369,16 @@ class StubSecurityScanner(ISecurityScanner):
     This provides deterministic scan results for testing without
     requiring external API access.
     """
+
     _scan_results: dict[str, ScanResult] = field(default_factory=dict)
     _available: bool = True
 
-    def configure_result(self, file_hash: str, status: SecurityStatus, ratio: str = "0/72") -> None:
+    def configure_result(
+        self, file_hash: str, status: SecurityStatus, ratio: str = "0/72"
+    ) -> None:
         """Configure scan result for a specific hash."""
         self._scan_results[file_hash] = ScanResult(
-            file_hash=file_hash,
-            status=status,
-            detection_ratio=ratio
+            file_hash=file_hash, status=status, detection_ratio=ratio
         )
 
     def set_available(self, available: bool) -> None:
@@ -375,9 +390,7 @@ class StubSecurityScanner(ISecurityScanner):
         # In real test, would calculate hash from file
         # For now, return default clean result
         return ScanResult(
-            file_hash="test_hash",
-            status=SecurityStatus.CLEAN,
-            detection_ratio="0/72"
+            file_hash="test_hash", status=SecurityStatus.CLEAN, detection_ratio="0/72"
         )
 
     def scan_hash(self, file_hash: str) -> ScanResult:
@@ -387,9 +400,7 @@ class StubSecurityScanner(ISecurityScanner):
 
         # Default: clean
         return ScanResult(
-            file_hash=file_hash,
-            status=SecurityStatus.CLEAN,
-            detection_ratio="0/72"
+            file_hash=file_hash, status=SecurityStatus.CLEAN, detection_ratio="0/72"
         )
 
     def scan_dll(self, dll_file: DLLFile) -> DLLFile:
@@ -400,24 +411,24 @@ class StubSecurityScanner(ISecurityScanner):
             result = ScanResult(
                 file_hash="unknown",
                 status=SecurityStatus.UNKNOWN,
-                detection_ratio="0/0"
+                detection_ratio="0/0",
             )
 
         return replace(
             dll_file,
             security_status=result.status,
             vt_detection_ratio=result.detection_ratio,
-            vt_scan_date=result.scan_date
+            vt_scan_date=result.scan_date,
         )
 
     def get_detailed_report(self, file_hash: str) -> dict[str, object]:
         """Get detailed report."""
         result = self.scan_hash(file_hash)
         return {
-            'hash': result.file_hash,
-            'status': result.status.value,
-            'ratio': result.detection_ratio,
-            'detections': result.detections
+            "hash": result.file_hash,
+            "status": result.status.value,
+            "ratio": result.detection_ratio,
+            "detections": result.detections,
         }
 
     @property
@@ -482,6 +493,7 @@ class NoDownloadHTTPClient(StubHTTPClient):
 # Download DLL Use Case Tests
 # ============================================================================
 
+
 @pytest.mark.unit
 def test_download_dll_use_case_successful_download() -> None:
     """
@@ -503,13 +515,11 @@ def test_download_dll_use_case_successful_download() -> None:
     use_case = DownloadDLLUseCase(
         repository=repository,
         http_client=http_client,
-        download_base_url="https://dll.website/download"
+        download_base_url="https://dll.website/download",
     )
 
     request = DownloadDLLRequest(
-        dll_name="kernel32.dll",
-        architecture=Architecture.X64,
-        scan_before_save=False
+        dll_name="kernel32.dll", architecture=Architecture.X64, scan_before_save=False
     )
 
     response = use_case.execute(request)
@@ -586,23 +596,18 @@ def test_download_dll_use_case_calculates_hash() -> None:
     http_client = StubHTTPClient()
 
     # Configure specific content
-    dll_bytes = _build_pe_payload(Architecture.X64, b'Specific test content' * 100)
+    dll_bytes = _build_pe_payload(Architecture.X64, b"Specific test content" * 100)
     test_content = _build_zip_payload("test.dll", dll_bytes)
-    http_client.add_response(
-        "https://dll.website/download/x64/test.dll",
-        test_content
-    )
+    http_client.add_response("https://dll.website/download/x64/test.dll", test_content)
 
     use_case = DownloadDLLUseCase(
         repository=repository,
         http_client=http_client,
-        download_base_url="https://dll.website/download"
+        download_base_url="https://dll.website/download",
     )
 
     request = DownloadDLLRequest(
-        dll_name="test.dll",
-        architecture=Architecture.X64,
-        scan_before_save=False
+        dll_name="test.dll", architecture=Architecture.X64, scan_before_save=False
     )
 
     response = use_case.execute(request)
@@ -613,6 +618,7 @@ def test_download_dll_use_case_calculates_hash() -> None:
 
     # Calculate expected hash
     import hashlib
+
     expected_hash = hashlib.sha256(test_content).hexdigest()
     assert dll_file.file_hash == expected_hash
 
@@ -642,13 +648,11 @@ def test_download_dll_use_case_uses_resolver() -> None:
         repository=repository,
         http_client=http_client,
         download_base_url="https://dll.website/download",
-        resolver=Resolver()
+        resolver=Resolver(),
     )
 
     request = DownloadDLLRequest(
-        dll_name="test.dll",
-        architecture=Architecture.X64,
-        scan_before_save=False
+        dll_name="test.dll", architecture=Architecture.X64, scan_before_save=False
     )
 
     response = use_case.execute(request)
@@ -712,22 +716,23 @@ def test_download_dll_use_case_extracts_dll_from_zip_archive() -> None:
         archive.writestr("notes.txt", b"ignored")
 
     http_client.add_response(
-        "https://dll.website/download/x64/test.dll",
-        archive_buffer.getvalue()
+        "https://dll.website/download/x64/test.dll", archive_buffer.getvalue()
     )
 
     use_case = DownloadDLLUseCase(
         repository=repository,
         http_client=http_client,
-        download_base_url="https://dll.website/download"
+        download_base_url="https://dll.website/download",
     )
 
-    response = use_case.execute(DownloadDLLRequest(
-        dll_name="test.dll",
-        architecture=Architecture.X64,
-        scan_before_save=False,
-        extract_archive=True,
-    ))
+    response = use_case.execute(
+        DownloadDLLRequest(
+            dll_name="test.dll",
+            architecture=Architecture.X64,
+            scan_before_save=False,
+            extract_archive=True,
+        )
+    )
 
     assert response.success is True
     dll_file = _require_dll_file(response.dll_file)
@@ -747,22 +752,23 @@ def test_download_dll_use_case_fails_when_zip_has_no_dll_and_extract_enabled() -
         archive.writestr("readme.txt", b"no dll here")
 
     http_client.add_response(
-        "https://dll.website/download/x64/test.dll",
-        archive_buffer.getvalue()
+        "https://dll.website/download/x64/test.dll", archive_buffer.getvalue()
     )
 
     use_case = DownloadDLLUseCase(
         repository=repository,
         http_client=http_client,
-        download_base_url="https://dll.website/download"
+        download_base_url="https://dll.website/download",
     )
 
-    response = use_case.execute(DownloadDLLRequest(
-        dll_name="test.dll",
-        architecture=Architecture.X64,
-        scan_before_save=False,
-        extract_archive=True,
-    ))
+    response = use_case.execute(
+        DownloadDLLRequest(
+            dll_name="test.dll",
+            architecture=Architecture.X64,
+            scan_before_save=False,
+            extract_archive=True,
+        )
+    )
 
     assert response.success is False
     assert response.error_message is not None
@@ -770,7 +776,9 @@ def test_download_dll_use_case_fails_when_zip_has_no_dll_and_extract_enabled() -
 
 
 @pytest.mark.unit
-def test_download_dll_use_case_rejects_zip_without_requested_dll_when_extracting() -> None:
+def test_download_dll_use_case_rejects_zip_without_requested_dll_when_extracting() -> (
+    None
+):
     repository = InMemoryRepository()
     http_client = StubHTTPClient()
 
@@ -838,7 +846,9 @@ def test_download_dll_use_case_wraps_resolver_failures() -> None:
 
 
 @pytest.mark.unit
-def test_download_dll_use_case_execute_returns_failure_for_resolver_http_error() -> None:
+def test_download_dll_use_case_execute_returns_failure_for_resolver_http_error() -> (
+    None
+):
     repository = InMemoryRepository()
 
     class FailingResolver:
@@ -947,11 +957,16 @@ def test_download_dll_use_case_fails_when_extracted_dll_is_empty() -> None:
     )
 
     assert response.success is False
-    assert response.error_message == "Download failed: Extracted DLL from ZIP archive is empty"
+    assert (
+        response.error_message
+        == "Download failed: Extracted DLL from ZIP archive is empty"
+    )
 
 
 @pytest.mark.unit
-def test_download_dll_use_case_selects_matching_architecture_duplicate_zip_member() -> None:
+def test_download_dll_use_case_selects_matching_architecture_duplicate_zip_member() -> (
+    None
+):
     repository = InMemoryRepository()
     http_client = StubHTTPClient()
     x64_payload = _build_pe_payload(Architecture.X64, b"x64 payload")
@@ -1010,7 +1025,10 @@ def test_download_dll_use_case_fails_when_zip_reader_is_invalid() -> None:
     )
 
     assert response.success is False
-    assert response.error_message == "Download failed: Downloaded archive is not a valid ZIP file"
+    assert (
+        response.error_message
+        == "Download failed: Downloaded archive is not a valid ZIP file"
+    )
 
 
 @pytest.mark.unit
@@ -1036,7 +1054,10 @@ def test_download_dll_use_case_fails_when_zip_signature_is_invalid() -> None:
     )
 
     assert response.success is False
-    assert response.error_message == "Download failed: Downloaded archive is not a valid ZIP file"
+    assert (
+        response.error_message
+        == "Download failed: Downloaded archive is not a valid ZIP file"
+    )
 
 
 @pytest.mark.unit
@@ -1264,7 +1285,9 @@ def test_download_dll_use_case_redownloads_missing_file_backed_cache(
 
     assert response.success is True
     assert response.was_cached is False
-    assert repository.get_content(_require_dll_file(response.dll_file)) == replacement_zip
+    assert (
+        repository.get_content(_require_dll_file(response.dll_file)) == replacement_zip
+    )
 
 
 @pytest.mark.unit
@@ -1407,7 +1430,9 @@ def test_cached_payload_request_rejects_missing_path_and_invalid_zip(
 
 
 @pytest.mark.unit
-def test_download_dll_use_case_rejects_zip_without_requested_dll_before_saving() -> None:
+def test_download_dll_use_case_rejects_zip_without_requested_dll_before_saving() -> (
+    None
+):
     repository = InMemoryRepository()
     http_client = StubHTTPClient()
 
@@ -1448,15 +1473,11 @@ def test_download_dll_use_case_rejects_zip_without_requested_dll_before_saving()
 @pytest.mark.unit
 def test_download_dll_use_case_detects_x86_and_x64_pe_architectures() -> None:
     assert (
-        DownloadDLLUseCase._detect_pe_architecture(
-            _build_pe_payload(Architecture.X86)
-        )
+        DownloadDLLUseCase._detect_pe_architecture(_build_pe_payload(Architecture.X86))
         == Architecture.X86
     )
     assert (
-        DownloadDLLUseCase._detect_pe_architecture(
-            _build_pe_payload(Architecture.X64)
-        )
+        DownloadDLLUseCase._detect_pe_architecture(_build_pe_payload(Architecture.X64))
         == Architecture.X64
     )
 
@@ -1588,7 +1609,9 @@ def test_download_dll_use_case_rejects_empty_requested_zip_member() -> None:
         download_base_url="https://dll.website/download",
     )
 
-    with pytest.raises(DownloadExecutionError, match="Extracted DLL from ZIP archive is empty"):
+    with pytest.raises(
+        DownloadExecutionError, match="Extracted DLL from ZIP archive is empty"
+    ):
         use_case._extract_valid_dll_from_zip(
             archive_buffer.getvalue(),
             DownloadDLLRequest("empty.dll", Architecture.X64, extract_archive=True),
@@ -1605,11 +1628,7 @@ def test_download_dll_use_case_pe_layout_rejects_invalid_boundaries() -> None:
         total_size: int | None = None,
     ) -> bytes:
         section_table_offset = 20 + optional_header_size
-        payload_size = (
-            section_table_offset + 40
-            if total_size is None
-            else total_size
-        )
+        payload_size = section_table_offset + 40 if total_size is None else total_size
         payload = bytearray(max(payload_size, 22))
         payload[2:4] = section_count.to_bytes(2, "little")
         payload[16:18] = optional_header_size.to_bytes(2, "little")
@@ -1897,8 +1916,8 @@ def test_download_dll_use_case_skips_unreadable_duplicate_zip_member() -> None:
     local_header = payload.index(b"PK\x03\x04")
     central_directory_header = payload.index(b"PK\x01\x02")
     for flag_offset in (local_header + 6, central_directory_header + 8):
-        flags = int.from_bytes(payload[flag_offset:flag_offset + 2], "little")
-        payload[flag_offset:flag_offset + 2] = (flags | 0x01).to_bytes(2, "little")
+        flags = int.from_bytes(payload[flag_offset : flag_offset + 2], "little")
+        payload[flag_offset : flag_offset + 2] = (flags | 0x01).to_bytes(2, "little")
 
     http_client.add_response(
         "https://dll.website/download/x64/test.dll",
@@ -1960,7 +1979,9 @@ def test_download_dll_use_case_fails_when_extracted_content_is_not_pe() -> None:
 
 
 @pytest.mark.unit
-def test_download_dll_use_case_fails_when_extract_is_enabled_but_payload_is_not_zip() -> None:
+def test_download_dll_use_case_fails_when_extract_is_enabled_but_payload_is_not_zip() -> (
+    None
+):
     repository = InMemoryRepository()
     http_client = StubHTTPClient()
     pe_content = b"MZ\x90\x00direct dll bytes"
@@ -2015,18 +2036,18 @@ def test_download_dll_use_case_returns_cached_file(tmp_path: Path) -> None:
         file_hash="abc123",
         file_path=str(cache_path),
     )
-    repository._storage[repository._make_key("cached.dll", Architecture.X64)] = existing_dll
+    repository._storage[repository._make_key("cached.dll", Architecture.X64)] = (
+        existing_dll
+    )
 
     use_case = DownloadDLLUseCase(
         repository=repository,
         http_client=NoDownloadHTTPClient(),
-        download_base_url="https://dll.website/download"
+        download_base_url="https://dll.website/download",
     )
 
     request = DownloadDLLRequest(
-        dll_name="cached.dll",
-        architecture=Architecture.X64,
-        force_download=False
+        dll_name="cached.dll", architecture=Architecture.X64, force_download=False
     )
 
     response = use_case.execute(request)
@@ -2088,14 +2109,14 @@ def test_download_dll_use_case_scans_cached_dll_when_requested(
     cache_path.write_bytes(cache_payload)
     file_hash = calculate_sha256(cache_payload)
     scanner.configure_result(file_hash, SecurityStatus.SUSPICIOUS, "3/72")
-    repository._storage[
-        repository._make_key("cachedscan.dll", Architecture.X64)
-    ] = DLLFile(
-        name="cachedscan.dll",
-        architecture=Architecture.X64,
-        file_hash=file_hash,
-        file_path=str(cache_path),
-        security_status=SecurityStatus.NOT_SCANNED,
+    repository._storage[repository._make_key("cachedscan.dll", Architecture.X64)] = (
+        DLLFile(
+            name="cachedscan.dll",
+            architecture=Architecture.X64,
+            file_hash=file_hash,
+            file_path=str(cache_path),
+            security_status=SecurityStatus.NOT_SCANNED,
+        )
     )
 
     use_case = DownloadDLLUseCase(
@@ -2135,14 +2156,14 @@ def test_download_dll_use_case_scans_cached_dll_with_falsey_scanner(
     cache_path.write_bytes(cache_payload)
     file_hash = calculate_sha256(cache_payload)
     scanner.configure_result(file_hash, SecurityStatus.SUSPICIOUS, "2/72")
-    repository._storage[
-        repository._make_key("falseyscan.dll", Architecture.X64)
-    ] = DLLFile(
-        name="falseyscan.dll",
-        architecture=Architecture.X64,
-        file_hash=file_hash,
-        file_path=str(cache_path),
-        security_status=SecurityStatus.NOT_SCANNED,
+    repository._storage[repository._make_key("falseyscan.dll", Architecture.X64)] = (
+        DLLFile(
+            name="falseyscan.dll",
+            architecture=Architecture.X64,
+            file_hash=file_hash,
+            file_path=str(cache_path),
+            security_status=SecurityStatus.NOT_SCANNED,
+        )
     )
 
     use_case = DownloadDLLUseCase(
@@ -2162,7 +2183,10 @@ def test_download_dll_use_case_scans_cached_dll_with_falsey_scanner(
 
     assert response.success is True
     assert response.was_cached is True
-    assert _require_dll_file(response.dll_file).security_status == SecurityStatus.SUSPICIOUS
+    assert (
+        _require_dll_file(response.dll_file).security_status
+        == SecurityStatus.SUSPICIOUS
+    )
     assert response.security_warning is not None
 
 
@@ -2177,13 +2201,13 @@ def test_download_dll_use_case_cached_scan_error_returns_failure(
         _build_pe_payload(Architecture.X64),
     )
     cache_path.write_bytes(cache_payload)
-    repository._storage[
-        repository._make_key("scannerfail.dll", Architecture.X64)
-    ] = DLLFile(
-        name="scannerfail.dll",
-        architecture=Architecture.X64,
-        file_hash=calculate_sha256(cache_payload),
-        file_path=str(cache_path),
+    repository._storage[repository._make_key("scannerfail.dll", Architecture.X64)] = (
+        DLLFile(
+            name="scannerfail.dll",
+            architecture=Architecture.X64,
+            file_hash=calculate_sha256(cache_payload),
+            file_path=str(cache_path),
+        )
     )
 
     use_case = DownloadDLLUseCase(
@@ -2255,23 +2279,21 @@ def test_download_dll_use_case_force_download_bypasses_cache() -> None:
 
     # Pre-populate repository
     existing_dll = DLLFile(
-        name="test.dll",
-        architecture=Architecture.X64,
-        file_hash="old_hash"
+        name="test.dll", architecture=Architecture.X64, file_hash="old_hash"
     )
-    repository.save(existing_dll, b'old content')
+    repository.save(existing_dll, b"old content")
 
     use_case = DownloadDLLUseCase(
         repository=repository,
         http_client=http_client,
-        download_base_url="https://dll.website/download"
+        download_base_url="https://dll.website/download",
     )
 
     request = DownloadDLLRequest(
         dll_name="test.dll",
         architecture=Architecture.X64,
         force_download=True,
-        scan_before_save=False
+        scan_before_save=False,
     )
 
     response = use_case.execute(request)
@@ -2304,13 +2326,11 @@ def test_download_dll_use_case_with_security_scan_clean() -> None:
         repository=repository,
         http_client=http_client,
         download_base_url="https://dll.website/download",
-        scanner=scanner
+        scanner=scanner,
     )
 
     request = DownloadDLLRequest(
-        dll_name="safe.dll",
-        architecture=Architecture.X64,
-        scan_before_save=True
+        dll_name="safe.dll", architecture=Architecture.X64, scan_before_save=True
     )
 
     response = use_case.execute(request)
@@ -2342,25 +2362,19 @@ def test_download_dll_use_case_with_security_scan_malicious() -> None:
         repository=repository,
         http_client=http_client,
         download_base_url="https://dll.website/download",
-        scanner=scanner
+        scanner=scanner,
     )
 
     # First, execute to get the hash that will be used
     request = DownloadDLLRequest(
-        dll_name="malware.dll",
-        architecture=Architecture.X64,
-        scan_before_save=False
+        dll_name="malware.dll", architecture=Architecture.X64, scan_before_save=False
     )
     initial_response = use_case.execute(request)
     file_hash = _require_dll_file(initial_response.dll_file).file_hash
     assert file_hash is not None
 
     # Configure scanner to return malicious result
-    scanner.configure_result(
-        file_hash,
-        SecurityStatus.MALICIOUS,
-        "42/72"
-    )
+    scanner.configure_result(file_hash, SecurityStatus.MALICIOUS, "42/72")
 
     # Now do actual test with scanning
     repository = InMemoryRepository()  # Fresh repository
@@ -2368,19 +2382,19 @@ def test_download_dll_use_case_with_security_scan_malicious() -> None:
         repository=repository,
         http_client=http_client,
         download_base_url="https://dll.website/download",
-        scanner=scanner
+        scanner=scanner,
     )
 
     request = DownloadDLLRequest(
-        dll_name="malware.dll",
-        architecture=Architecture.X64,
-        scan_before_save=True
+        dll_name="malware.dll", architecture=Architecture.X64, scan_before_save=True
     )
 
     response = use_case.execute(request)
 
     assert response.success is True
-    assert _require_dll_file(response.dll_file).security_status == SecurityStatus.MALICIOUS
+    assert (
+        _require_dll_file(response.dll_file).security_status == SecurityStatus.MALICIOUS
+    )
     assert response.security_warning is not None
     assert "WARNING" in response.security_warning
     assert "42/72" in response.security_warning
@@ -2407,25 +2421,19 @@ def test_download_dll_use_case_with_security_scan_suspicious() -> None:
         repository=repository,
         http_client=http_client,
         download_base_url="https://dll.website/download",
-        scanner=scanner
+        scanner=scanner,
     )
 
     # Get hash first
     request = DownloadDLLRequest(
-        dll_name="suspicious.dll",
-        architecture=Architecture.X64,
-        scan_before_save=False
+        dll_name="suspicious.dll", architecture=Architecture.X64, scan_before_save=False
     )
     initial_response = use_case.execute(request)
     file_hash = _require_dll_file(initial_response.dll_file).file_hash
     assert file_hash is not None
 
     # Configure suspicious result
-    scanner.configure_result(
-        file_hash,
-        SecurityStatus.SUSPICIOUS,
-        "3/72"
-    )
+    scanner.configure_result(file_hash, SecurityStatus.SUSPICIOUS, "3/72")
 
     # Test with scanning
     repository = InMemoryRepository()
@@ -2433,19 +2441,20 @@ def test_download_dll_use_case_with_security_scan_suspicious() -> None:
         repository=repository,
         http_client=http_client,
         download_base_url="https://dll.website/download",
-        scanner=scanner
+        scanner=scanner,
     )
 
     request = DownloadDLLRequest(
-        dll_name="suspicious.dll",
-        architecture=Architecture.X64,
-        scan_before_save=True
+        dll_name="suspicious.dll", architecture=Architecture.X64, scan_before_save=True
     )
 
     response = use_case.execute(request)
 
     assert response.success is True
-    assert _require_dll_file(response.dll_file).security_status == SecurityStatus.SUSPICIOUS
+    assert (
+        _require_dll_file(response.dll_file).security_status
+        == SecurityStatus.SUSPICIOUS
+    )
     assert response.security_warning is not None
     assert "CAUTION" in response.security_warning
 
@@ -2472,19 +2481,20 @@ def test_download_dll_use_case_scanner_unavailable() -> None:
         repository=repository,
         http_client=http_client,
         download_base_url="https://dll.website/download",
-        scanner=scanner
+        scanner=scanner,
     )
 
     request = DownloadDLLRequest(
-        dll_name="test.dll",
-        architecture=Architecture.X64,
-        scan_before_save=True
+        dll_name="test.dll", architecture=Architecture.X64, scan_before_save=True
     )
 
     response = use_case.execute(request)
 
     assert response.success is True
-    assert _require_dll_file(response.dll_file).security_status == SecurityStatus.NOT_SCANNED
+    assert (
+        _require_dll_file(response.dll_file).security_status
+        == SecurityStatus.NOT_SCANNED
+    )
     assert response.security_warning is None
 
 
@@ -2545,7 +2555,10 @@ def test_download_dll_use_case_scans_download_with_falsey_scanner() -> None:
     )
 
     assert response.success is True
-    assert _require_dll_file(response.dll_file).security_status == SecurityStatus.SUSPICIOUS
+    assert (
+        _require_dll_file(response.dll_file).security_status
+        == SecurityStatus.SUSPICIOUS
+    )
     assert response.security_warning is not None
 
 
@@ -2616,13 +2629,10 @@ def test_download_dll_use_case_download_failure() -> None:
     use_case = DownloadDLLUseCase(
         repository=repository,
         http_client=http_client,
-        download_base_url="https://dll.website/download"
+        download_base_url="https://dll.website/download",
     )
 
-    request = DownloadDLLRequest(
-        dll_name="fail.dll",
-        architecture=Architecture.X64
-    )
+    request = DownloadDLLRequest(dll_name="fail.dll", architecture=Architecture.X64)
 
     response = use_case.execute(request)
 
@@ -2652,22 +2662,18 @@ def test_download_dll_use_case_different_architectures() -> None:
     use_case = DownloadDLLUseCase(
         repository=repository,
         http_client=http_client,
-        download_base_url="https://dll.website/download"
+        download_base_url="https://dll.website/download",
     )
 
     # Download x86 version
     request_x86 = DownloadDLLRequest(
-        dll_name="lib.dll",
-        architecture=Architecture.X86,
-        scan_before_save=False
+        dll_name="lib.dll", architecture=Architecture.X86, scan_before_save=False
     )
     response_x86 = use_case.execute(request_x86)
 
     # Download x64 version
     request_x64 = DownloadDLLRequest(
-        dll_name="lib.dll",
-        architecture=Architecture.X64,
-        scan_before_save=False
+        dll_name="lib.dll", architecture=Architecture.X64, scan_before_save=False
     )
     response_x64 = use_case.execute(request_x64)
 
@@ -2691,7 +2697,7 @@ def test_download_batch_use_case_orchestrates_multiple_downloads() -> None:
     single_use_case = DownloadDLLUseCase(
         repository=repository,
         http_client=http_client,
-        download_base_url="https://dll.website/download"
+        download_base_url="https://dll.website/download",
     )
     batch_use_case = DownloadBatchUseCase(single_use_case)
 
@@ -2740,6 +2746,35 @@ def test_download_batch_use_case_skips_invalid_names_with_failure_items() -> Non
 
 
 @pytest.mark.unit
+def test_download_batch_response_items_are_snapshot_immutable() -> None:
+    source_items = [
+        DownloadBatchItem(
+            dll_name="ok.dll",
+            response=DownloadDLLResponse(success=True),
+        )
+    ]
+    response = DownloadBatchResponse(items=source_items)
+
+    source_items.append(
+        DownloadBatchItem(
+            dll_name="bad.dll",
+            response=DownloadDLLResponse(success=False),
+        )
+    )
+
+    assert response.success_count == 1
+    assert response.failure_count == 0
+    assert [item.dll_name for item in response.items] == ["ok.dll"]
+    with pytest.raises(AttributeError):
+        cast(Any, response.items).append(
+            DownloadBatchItem(
+                dll_name="later.dll",
+                response=DownloadDLLResponse(success=False),
+            )
+        )
+
+
+@pytest.mark.unit
 def test_zip_bomb_with_zero_compress_size_rejected() -> None:
     """
     Regression: ZIP members with compress_size=0 and file_size>0 must be
@@ -2749,7 +2784,9 @@ def test_zip_bomb_with_zero_compress_size_rejected() -> None:
 
     x64_pe = _build_pe_payload(Architecture.X64)
     archive_buffer = io.BytesIO()
-    with zipfile.ZipFile(archive_buffer, "w", compression=zipfile.ZIP_STORED) as archive:
+    with zipfile.ZipFile(
+        archive_buffer, "w", compression=zipfile.ZIP_STORED
+    ) as archive:
         archive.writestr("test.dll", x64_pe)
     raw = bytearray(archive_buffer.getvalue())
 
@@ -2757,10 +2794,10 @@ def test_zip_bomb_with_zero_compress_size_rejected() -> None:
     # A compress_size of 0 with nonzero file_size indicates an infinite
     # compression ratio (ZIP bomb signature).
     local_offset = raw.index(b"PK\x03\x04")
-    raw[local_offset + 18:local_offset + 22] = b"\x00\x00\x00\x00"
+    raw[local_offset + 18 : local_offset + 22] = b"\x00\x00\x00\x00"
 
     central_offset = raw.index(b"PK\x01\x02")
-    raw[central_offset + 20:central_offset + 24] = b"\x00\x00\x00\x00"
+    raw[central_offset + 20 : central_offset + 24] = b"\x00\x00\x00\x00"
 
     # Verify patched ZIP is still parseable by zipfile
     assert zipfile.is_zipfile(io.BytesIO(bytes(raw)))

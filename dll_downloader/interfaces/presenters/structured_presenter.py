@@ -4,6 +4,7 @@ Structured presenters for machine-readable CLI output.
 
 import json
 import logging
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -208,7 +209,7 @@ class DownloadBatchSARIFPresenter:
 
     def _build_batch_results(
         self,
-        items: list[DownloadBatchItem],
+        items: Sequence[DownloadBatchItem],
         architecture_label: str,
     ) -> list[dict[str, Any]]:
         results: list[dict[str, Any]] = []

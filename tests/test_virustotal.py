@@ -305,6 +305,31 @@ def test_virustotal_scanner_rejects_fractional_critical_stats(value: object) -> 
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("value", [None, [], {}, True])
+def test_virustotal_scanner_rejects_unexpected_noncritical_stat_types(
+    value: object,
+) -> None:
+    scanner = VirusTotalScanner(api_key="test_key")
+
+    with pytest.raises(VirusTotalError, match="integer field|count"):
+        scanner._parse_response(
+            "a" * 64,
+            {
+                "data": {
+                    "attributes": {
+                        "last_analysis_stats": {
+                            "malicious": 0,
+                            "suspicious": 0,
+                            "harmless": value,
+                            "undetected": 70,
+                        },
+                    }
+                }
+            },
+        )
+
+
+@pytest.mark.unit
 def test_virustotal_safe_json_rejects_non_string_keys() -> None:
     class DummyResponse:
         status_code = 200

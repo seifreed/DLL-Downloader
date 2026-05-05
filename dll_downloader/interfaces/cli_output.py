@@ -2,6 +2,7 @@
 CLI output contracts and helpers.
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -44,9 +45,12 @@ class CLIBoundaryFailure:
 class CLICommandResult:
     """Rendered command output plus normalized session status."""
 
-    stdout_lines: list[str]
+    stdout_lines: Sequence[str]
     session: CLISessionResult
     boundary_failure: CLIBoundaryFailure | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "stdout_lines", tuple(self.stdout_lines))
 
 
 def emit_command_result(writer: OutputWriter, result: CLICommandResult) -> None:

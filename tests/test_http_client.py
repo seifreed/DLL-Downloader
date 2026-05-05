@@ -10,7 +10,7 @@ and related HTTP functionality. Tests use real HTTP requests to actual test serv
 and validate real behavior without mocking.
 """
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, MutableMapping
 from random import Random
 from typing import Any, cast
 
@@ -48,9 +48,11 @@ class SequenceUserAgentProvider:
         self._index += 1
         return value
 
+
 # ============================================================================
 # HTTPResponse Tests
 # ============================================================================
+
 
 @pytest.mark.unit
 def test_http_response_creation() -> None:
@@ -67,13 +69,30 @@ def test_http_response_creation() -> None:
         status_code=200,
         content=b"test content",
         headers={"Content-Type": "text/html"},
-        url="https://example.com"
+        url="https://example.com",
     )
 
     assert response.status_code == 200
     assert response.content == b"test content"
     assert response.headers == {"Content-Type": "text/html"}
     assert response.url == "https://example.com"
+
+
+@pytest.mark.unit
+def test_http_response_headers_are_snapshot_immutable() -> None:
+    source_headers = {"Location": "/next"}
+    response = HTTPResponse(
+        status_code=302,
+        content=b"",
+        headers=source_headers,
+        url="https://example.com",
+    )
+
+    source_headers.clear()
+
+    assert response.is_redirect is True
+    with pytest.raises(TypeError):
+        cast(MutableMapping[str, str], response.headers)["Location"] = "/later"
 
 
 @pytest.mark.unit
@@ -89,34 +108,19 @@ def test_http_response_is_success_property() -> None:
         - All other codes return False
     """
     success_response = HTTPResponse(
-        status_code=200,
-        content=b"",
-        headers={},
-        url="https://example.com"
+        status_code=200, content=b"", headers={}, url="https://example.com"
     )
     created_response = HTTPResponse(
-        status_code=201,
-        content=b"",
-        headers={},
-        url="https://example.com"
+        status_code=201, content=b"", headers={}, url="https://example.com"
     )
     redirect_response = HTTPResponse(
-        status_code=301,
-        content=b"",
-        headers={},
-        url="https://example.com"
+        status_code=301, content=b"", headers={}, url="https://example.com"
     )
     not_found_response = HTTPResponse(
-        status_code=404,
-        content=b"",
-        headers={},
-        url="https://example.com"
+        status_code=404, content=b"", headers={}, url="https://example.com"
     )
     server_error_response = HTTPResponse(
-        status_code=500,
-        content=b"",
-        headers={},
-        url="https://example.com"
+        status_code=500, content=b"", headers={}, url="https://example.com"
     )
 
     assert success_response.is_success is True
@@ -142,13 +146,10 @@ def test_http_response_content_length_property() -> None:
         status_code=200,
         content=b"",
         headers={"content-length": "1024"},
-        url="https://example.com"
+        url="https://example.com",
     )
     response_without_length = HTTPResponse(
-        status_code=200,
-        content=b"",
-        headers={},
-        url="https://example.com"
+        status_code=200, content=b"", headers={}, url="https://example.com"
     )
 
     assert response_with_length.content_length == 1024
@@ -195,6 +196,7 @@ def test_http_response_content_length_returns_none_for_negative_header() -> None
 # RequestsHTTPClient Initialization Tests
 # ============================================================================
 
+
 @pytest.mark.unit
 def test_requests_http_client_initialization_defaults() -> None:
     """
@@ -231,10 +233,7 @@ def test_requests_http_client_initialization_custom_values() -> None:
     """
     custom_agent = "TestAgent/1.0"
     client = RequestsHTTPClient(
-        timeout=30,
-        user_agent=custom_agent,
-        max_retries=3,
-        verify_ssl=False
+        timeout=30, user_agent=custom_agent, max_retries=3, verify_ssl=False
     )
 
     assert client._timeout == 30
@@ -305,6 +304,7 @@ def test_requests_http_client_default_user_agent_comes_from_rotation_pool() -> N
 # ============================================================================
 # RequestsHTTPClient Real HTTP Request Tests
 # ============================================================================
+
 
 @pytest.mark.integration
 def test_requests_http_client_get_real_request(test_http_server: int) -> None:
@@ -448,8 +448,9 @@ def test_requests_http_client_head_request(test_http_server: int) -> None:
     assert isinstance(headers, dict)
     assert len(headers) > 0
     # Common headers that should be present
-    assert any(key.lower() in ["content-type", "content-length", "server"]
-               for key in headers)
+    assert any(
+        key.lower() in ["content-type", "content-length", "server"] for key in headers
+    )
 
 
 @pytest.mark.integration
@@ -509,6 +510,7 @@ def test_requests_http_client_download_retries_transient_503(
 # RequestsHTTPClient Error Handling Tests
 # ============================================================================
 
+
 @pytest.mark.integration
 def test_requests_http_client_get_invalid_url_raises_error() -> None:
     """
@@ -520,7 +522,10 @@ def test_requests_http_client_get_invalid_url_raises_error() -> None:
     Expected Behavior:
         HTTPClientError is raised for unreachable URLs.
     """
-    client = RequestsHTTPClient(timeout=1, allowed_redirect_domains={"invalid-domain-that-does-not-exist-12345.com"})
+    client = RequestsHTTPClient(
+        timeout=1,
+        allowed_redirect_domains={"invalid-domain-that-does-not-exist-12345.com"},
+    )
     invalid_url = "http://invalid-domain-that-does-not-exist-12345.com"
 
     with pytest.raises(HTTPClientError) as exc_info:
@@ -575,6 +580,7 @@ def test_requests_http_client_timeout_raises_error() -> None:
 # ============================================================================
 # RequestsHTTPClient Resource Management Tests
 # ============================================================================
+
 
 @pytest.mark.unit
 def test_requests_http_client_close_method() -> None:
@@ -683,6 +689,7 @@ def test_requests_http_client_session_reuse(test_http_server: int) -> None:
 # HTTPClientError Tests
 # ============================================================================
 
+
 @pytest.mark.unit
 def test_http_client_error_creation() -> None:
     """
@@ -695,9 +702,7 @@ def test_http_client_error_creation() -> None:
         Exception contains message, status code, and URL.
     """
     error = HTTPClientError(
-        message="Request failed",
-        status_code=500,
-        url="https://example.com"
+        message="Request failed", status_code=500, url="https://example.com"
     )
 
     assert str(error) == "Request failed"
@@ -726,6 +731,7 @@ def test_http_client_error_minimal_creation() -> None:
 # ============================================================================
 # IHTTPClient Protocol Tests
 # ============================================================================
+
 
 @pytest.mark.unit
 def test_requests_http_client_satisfies_protocol() -> None:
@@ -780,6 +786,7 @@ def test_http_client_get_text_decodes_response() -> None:
     """
     Verify get_text decodes successful HTTP responses.
     """
+
     class FixedResponseClient(RequestsHTTPClient):
         def get(
             self,
@@ -804,6 +811,7 @@ def test_http_client_get_text_decodes_unsuccessful_if_bypassed() -> None:
     Verify get_text decodes content from a response passed directly,
     since get() already raises on non-ok status codes.
     """
+
     class FixedErrorClient(RequestsHTTPClient):
         def get(
             self,
@@ -880,6 +888,7 @@ def test_http_client_download_request_exception_raises() -> None:
     """
     Verify download wraps request exceptions into HTTPClientError.
     """
+
     class DummySession:
         headers: dict[str, str] = {}
 
@@ -896,7 +905,9 @@ def test_http_client_download_request_exception_raises() -> None:
             pass
 
     client = RequestsHTTPClient(
-        session_resource=_resource_with_session(cast(HTTPSessionProtocol, DummySession()))
+        session_resource=_resource_with_session(
+            cast(HTTPSessionProtocol, DummySession())
+        )
     )
 
     with pytest.raises(HTTPClientError):
@@ -965,6 +976,7 @@ def test_http_client_head_request_exception_raises() -> None:
     """
     Verify head wraps request exceptions into HTTPClientError.
     """
+
     class DummySession:
         headers: dict[str, str] = {}
 
@@ -981,7 +993,9 @@ def test_http_client_head_request_exception_raises() -> None:
             pass
 
     client = RequestsHTTPClient(
-        session_resource=_resource_with_session(cast(HTTPSessionProtocol, DummySession()))
+        session_resource=_resource_with_session(
+            cast(HTTPSessionProtocol, DummySession())
+        )
     )
 
     with pytest.raises(HTTPClientError):
@@ -991,6 +1005,7 @@ def test_http_client_head_request_exception_raises() -> None:
 @pytest.mark.unit
 def test_http_client_head_closes_response() -> None:
     """Verify HEAD response resources are released after headers are copied."""
+
     class DummyResponse:
         status_code = 200
         is_redirect = False
@@ -1037,6 +1052,7 @@ def test_http_client_head_closes_response() -> None:
 @pytest.mark.unit
 def test_http_client_get_closes_response() -> None:
     """Verify GET response resources are released after content is copied."""
+
     class DummyResponse:
         status_code = 200
         is_redirect = False
@@ -1085,6 +1101,7 @@ def test_http_client_get_closes_response() -> None:
 @pytest.mark.unit
 def test_http_client_get_wraps_body_read_failures_and_closes_response() -> None:
     """Verify GET body read failures are normalized and resources are released."""
+
     class BrokenResponse:
         status_code = 200
         is_redirect = False
@@ -1139,8 +1156,11 @@ def test_get_file_info_invalid_content_length() -> None:
     """
     Verify invalid content-length header is handled safely.
     """
+
     class InvalidHeadClient(RequestsHTTPClient):
-        def head(self, url: str, headers: Mapping[str, str] | None = None) -> dict[str, str]:
+        def head(
+            self, url: str, headers: Mapping[str, str] | None = None
+        ) -> dict[str, str]:
             return {"content-length": "not-a-number"}
 
     client = InvalidHeadClient()
@@ -1151,7 +1171,9 @@ def test_get_file_info_invalid_content_length() -> None:
 @pytest.mark.unit
 def test_get_file_info_ignores_negative_content_length() -> None:
     class NegativeHeadClient(RequestsHTTPClient):
-        def head(self, url: str, headers: Mapping[str, str] | None = None) -> dict[str, str]:
+        def head(
+            self, url: str, headers: Mapping[str, str] | None = None
+        ) -> dict[str, str]:
             return {"content-length": "-1"}
 
     client = NegativeHeadClient()
@@ -1164,7 +1186,9 @@ def test_get_file_info_ignores_negative_content_length() -> None:
 @pytest.mark.unit
 def test_get_file_info_uses_case_insensitive_headers() -> None:
     class UppercaseHeadClient(RequestsHTTPClient):
-        def head(self, url: str, headers: Mapping[str, str] | None = None) -> dict[str, str]:
+        def head(
+            self, url: str, headers: Mapping[str, str] | None = None
+        ) -> dict[str, str]:
             return {
                 "Content-Type": "application/zip",
                 "Content-Length": "123",
@@ -1191,6 +1215,7 @@ def test_http_client_download_ignores_empty_chunks() -> None:
     """
     Verify download ignores empty chunks.
     """
+
     class DummyResponse:
         ok = True
         is_redirect = False
@@ -1375,6 +1400,7 @@ def test_http_client_download_wraps_stream_interruptions() -> None:
     """
     Verify interruptions while consuming response chunks are normalized.
     """
+
     class DummyResponse:
         ok = True
         is_redirect = False
@@ -1472,6 +1498,7 @@ def test_http_client_download_ignores_final_response_close_failure() -> None:
 @pytest.mark.unit
 def test_http_client_download_ignores_final_response_oserror_close_failure() -> None:
     """RuntimeError from close() is no longer silently swallowed; only OSError is."""
+
     class DummyResponse:
         ok = True
         is_redirect = False

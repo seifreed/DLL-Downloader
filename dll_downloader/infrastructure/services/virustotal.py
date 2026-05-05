@@ -89,14 +89,7 @@ def _safe_int(value: object, *, strict: bool = False) -> int:  # noqa: C901
     threat severity.
     """
     if isinstance(value, bool):
-        if strict:
-            raise VirusTotalError(
-                f"VT API returned boolean for integer field: {value!r}"
-            )
-        logger.warning(
-            "VT API returned boolean for integer field: %r, defaulting to 0", value
-        )
-        return 0
+        raise VirusTotalError(f"VT API returned boolean for integer field: {value!r}")
     if isinstance(value, int):
         if value < 0:
             if strict:
@@ -158,20 +151,11 @@ def _safe_int(value: object, *, strict: bool = False) -> int:  # noqa: C901
             return 0
         return result
     if value is None:
-        if strict:
-            raise VirusTotalError("VT API returned null for integer field")
-        logger.warning("VT API returned null for integer field, defaulting to 0")
-        return 0
+        raise VirusTotalError("VT API returned null for integer field")
     if isinstance(value, (dict, list)):
-        if strict:
-            raise VirusTotalError(
-                f"VT API returned unexpected type for integer field: {value!r}"
-            )
-        logger.warning(
-            "VT API returned unexpected type for integer field: %r, defaulting to 0",
-            value,
+        raise VirusTotalError(
+            f"VT API returned unexpected type for integer field: {value!r}"
         )
-        return 0
     raise VirusTotalError(
         f"VT API returned unexpected type for integer field: {value!r}"
     )

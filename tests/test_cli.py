@@ -53,6 +53,7 @@ from dll_downloader.interfaces.cli_formatters import (
     create_cli_service,
     get_output_format,
 )
+from dll_downloader.interfaces.cli_sanitization import sanitize_boundary_message
 from dll_downloader.runtime import create_dependencies, process_downloads
 
 
@@ -86,6 +87,7 @@ def _successful_response(dll_name: str) -> DownloadDLLResponse:
             file_path=f"/downloads/{dll_name}",
         ),
     )
+
 
 @contextmanager
 def _temporary_argv(argv: list[str]) -> Iterator[None]:
@@ -130,27 +132,29 @@ def _build_cached_pe_payload(marker: bytes = b"") -> bytes:
     payload = bytearray(section_table_offset + 40)
     payload[0:2] = b"MZ"
     payload[0x3C:0x40] = pe_offset.to_bytes(4, "little")
-    payload[pe_offset:pe_offset + 4] = b"PE\x00\x00"
-    payload[pe_offset + 4:pe_offset + 6] = (0x8664).to_bytes(2, "little")
-    payload[pe_offset + 6:pe_offset + 8] = (1).to_bytes(2, "little")
-    payload[pe_offset + 20:pe_offset + 22] = optional_header_size.to_bytes(2, "little")
-    payload[pe_offset + 22:pe_offset + 24] = (0x2000).to_bytes(2, "little")
-    payload[optional_header_offset:optional_header_offset + 2] = (0x20B).to_bytes(
+    payload[pe_offset : pe_offset + 4] = b"PE\x00\x00"
+    payload[pe_offset + 4 : pe_offset + 6] = (0x8664).to_bytes(2, "little")
+    payload[pe_offset + 6 : pe_offset + 8] = (1).to_bytes(2, "little")
+    payload[pe_offset + 20 : pe_offset + 22] = optional_header_size.to_bytes(
+        2, "little"
+    )
+    payload[pe_offset + 22 : pe_offset + 24] = (0x2000).to_bytes(2, "little")
+    payload[optional_header_offset : optional_header_offset + 2] = (0x20B).to_bytes(
         2,
         "little",
     )
-    payload[section_table_offset:section_table_offset + 5] = b".text"
-    payload[section_table_offset + 8:section_table_offset + 12] = len(
+    payload[section_table_offset : section_table_offset + 5] = b".text"
+    payload[section_table_offset + 8 : section_table_offset + 12] = len(
         raw_data
     ).to_bytes(4, "little")
-    payload[section_table_offset + 12:section_table_offset + 16] = (0x1000).to_bytes(
+    payload[section_table_offset + 12 : section_table_offset + 16] = (0x1000).to_bytes(
         4,
         "little",
     )
-    payload[section_table_offset + 16:section_table_offset + 20] = len(
+    payload[section_table_offset + 16 : section_table_offset + 20] = len(
         raw_data
     ).to_bytes(4, "little")
-    payload[section_table_offset + 20:section_table_offset + 24] = len(
+    payload[section_table_offset + 20 : section_table_offset + 24] = len(
         payload
     ).to_bytes(4, "little")
     return bytes(payload) + raw_data
@@ -187,9 +191,11 @@ def _seed_cached_dll(repo_dir: Path, dll_names: list[str]) -> None:
 
     (repo_dir / ".dll_index.json").write_text(json.dumps({"files": index_data}))
 
+
 # ============================================================================
 # Argument Parsing Tests
 # ============================================================================
+
 
 @pytest.mark.unit
 def test_parse_arguments_single_dll() -> None:
@@ -388,7 +394,8 @@ def test_parse_arguments_combined_flags() -> None:
     sys.argv = [
         "dll-downloader.py",
         "msvcp140.dll",
-        "--arch", "x86",
+        "--arch",
+        "x86",
         "--debug",
         "--no-scan",
         "--force",
@@ -425,6 +432,7 @@ def test_parse_arguments_returns_parser() -> None:
 # ============================================================================
 # Debug Mode Tests
 # ============================================================================
+
 
 @pytest.mark.unit
 def test_set_debug_mode_enabled() -> None:
@@ -499,6 +507,7 @@ def test_apply_logging_settings_rejects_unknown_level() -> None:
 # ============================================================================
 # DLL List File Reading Tests
 # ============================================================================
+
 
 @pytest.mark.unit
 def test_read_dll_list_from_file_success() -> None:
@@ -633,6 +642,7 @@ def test_read_dll_list_from_file_whitespace_only_raises_error() -> None:
 # DLL Name Normalization Tests
 # ============================================================================
 
+
 @pytest.mark.unit
 def test_normalize_dll_name_without_extension() -> None:
     """
@@ -724,6 +734,7 @@ def test_normalize_dll_name_rejects_unsafe_names(name: str) -> None:
 # Architecture Conversion Tests
 # ============================================================================
 
+
 @pytest.mark.unit
 def test_get_architecture_x86() -> None:
     """
@@ -782,6 +793,7 @@ def test_get_architecture_default() -> None:
 # Dependency Creation Tests
 # ============================================================================
 
+
 @pytest.mark.unit
 def test_create_dependencies_returns_all_components() -> None:
     """
@@ -795,8 +807,7 @@ def test_create_dependencies_returns_all_components() -> None:
         - All components are instantiated
     """
     settings = Settings(
-        download_directory=tempfile.mkdtemp(),
-        virustotal_api_key="test_key"
+        download_directory=tempfile.mkdtemp(), virustotal_api_key="test_key"
     )
 
     use_case, http_client, scanner = create_dependencies(settings)
@@ -822,10 +833,7 @@ def test_create_dependencies_without_vt_api_key() -> None:
     Expected Behavior:
         Scanner is None but other components are created.
     """
-    settings = Settings(
-        download_directory=tempfile.mkdtemp(),
-        virustotal_api_key=None
-    )
+    settings = Settings(download_directory=tempfile.mkdtemp(), virustotal_api_key=None)
 
     use_case, http_client, scanner = create_dependencies(settings)
 
@@ -852,8 +860,7 @@ def test_create_dependencies_with_custom_output_dir() -> None:
     custom_dir = tempfile.mkdtemp()
 
     use_case, http_client, scanner = create_dependencies(
-        settings,
-        output_dir=custom_dir
+        settings, output_dir=custom_dir
     )
 
     assert use_case is not None
@@ -913,12 +920,14 @@ def test_create_dependencies_creates_download_directory() -> None:
     if scanner:
         scanner.close()
     import shutil
+
     shutil.rmtree(temp_dir)
 
 
 # ============================================================================
 # Integration Tests
 # ============================================================================
+
 
 @pytest.mark.integration
 def test_cli_argument_flow_to_architecture() -> None:
@@ -993,6 +1002,7 @@ def test_cli_file_input_flow() -> None:
 # Format Response Tests
 # ============================================================================
 
+
 @pytest.mark.unit
 def test_format_response_success_cached(capsys: CaptureFixture[str]) -> None:
     """
@@ -1007,13 +1017,9 @@ def test_format_response_success_cached(capsys: CaptureFixture[str]) -> None:
     dll_file = DLLFile(
         name="kernel32.dll",
         architecture=Architecture.X64,
-        file_path="/downloads/kernel32.dll"
+        file_path="/downloads/kernel32.dll",
     )
-    response = DownloadDLLResponse(
-        success=True,
-        dll_file=dll_file,
-        was_cached=True
-    )
+    response = DownloadDLLResponse(success=True, dll_file=dll_file, was_cached=True)
 
     format_response(response, "kernel32.dll")
 
@@ -1038,13 +1044,9 @@ def test_format_response_success_downloaded(capsys: CaptureFixture[str]) -> None
         architecture=Architecture.X64,
         file_path="/downloads/user32.dll",
         file_hash="abc123def456",
-        file_size=102400
+        file_size=102400,
     )
-    response = DownloadDLLResponse(
-        success=True,
-        dll_file=dll_file,
-        was_cached=False
-    )
+    response = DownloadDLLResponse(success=True, dll_file=dll_file, was_cached=False)
 
     format_response(response, "user32.dll")
 
@@ -1056,7 +1058,9 @@ def test_format_response_success_downloaded(capsys: CaptureFixture[str]) -> None
 
 
 @pytest.mark.unit
-def test_format_response_success_with_security_warning(capsys: CaptureFixture[str]) -> None:
+def test_format_response_success_with_security_warning(
+    capsys: CaptureFixture[str],
+) -> None:
     """
     Test format_response with security warning.
 
@@ -1070,13 +1074,13 @@ def test_format_response_success_with_security_warning(capsys: CaptureFixture[st
         name="suspicious.dll",
         architecture=Architecture.X64,
         file_path="/downloads/suspicious.dll",
-        security_status=SecurityStatus.SUSPICIOUS
+        security_status=SecurityStatus.SUSPICIOUS,
     )
     response = DownloadDLLResponse(
         success=True,
         dll_file=dll_file,
         was_cached=False,
-        security_warning="CAUTION: Some engines flagged this file."
+        security_warning="CAUTION: Some engines flagged this file.",
     )
 
     format_response(response, "suspicious.dll")
@@ -1096,10 +1100,7 @@ def test_format_response_failure(capsys: CaptureFixture[str]) -> None:
     Expected Behavior:
         Shows [FAILED] prefix with error message.
     """
-    response = DownloadDLLResponse(
-        success=False,
-        error_message="Network timeout"
-    )
+    response = DownloadDLLResponse(success=False, error_message="Network timeout")
 
     format_response(response, "missing.dll")
 
@@ -1119,9 +1120,27 @@ def test_format_response_success_without_dll_file(capsys: CaptureFixture[str]) -
     assert "[FAILED]" in capsys.readouterr().out
 
 
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "message",
+    [
+        r"Failed to read file 'C:\Users\alice\secret\dlls.txt': boom",
+        r"Failed to read file '\\server\share\secret\dlls.txt': boom",
+    ],
+)
+def test_sanitize_boundary_message_redacts_windows_paths(message: str) -> None:
+    sanitized = sanitize_boundary_message(ValueError(message))
+
+    assert "secret" not in sanitized
+    assert "alice" not in sanitized
+    assert "server" not in sanitized
+    assert "<path>" in sanitized
+
+
 # ============================================================================
 # Download Request Tests
 # ============================================================================
+
 
 @pytest.mark.unit
 def test_download_request_public_contract() -> None:
@@ -1142,6 +1161,7 @@ def test_download_request_public_contract() -> None:
 # ============================================================================
 # Process Downloads Tests
 # ============================================================================
+
 
 @pytest.mark.integration
 def test_process_downloads_single_dll(
@@ -1173,7 +1193,7 @@ def test_process_downloads_single_dll(
         scan_enabled=False,
         force_download=True,
         extract_archive=False,
-        debug=False
+        debug=False,
     )
 
     assert isinstance(success_count, int)
@@ -1214,7 +1234,7 @@ def test_process_downloads_multiple_dlls(
         scan_enabled=False,
         force_download=True,
         extract_archive=False,
-        debug=False
+        debug=False,
     )
 
     assert success_count + failure_count == 3
@@ -1245,7 +1265,7 @@ def test_process_downloads_normalizes_names(
         scan_enabled=False,
         force_download=True,
         extract_archive=False,
-        debug=False
+        debug=False,
     )
 
     captured = capsys.readouterr()
@@ -1278,7 +1298,7 @@ def test_process_downloads_prints_architecture(
         scan_enabled=False,
         force_download=True,
         extract_archive=False,
-        debug=False
+        debug=False,
     )
 
     captured = capsys.readouterr()
@@ -1306,7 +1326,7 @@ def test_process_downloads_empty_list() -> None:
         scan_enabled=False,
         force_download=False,
         extract_archive=False,
-        debug=False
+        debug=False,
     )
 
     assert success_count == 0
@@ -1318,6 +1338,7 @@ def test_process_downloads_handles_exception(capsys: CaptureFixture[str]) -> Non
     """
     Verify process_downloads handles unexpected exceptions gracefully as failed downloads.
     """
+
     class FailingUseCase:
         def execute(self, request: DownloadDLLRequest) -> DownloadDLLResponse:
             raise RuntimeError("boom")
@@ -1329,7 +1350,7 @@ def test_process_downloads_handles_exception(capsys: CaptureFixture[str]) -> Non
         scan_enabled=False,
         force_download=False,
         extract_archive=False,
-        debug=True
+        debug=True,
     )
 
     out = capsys.readouterr()
@@ -1343,6 +1364,7 @@ def test_process_downloads_exception_without_debug(capsys: CaptureFixture[str]) 
     """
     Verify process_downloads handles unexpected exceptions as failed downloads without debug.
     """
+
     class FailingUseCase:
         def execute(self, request: DownloadDLLRequest) -> DownloadDLLResponse:
             raise RuntimeError("boom")
@@ -1354,7 +1376,7 @@ def test_process_downloads_exception_without_debug(capsys: CaptureFixture[str]) 
         scan_enabled=False,
         force_download=False,
         extract_archive=False,
-        debug=False
+        debug=False,
     )
 
     out = capsys.readouterr()
@@ -1555,8 +1577,9 @@ def test_main_json_output_for_unreadable_batch_file(
 def test_main_json_output_for_invalid_loaded_settings(
     capsys: CaptureFixture[str],
 ) -> None:
-    with _temporary_env({"DLL_HTTP_TIMEOUT": "0"}), _temporary_argv(
-        ["dll-downloader.py", "test.dll", "--json"]
+    with (
+        _temporary_env({"DLL_HTTP_TIMEOUT": "0"}),
+        _temporary_argv(["dll-downloader.py", "test.dll", "--json"]),
     ):
         assert main(None) == 1
 
@@ -1590,8 +1613,9 @@ def test_main_json_output_for_invalid_discovered_config(
 def test_main_sarif_output_for_invalid_loaded_settings(
     capsys: CaptureFixture[str],
 ) -> None:
-    with _temporary_env({"DLL_HTTP_TIMEOUT": "0"}), _temporary_argv(
-        ["dll-downloader.py", "test.dll", "--sarif"]
+    with (
+        _temporary_env({"DLL_HTTP_TIMEOUT": "0"}),
+        _temporary_argv(["dll-downloader.py", "test.dll", "--sarif"]),
     ):
         assert main(None) == 1
 
@@ -1605,8 +1629,9 @@ def test_main_sarif_output_for_invalid_loaded_settings(
 def test_main_console_output_for_invalid_loaded_settings(
     capsys: CaptureFixture[str],
 ) -> None:
-    with _temporary_env({"DLL_HTTP_TIMEOUT": "0"}), _temporary_argv(
-        ["dll-downloader.py", "test.dll"]
+    with (
+        _temporary_env({"DLL_HTTP_TIMEOUT": "0"}),
+        _temporary_argv(["dll-downloader.py", "test.dll"]),
     ):
         assert main(None) == 1
 
@@ -1622,15 +1647,18 @@ def test_main_json_ignores_unreadable_config_and_keeps_contract(
     _seed_cached_dll(repo_dir, ["test.dll"])
     (tmp_path / ".config.json").mkdir()
 
-    with _temporary_cwd(tmp_path), _temporary_argv(
-        [
-            "dll-downloader.py",
-            "test.dll",
-            "--output-dir",
-            str(repo_dir),
-            "--no-scan",
-            "--json",
-        ]
+    with (
+        _temporary_cwd(tmp_path),
+        _temporary_argv(
+            [
+                "dll-downloader.py",
+                "test.dll",
+                "--output-dir",
+                str(repo_dir),
+                "--no-scan",
+                "--json",
+            ]
+        ),
     ):
         assert main(None) == 0
 

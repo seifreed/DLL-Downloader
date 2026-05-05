@@ -1,3 +1,5 @@
+from typing import Any, cast
+
 import pytest
 
 from dll_downloader.interfaces.cli_output import (
@@ -37,6 +39,23 @@ def test_emit_command_result_without_boundary_failure() -> None:
 
 
 @pytest.mark.unit
+def test_cli_command_result_stdout_lines_are_snapshot_immutable() -> None:
+    source_lines = ["one"]
+    result = CLICommandResult(
+        stdout_lines=source_lines,
+        session=CLISessionResult(success_count=1, failure_count=0, exit_code=0),
+    )
+    source_lines.append("two")
+    writer = RecordingWriter()
+
+    emit_command_result(writer, result)
+
+    assert writer.stdout == ["one"]
+    with pytest.raises(AttributeError):
+        cast(Any, result.stdout_lines).append("three")
+
+
+@pytest.mark.unit
 def test_emit_command_result_without_traceback_text() -> None:
     writer = RecordingWriter()
 
@@ -62,7 +81,9 @@ def test_emit_command_result_structured_failure_goes_to_stdout() -> None:
         CLICommandResult(
             stdout_lines=[],
             session=CLISessionResult(success_count=0, failure_count=1, exit_code=1),
-            boundary_failure=CLIBoundaryFailure(message='{"error":"bad"}', is_structured=True),
+            boundary_failure=CLIBoundaryFailure(
+                message='{"error":"bad"}', is_structured=True
+            ),
         ),
     )
 
@@ -79,7 +100,9 @@ def test_emit_command_result_console_failure_goes_to_stderr() -> None:
         CLICommandResult(
             stdout_lines=[],
             session=CLISessionResult(success_count=0, failure_count=1, exit_code=1),
-            boundary_failure=CLIBoundaryFailure(message="[ERROR] something failed", is_structured=False),
+            boundary_failure=CLIBoundaryFailure(
+                message="[ERROR] something failed", is_structured=False
+            ),
         ),
     )
 
