@@ -1,4 +1,4 @@
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
@@ -117,6 +117,43 @@ class ScannerStub:
         self.closed = True
 
 
+@pytest.mark.unit
+def test_cli_batch_download_command_names_are_snapshot_immutable() -> None:
+    source_names = ["ok.dll"]
+    command = CLIBatchDownloadCommand(
+        dll_names=cast(tuple[str, ...], source_names),
+        architecture=Architecture.X64,
+        scan_enabled=False,
+        force_download=False,
+        extract_archive=False,
+    )
+
+    source_names.append("later.dll")
+
+    assert command.dll_names == ("ok.dll",)
+    with pytest.raises(AttributeError):
+        cast(Any, command.dll_names).append("bad.dll")
+
+
+@pytest.mark.unit
+def test_cli_invocation_names_are_snapshot_immutable() -> None:
+    source_names = ["ok.dll"]
+    invocation = CLIInvocation(
+        dll_names=cast(tuple[str, ...], source_names),
+        architecture=Architecture.X64,
+        scan_enabled=False,
+        force_download=False,
+        extract_archive=False,
+        debug=False,
+    )
+
+    source_names.append("later.dll")
+
+    assert invocation.dll_names == ("ok.dll",)
+    with pytest.raises(AttributeError):
+        cast(Any, invocation.dll_names).append("bad.dll")
+
+
 def _application_with_use_case(use_case: SuccessfulUseCase) -> DownloadApplication:
     http_client = HTTPClientStub()
     scanner = ScannerStub()
@@ -188,7 +225,9 @@ def test_cli_application_service_emits_stdout_and_stderr() -> None:
     writer = RecordingWriter()
     service = CLIApplicationService(
         StubPresenter(),
-        lambda settings, output_dir=None: _application_with_use_case(SuccessfulUseCase()),
+        lambda settings, output_dir=None: _application_with_use_case(
+            SuccessfulUseCase()
+        ),
         writer=writer,
     )
 
@@ -247,7 +286,9 @@ def test_cli_application_service_run_closes_runtime_resources() -> None:
 def test_cli_application_service_render_summary_batch_only() -> None:
     service = CLIApplicationService(
         StubPresenter(),
-        lambda settings, output_dir=None: _application_with_use_case(SuccessfulUseCase()),
+        lambda settings, output_dir=None: _application_with_use_case(
+            SuccessfulUseCase()
+        ),
         writer=RecordingWriter(),
     )
 
@@ -374,7 +415,9 @@ def test_cleanup_runtime_resources_suppresses_scanner_close_failure() -> None:
 def test_cli_application_service_create_invocation_uses_settings_and_args() -> None:
     service = CLIApplicationService(
         StubPresenter(),
-        lambda settings, output_dir=None: _application_with_use_case(SuccessfulUseCase()),
+        lambda settings, output_dir=None: _application_with_use_case(
+            SuccessfulUseCase()
+        ),
         writer=RecordingWriter(),
     )
     args = type(
@@ -413,7 +456,9 @@ def test_cli_application_service_create_invocation_uses_settings_and_args() -> N
 def test_cli_application_service_create_invocation_honors_scan_setting() -> None:
     service = CLIApplicationService(
         StubPresenter(),
-        lambda settings, output_dir=None: _application_with_use_case(SuccessfulUseCase()),
+        lambda settings, output_dir=None: _application_with_use_case(
+            SuccessfulUseCase()
+        ),
         writer=RecordingWriter(),
     )
     args = type(
@@ -445,7 +490,9 @@ def test_cli_application_service_create_invocation_honors_scan_setting() -> None
 def test_cli_application_service_create_invocation_ignores_blank_api_key() -> None:
     service = CLIApplicationService(
         StubPresenter(),
-        lambda settings, output_dir=None: _application_with_use_case(SuccessfulUseCase()),
+        lambda settings, output_dir=None: _application_with_use_case(
+            SuccessfulUseCase()
+        ),
         writer=RecordingWriter(),
     )
     args = type(
@@ -477,7 +524,9 @@ def test_cli_application_service_create_invocation_ignores_blank_api_key() -> No
 def test_cli_application_service_run_from_args_raises_on_invalid_input() -> None:
     service = CLIApplicationService(
         StubPresenter(),
-        lambda settings, output_dir=None: _application_with_use_case(SuccessfulUseCase()),
+        lambda settings, output_dir=None: _application_with_use_case(
+            SuccessfulUseCase()
+        ),
         writer=RecordingWriter(),
     )
     parser = __import__("argparse").ArgumentParser()
@@ -491,7 +540,9 @@ def test_cli_application_service_run_from_args_raises_on_invalid_input() -> None
 def test_cli_application_service_create_invocation_rejects_unsafe_name() -> None:
     service = CLIApplicationService(
         StubPresenter(),
-        lambda settings, output_dir=None: _application_with_use_case(SuccessfulUseCase()),
+        lambda settings, output_dir=None: _application_with_use_case(
+            SuccessfulUseCase()
+        ),
         writer=RecordingWriter(),
     )
     args = type(
@@ -510,14 +561,18 @@ def test_cli_application_service_create_invocation_rejects_unsafe_name() -> None
     )()
 
     with pytest.raises(ValueError, match="DLL name"):
-        service.create_invocation(args, __import__("argparse").ArgumentParser(), Settings(), lambda path: [])
+        service.create_invocation(
+            args, __import__("argparse").ArgumentParser(), Settings(), lambda path: []
+        )
 
 
 @pytest.mark.unit
 def test_cli_application_service_run_from_args_returns_result_on_success() -> None:
     service = CLIApplicationService(
         StubPresenter(),
-        lambda settings, output_dir=None: _application_with_use_case(SuccessfulUseCase()),
+        lambda settings, output_dir=None: _application_with_use_case(
+            SuccessfulUseCase()
+        ),
         writer=RecordingWriter(),
     )
     parser = __import__("argparse").ArgumentParser()

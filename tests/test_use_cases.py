@@ -2775,6 +2775,18 @@ def test_download_batch_response_items_are_snapshot_immutable() -> None:
 
 
 @pytest.mark.unit
+def test_download_batch_request_names_are_snapshot_immutable() -> None:
+    source_names = ["ok.dll"]
+    request = DownloadBatchRequest(dll_names=cast(tuple[str, ...], source_names))
+
+    source_names.append("later.dll")
+
+    assert request.dll_names == ("ok.dll",)
+    with pytest.raises(AttributeError):
+        cast(Any, request.dll_names).append("bad.dll")
+
+
+@pytest.mark.unit
 def test_zip_bomb_with_zero_compress_size_rejected() -> None:
     """
     Regression: ZIP members with compress_size=0 and file_size>0 must be

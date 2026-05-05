@@ -40,6 +40,9 @@ class DownloadBatchRequest:
     force_download: bool = False
     extract_archive: bool = False
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "dll_names", tuple(self.dll_names))
+
 
 @dataclass(frozen=True)
 class DownloadBatchResponse:

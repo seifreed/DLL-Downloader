@@ -128,6 +128,25 @@ def test_scan_result_detections_are_snapshot_immutable() -> None:
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize(
+    "detections",
+    [
+        cast(Mapping[str, str], {"Engine": 1}),
+        cast(Mapping[str, str], {1: "Malware"}),
+    ],
+)
+def test_scan_result_rejects_non_string_detection_entries(
+    detections: Mapping[str, str],
+) -> None:
+    with pytest.raises(ValueError, match="detections"):
+        ScanResult(
+            file_hash="x",
+            status=SecurityStatus.MALICIOUS,
+            detections=detections,
+        )
+
+
+@pytest.mark.unit
 def test_scan_result_is_clean_property() -> None:
     clean = ScanResult(file_hash="x", status=SecurityStatus.CLEAN)
     dirty = ScanResult(file_hash="x", status=SecurityStatus.MALICIOUS)

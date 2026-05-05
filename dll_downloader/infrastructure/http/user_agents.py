@@ -14,11 +14,17 @@ class UserAgentProvider(Protocol):
         """Select the next User-Agent."""
 
 
+def _validate_user_agent(value: object, field_name: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{field_name} must be a non-empty string")
+    return value
+
+
 class FixedUserAgentProvider:
     """Always return the same configured User-Agent."""
 
     def __init__(self, user_agent: str) -> None:
-        self._user_agent = user_agent
+        self._user_agent = _validate_user_agent(user_agent, "user_agent")
 
     def next_user_agent(self) -> str:
         return self._user_agent
@@ -56,6 +62,13 @@ class RandomUserAgentProvider:
         )
         if not self._user_agents:
             raise ValueError("user_agents must contain at least one value")
+        for user_agent in self._user_agents:
+            try:
+                _validate_user_agent(user_agent, "user_agents value")
+            except ValueError as exc:
+                raise ValueError(
+                    "user_agents must contain non-empty string values"
+                ) from exc
         self._rng = rng or SystemRandom()
 
     @property

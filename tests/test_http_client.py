@@ -26,7 +26,10 @@ from dll_downloader.infrastructure.http.http_client import (
 from dll_downloader.infrastructure.http.request_headers import RequestHeaderBuilder
 from dll_downloader.infrastructure.http.retry_policy import RetryPolicy
 from dll_downloader.infrastructure.http.transport import RequestsTransport
-from dll_downloader.infrastructure.http.user_agents import RandomUserAgentProvider
+from dll_downloader.infrastructure.http.user_agents import (
+    FixedUserAgentProvider,
+    RandomUserAgentProvider,
+)
 from dll_downloader.infrastructure.http_session import (
     HTTPResponseProtocol,
     HTTPSessionProtocol,
@@ -1938,6 +1941,29 @@ def test_random_user_agent_provider_rejects_empty_pool() -> None:
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("user_agent", ["", "   ", cast(str, 1)])
+def test_fixed_user_agent_provider_rejects_invalid_values(user_agent: str) -> None:
+    with pytest.raises(ValueError, match="user_agent must be a non-empty string"):
+        FixedUserAgentProvider(user_agent)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "user_agents",
+    [
+        cast(tuple[str, ...], ("ua-a", "")),
+        cast(tuple[str, ...], ("ua-a", "   ")),
+        cast(tuple[str, ...], ("ua-a", 1)),
+    ],
+)
+def test_random_user_agent_provider_rejects_invalid_pool_items(
+    user_agents: tuple[str, ...],
+) -> None:
+    with pytest.raises(ValueError, match="non-empty string values"):
+        RandomUserAgentProvider(user_agents=user_agents)
+
+
+@pytest.mark.unit
 def test_random_user_agent_provider_exposes_pool_and_selects_from_it() -> None:
     provider = RandomUserAgentProvider(
         user_agents=("ua-a", "ua-b"),
@@ -1955,6 +1981,42 @@ def test_request_header_builder_uses_rotating_user_agent_when_missing() -> None:
     headers = builder.build({"X-Test": "1"})
 
     assert headers == {"X-Test": "1", "User-Agent": "ua-1"}
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {"User-Agent": ""},
+        {"user-agent": "   "},
+        cast(dict[str, str], {"User-Agent": 1}),
+    ],
+)
+def test_request_header_builder_rejects_invalid_explicit_user_agent(
+    headers: dict[str, str],
+) -> None:
+    builder = RequestHeaderBuilder(SequenceUserAgentProvider(["ua-1"]))
+
+    with pytest.raises(ValueError, match="User-Agent header"):
+        builder.build(headers)
+
+
+@pytest.mark.unit
+def test_request_header_builder_rejects_duplicate_user_agent_variants() -> None:
+    builder = RequestHeaderBuilder(SequenceUserAgentProvider(["ua-1"]))
+
+    with pytest.raises(ValueError, match="duplicate User-Agent"):
+        builder.build({"User-Agent": "ua-ok", "user-agent": "ua-other"})
+
+
+@pytest.mark.unit
+def test_request_header_builder_rejects_invalid_provider_user_agent() -> None:
+    builder = RequestHeaderBuilder(SequenceUserAgentProvider([""]))
+
+    with pytest.raises(ValueError, match="user_agent must be a non-empty string"):
+        builder.build()
+    with pytest.raises(ValueError, match="user_agent must be a non-empty string"):
+        builder.initial_session_headers()
 
 
 @pytest.mark.unit
@@ -2019,6 +2081,16 @@ def test_retry_policy_rejects_negative_jitter() -> None:
 def test_retry_policy_rejects_non_integer_attempt_count(max_attempts: int) -> None:
     with pytest.raises(ValueError, match="max_attempts must be a positive integer"):
         RetryPolicy(max_attempts=max_attempts)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("field_name", ["backoff_seconds", "jitter_seconds"])
+def test_retry_policy_rejects_boolean_delays(field_name: str) -> None:
+    with pytest.raises(ValueError, match=f"{field_name} must be a number"):
+        if field_name == "backoff_seconds":
+            RetryPolicy(backoff_seconds=cast(float, True))
+        else:
+            RetryPolicy(jitter_seconds=cast(float, True))
 
 
 @pytest.mark.unit

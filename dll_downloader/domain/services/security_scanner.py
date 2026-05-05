@@ -38,7 +38,12 @@ class ScanResult:
     error_message: str | None = None
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "detections", MappingProxyType(dict(self.detections)))
+        normalized_detections: dict[str, str] = {}
+        for engine, verdict in self.detections.items():
+            if not isinstance(engine, str) or not isinstance(verdict, str):
+                raise ValueError("detections must map strings to strings")
+            normalized_detections[engine] = verdict
+        object.__setattr__(self, "detections", MappingProxyType(normalized_detections))
 
     def __hash__(self) -> int:
         detections_tuple = tuple(sorted(self.detections.items()))

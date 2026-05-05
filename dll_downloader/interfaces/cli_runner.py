@@ -49,14 +49,15 @@ class SupportsDownloadExecution(Protocol):
 
 @dataclass(frozen=True)
 class CLIBatchDownloadCommand:
-    """Input data required to process a CLI batch download."""
-
     dll_names: tuple[str, ...]
     architecture: Architecture
     scan_enabled: bool
     force_download: bool
     extract_archive: bool
     debug: bool = False
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "dll_names", tuple(self.dll_names))
 
 
 @dataclass(frozen=True)
@@ -78,8 +79,6 @@ class CLIRunResult:
 
 @dataclass(frozen=True)
 class CLIInvocation:
-    """Fully normalized CLI invocation after argument parsing."""
-
     dll_names: tuple[str, ...]
     architecture: Architecture
     scan_enabled: bool
@@ -87,6 +86,9 @@ class CLIInvocation:
     extract_archive: bool
     debug: bool
     output_dir: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "dll_names", tuple(self.dll_names))
 
 
 class DownloadCLIService:
@@ -114,7 +116,9 @@ class DownloadCLIService:
             )
         )
 
-        rendered_lines = self._presenter.render_batch(batch_response, architecture_label)
+        rendered_lines = self._presenter.render_batch(
+            batch_response, architecture_label
+        )
         return CLIBatchDownloadResult(
             lines=tuple(rendered_lines),
             success_count=batch_response.success_count,
@@ -237,8 +241,7 @@ class CLIApplicationService:
                 not getattr(args, "no_scan", False)
                 and settings.scan_before_save
                 and bool(
-                    settings.virustotal_api_key
-                    and settings.virustotal_api_key.strip()
+                    settings.virustotal_api_key and settings.virustotal_api_key.strip()
                 )
             ),
             force_download=getattr(args, "force", False),
@@ -329,5 +332,7 @@ class BatchCommandRunner(Protocol):
 class BoundaryFailureFactory(Protocol):
     """Build a normalized CLI failure result from an unexpected exception."""
 
-    def __call__(self, command: CLIBatchDownloadCommand, exc: Exception) -> CLICommandResult:
+    def __call__(
+        self, command: CLIBatchDownloadCommand, exc: Exception
+    ) -> CLICommandResult:
         """Translate an unexpected boundary exception."""
