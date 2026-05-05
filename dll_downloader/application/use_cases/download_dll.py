@@ -50,6 +50,7 @@ _ZIP_MEMBER_READ_ERRORS = (
 _ZIP_COMPRESSION_RATIO_LIMIT = 100
 _ZIP_MEMBER_SIZE_LIMIT = 512 * 1024 * 1024  # 512 MiB
 _ZIP_COMPRESSED_SIZE_LIMIT = 100 * 1024 * 1024  # 100 MiB
+_ZIP_MEMBER_COUNT_LIMIT = 4096
 _ZIP_SIGNATURES = (b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08", b"PK\x01\x02")
 _READ_FILE_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0)
 
@@ -562,8 +563,13 @@ class DownloadDLLUseCase:
     ) -> bytes:
         """Extract and validate the preferred DLL member from a ZIP payload."""
         with zipfile.ZipFile(BytesIO(content)) as archive:
+            members = archive.infolist()
+            if len(members) > _ZIP_MEMBER_COUNT_LIMIT:
+                raise ArchiveExtractionError(
+                    "ZIP archive has too many members, possible enumeration bomb"
+                )
             total_decompressed_size = 0
-            for member in archive.infolist():
+            for member in members:
                 if member.is_dir():
                     continue
                 if member.file_size > _ZIP_MEMBER_SIZE_LIMIT:
@@ -575,7 +581,7 @@ class DownloadDLLUseCase:
                 # Check compression ratio for potential ZIP bombs
                 if member.compress_size > 0:
                     ratio = member.file_size / member.compress_size
-                    if ratio > _ZIP_COMPRESSION_RATIO_LIMIT:
+                    if ratio >= _ZIP_COMPRESSION_RATIO_LIMIT:
                         raise ArchiveExtractionError(
                             "ZIP member has suspicious compression ratio, possible ZIP bomb"
                         )
@@ -592,7 +598,7 @@ class DownloadDLLUseCase:
                 )
             matching_members = [
                 member
-                for member in archive.infolist()
+                for member in members
                 if not member.is_dir() and member.filename.lower().endswith(".dll")
             ]
 

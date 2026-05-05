@@ -3005,3 +3005,67 @@ def test_zip_bomb_with_zero_compress_size_rejected() -> None:
     request = DownloadDLLRequest(dll_name="test.dll", extract_archive=True)
     with pytest.raises(ArchiveExtractionError, match="suspicious compression ratio"):
         use_case._extract_valid_dll_from_zip(bytes(raw), request)
+
+
+@pytest.mark.unit
+def test_zip_with_too_many_members_rejected() -> None:
+    """
+    Regression: ZIP archives with member counts beyond the configured ceiling
+    must be rejected before per-member iteration to prevent enumeration DoS.
+    """
+    from dll_downloader.application.errors import ArchiveExtractionError
+    from dll_downloader.application.use_cases.download_dll import (
+        _ZIP_MEMBER_COUNT_LIMIT,
+    )
+
+    archive_buffer = io.BytesIO()
+    with zipfile.ZipFile(archive_buffer, "w", compression=zipfile.ZIP_STORED) as archive:
+        for index in range(_ZIP_MEMBER_COUNT_LIMIT + 1):
+            archive.writestr(f"entry_{index:05d}.bin", b"")
+    payload = archive_buffer.getvalue()
+
+    use_case = DownloadDLLUseCase(
+        repository=InMemoryRepository(),
+        http_client=StubHTTPClient(),
+        download_base_url="https://dll.website/download",
+    )
+    request = DownloadDLLRequest(dll_name="test.dll", extract_archive=True)
+    with pytest.raises(ArchiveExtractionError, match="too many members"):
+        use_case._extract_valid_dll_from_zip(payload, request)
+
+
+@pytest.mark.unit
+def test_zip_member_at_compression_ratio_limit_rejected() -> None:
+    """
+    Regression: a member whose declared compression ratio equals the configured
+    limit is treated as a ZIP bomb. The boundary check uses ``>=`` to keep the
+    limit inclusive.
+    """
+    from dll_downloader.application.errors import ArchiveExtractionError
+    from dll_downloader.application.use_cases.download_dll import (
+        _ZIP_COMPRESSION_RATIO_LIMIT,
+    )
+
+    x64_pe = _build_pe_payload(Architecture.X64)
+    archive_buffer = io.BytesIO()
+    with zipfile.ZipFile(archive_buffer, "w", compression=zipfile.ZIP_STORED) as archive:
+        archive.writestr("test.dll", x64_pe)
+    raw = bytearray(archive_buffer.getvalue())
+
+    member_size = len(x64_pe)
+    forged_compress_size = max(1, member_size // _ZIP_COMPRESSION_RATIO_LIMIT)
+    forged_compress_size_bytes = forged_compress_size.to_bytes(4, "little")
+
+    local_offset = raw.index(b"PK\x03\x04")
+    raw[local_offset + 18 : local_offset + 22] = forged_compress_size_bytes
+    central_offset = raw.index(b"PK\x01\x02")
+    raw[central_offset + 20 : central_offset + 24] = forged_compress_size_bytes
+
+    use_case = DownloadDLLUseCase(
+        repository=InMemoryRepository(),
+        http_client=StubHTTPClient(),
+        download_base_url="https://dll.website/download",
+    )
+    request = DownloadDLLRequest(dll_name="test.dll", extract_archive=True)
+    with pytest.raises(ArchiveExtractionError, match="suspicious compression ratio"):
+        use_case._extract_valid_dll_from_zip(bytes(raw), request)

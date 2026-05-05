@@ -20,6 +20,7 @@ from .request_headers import RequestHeaderBuilder
 from .retry_policy import RetryPolicy
 
 _MAX_REDIRECT_HOPS = 10
+_MAX_LOCATION_HEADER_LENGTH = 8192
 
 
 def _normalize_ip(
@@ -496,6 +497,11 @@ class RequestsTransport:
         if not location:
             raise HTTPClientError(
                 "Redirect response missing Location header",
+                url=original_url,
+            )
+        if len(location) > _MAX_LOCATION_HEADER_LENGTH:
+            raise HTTPClientError(
+                f"Redirect Location header exceeds {_MAX_LOCATION_HEADER_LENGTH} bytes",
                 url=original_url,
             )
         location = location.strip()

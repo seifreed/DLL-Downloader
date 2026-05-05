@@ -2355,3 +2355,25 @@ def test_retry_policy_next_delay_returns_float() -> None:
     delay = policy.next_delay(1)
     assert isinstance(delay, float)
     assert delay >= 1.0
+
+
+@pytest.mark.unit
+def test_transport_redirect_with_oversized_location_rejected() -> None:
+    """
+    Regression: a Location header longer than the configured ceiling must be
+    rejected before urlparse/urljoin to prevent unbounded header processing.
+    """
+    from dll_downloader.infrastructure.http.transport import (
+        _MAX_LOCATION_HEADER_LENGTH,
+    )
+
+    oversize_path = "/" + "a" * (_MAX_LOCATION_HEADER_LENGTH + 1)
+
+    class DummyResponse:
+        headers = {"Location": oversize_path}
+
+    with pytest.raises(HTTPClientError, match="Location header exceeds"):
+        RequestsTransport._resolve_redirect(
+            "https://source.example/start",
+            cast(HTTPResponseProtocol, DummyResponse()),
+        )

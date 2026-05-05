@@ -333,6 +333,7 @@ class VirusTotalScanner(ISecurityScanner):
     MALICIOUS_THRESHOLD = 5
     SUSPICIOUS_THRESHOLD = 1
     _MAX_REDIRECT_HOPS = 5
+    _MAX_LOCATION_HEADER_LENGTH = 8192
 
     def __init__(
         self,
@@ -451,6 +452,10 @@ class VirusTotalScanner(ISecurityScanner):
                 raise VirusTotalError(
                     f"Redirect response missing Location header for {current_url}"
                 )
+            if len(location) > self._MAX_LOCATION_HEADER_LENGTH:
+                raise VirusTotalError(
+                    f"Redirect Location header exceeds {self._MAX_LOCATION_HEADER_LENGTH} bytes"
+                )
             current_url = self._resolve_redirect_url(current_url, location)
         raise VirusTotalError(f"Too many redirects (> {self._MAX_REDIRECT_HOPS})")
 
@@ -467,12 +472,16 @@ class VirusTotalScanner(ISecurityScanner):
         hops = 0
         while response.is_redirect and hops < self._MAX_REDIRECT_HOPS:
             location = _header_value(dict(response.headers), "location") or ""
-            location = location.strip()
             self._close_response(response)
             if not location:
                 raise VirusTotalError(
                     f"Redirect response missing Location header for {current_url}"
                 )
+            if len(location) > self._MAX_LOCATION_HEADER_LENGTH:
+                raise VirusTotalError(
+                    f"Redirect Location header exceeds {self._MAX_LOCATION_HEADER_LENGTH} bytes"
+                )
+            location = location.strip()
             current_url = self._resolve_redirect_url(current_url, location)
             self._validate_api_url(current_url, redirect=True)
             if response.status_code in (307, 308):

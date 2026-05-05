@@ -2595,3 +2595,34 @@ class TestFileSystemDLLRepositoryRealWorldScenarios:
         assert found_0 is not None
         assert found_25 is not None
         assert found_49 is not None
+
+
+@pytest.mark.unit
+def test_detect_zip_payload_architecture_rejects_excessive_member_count(
+    tmp_path: Path,
+) -> None:
+    """
+    Regression: ZIP payloads whose member count exceeds the configured ceiling
+    must short-circuit architecture detection rather than iterating millions of
+    central-directory entries.
+    """
+    repository = FileSystemDLLRepository(tmp_path)
+    limit = FileSystemDLLRepository._ZIP_MEMBER_COUNT_LIMIT
+
+    archive_buffer = io.BytesIO()
+    with zipfile.ZipFile(
+        archive_buffer, "w", compression=zipfile.ZIP_STORED
+    ) as archive:
+        archive.writestr("kernel32.dll", _build_pe_payload(Architecture.X64))
+        for index in range(limit):
+            archive.writestr(f"filler_{index:05d}.bin", b"")
+
+    payload = archive_buffer.getvalue()
+    assert (
+        repository._detect_zip_payload_architecture(
+            "kernel32.dll",
+            payload,
+            expected_architecture=Architecture.X64,
+        )
+        is None
+    )

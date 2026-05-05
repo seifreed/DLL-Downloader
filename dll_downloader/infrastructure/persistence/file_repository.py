@@ -114,6 +114,7 @@ class FileSystemDLLRepository(IDLLRepository):
     INDEX_FILENAME = ".dll_index.json"
     _INDEX_MAX_BYTES = 10 * 1024 * 1024  # 10 MiB
     _ZIP_MEMBER_SIZE_LIMIT = 512 * 1024 * 1024  # 512 MiB
+    _ZIP_MEMBER_COUNT_LIMIT = 4096
 
     def __init__(self, base_path: Path) -> None:
         """
@@ -357,6 +358,61 @@ class FileSystemDLLRepository(IDLLRepository):
                 with contextlib.suppress(OSError):
                     os.close(fd)
 
+    @staticmethod
+    def _write_temp_file(fd: int, content: bytes) -> None:
+        """Write content to a temp fd, flushing and fsyncing for durability."""
+        fd_opened = False
+        try:
+            with os.fdopen(fd, "wb") as temp_file:
+                fd_opened = True
+                temp_file.write(content)
+                temp_file.flush()
+                os.fsync(temp_file.fileno())
+        except BaseException:
+            if not fd_opened:
+                os.close(fd)
+            raise
+
+    @staticmethod
+    def _verify_target_not_symlink(file_path: Path) -> None:
+        """Open the target with O_NOFOLLOW to catch symlink replacement attacks."""
+        target_fd = -1
+        try:
+            target_fd = os.open(str(file_path), _READ_FILE_FLAGS)
+            target_st = os.fstat(target_fd)
+            if stat.S_ISLNK(target_st.st_mode) or not stat.S_ISREG(target_st.st_mode):
+                raise RepositoryError(
+                    f"Refusing to replace non-regular file: {file_path}"
+                )
+        except FileNotFoundError:
+            return
+        except OSError as exc:
+            if exc.errno == errno.ELOOP:
+                raise RepositoryError(
+                    f"Refusing to replace symlink: {file_path}"
+                ) from exc
+            raise RepositoryError(
+                f"Cannot verify target path for atomic write: {file_path}"
+            ) from exc
+        finally:
+            if target_fd >= 0:
+                with contextlib.suppress(OSError):
+                    os.close(target_fd)
+
+    @staticmethod
+    def _fsync_directory(directory: Path) -> None:
+        """Best-effort fsync of a directory so a prior rename becomes durable."""
+        dir_fd = -1
+        try:
+            dir_fd = os.open(str(directory), os.O_RDONLY)
+            os.fsync(dir_fd)
+        except OSError:
+            return
+        finally:
+            if dir_fd >= 0:
+                with contextlib.suppress(OSError):
+                    os.close(dir_fd)
+
     def _atomic_write_bytes(self, file_path: Path, content: bytes) -> None:
         """Write bytes through a same-directory temp file and atomic replace."""
         # Validate and get the resolved parent in one step to close the
@@ -366,55 +422,18 @@ class FileSystemDLLRepository(IDLLRepository):
             dir=str(resolved_parent),
             prefix=".dll_tmp_",
         )
-        fd_opened = False
         try:
-            try:
-                with os.fdopen(fd, "wb") as temp_file:
-                    fd_opened = True
-                    temp_file.write(content)
-            except BaseException:
-                if not fd_opened:
-                    os.close(fd)
-                raise
+            self._write_temp_file(fd, content)
             # Set explicit read/write permissions instead of copying from
             # the target file (which could be replaced via TOCTOU).
             with contextlib.suppress(OSError):
                 os.chmod(temp_name, 0o644)
             logger.debug("Set permissions 0o644 on temp file %s", temp_name)
-            # TOCTOU hardening: open the target with O_NOFOLLOW immediately
-            # before the atomic rename to catch symlink replacement attacks.
-            # If the target exists, O_NOFOLLOW prevents following a symlink
-            # that was swapped in between earlier validation and now.
-            # If the target doesn't exist, the rename is inherently safe
-            # because os.rename() won't follow a symlink for the destination.
-            target_fd = -1
-            try:
-                target_fd = os.open(
-                    str(file_path),
-                    _READ_FILE_FLAGS,
-                )
-                target_st = os.fstat(target_fd)
-                if stat.S_ISLNK(target_st.st_mode) or not stat.S_ISREG(target_st.st_mode):
-                    raise RepositoryError(
-                        f"Refusing to replace non-regular file: {file_path}"
-                    )
-            except FileNotFoundError:
-                pass  # target doesn't exist yet; rename is safe
-            except OSError as exc:
-                if exc.errno == errno.ELOOP:
-                    raise RepositoryError(
-                        f"Refusing to replace symlink: {file_path}"
-                    ) from exc
-                raise RepositoryError(
-                    f"Cannot verify target path for atomic write: {file_path}"
-                ) from exc
-            finally:
-                if target_fd >= 0:
-                    with contextlib.suppress(OSError):
-                        os.close(target_fd)
+            self._verify_target_not_symlink(file_path)
             os.rename(temp_name, str(file_path))
             # Prevent double-unlink in the outer except if rename succeeded
             temp_name = ""
+            self._fsync_directory(resolved_parent)
         except BaseException:
             if temp_name:
                 with contextlib.suppress(OSError):
@@ -660,6 +679,37 @@ class FileSystemDLLRepository(IDLLRepository):
         )
 
     @classmethod
+    def _candidate_zip_members(
+        cls,
+        archive: zipfile.ZipFile,
+        expected_name: str,
+    ) -> Iterator[zipfile.ZipInfo]:
+        """Yield ZIP members whose basename matches ``expected_name``."""
+        members = archive.infolist()
+        if len(members) > cls._ZIP_MEMBER_COUNT_LIMIT:
+            logger.warning(
+                "Refusing to inspect ZIP with %d members (limit %d)",
+                len(members),
+                cls._ZIP_MEMBER_COUNT_LIMIT,
+            )
+            return
+        for member in members:
+            if member.is_dir():
+                continue
+            if member.file_size > cls._ZIP_MEMBER_SIZE_LIMIT:
+                logger.warning(
+                    "Skipping ZIP member exceeding size limit: %s (%d bytes)",
+                    member.filename,
+                    member.file_size,
+                )
+                continue
+            member_name = (
+                member.filename.replace("\\", "/").rsplit("/", 1)[-1].lower()
+            )
+            if member_name == expected_name:
+                yield member
+
+    @classmethod
     def _detect_zip_payload_architecture(
         cls,
         dll_name: str,
@@ -671,21 +721,7 @@ class FileSystemDLLRepository(IDLLRepository):
         expected_name = dll_name.lower()
         try:
             with zipfile.ZipFile(BytesIO(content)) as archive:
-                for member in archive.infolist():
-                    if member.is_dir():
-                        continue
-                    if member.file_size > cls._ZIP_MEMBER_SIZE_LIMIT:
-                        logger.warning(
-                            "Skipping ZIP member exceeding size limit: %s (%d bytes)",
-                            member.filename,
-                            member.file_size,
-                        )
-                        continue
-                    member_name = (
-                        member.filename.replace("\\", "/").rsplit("/", 1)[-1].lower()
-                    )
-                    if member_name != expected_name:
-                        continue
+                for member in cls._candidate_zip_members(archive, expected_name):
                     try:
                         member_content = archive.read(member)
                     except _ZIP_MEMBER_READ_ERRORS:
