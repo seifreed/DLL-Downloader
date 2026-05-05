@@ -61,6 +61,15 @@ def _is_finite_number(value: float) -> bool:
     return value == value and value not in (_POSITIVE_INFINITY, _NEGATIVE_INFINITY)
 
 
+def _validate_positive_timeout(value: object) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError("timeout must be a positive number")
+    timeout = float(value)
+    if not _is_finite_number(timeout) or timeout <= 0:
+        raise ValueError("timeout must be a positive number")
+    return timeout
+
+
 def _validate_detection_thresholds(
     malicious_threshold: int,
     suspicious_threshold: int,
@@ -343,10 +352,12 @@ class VirusTotalScanner(ISecurityScanner):
             timeout: Timeout in seconds for VirusTotal API requests
         """
         _validate_detection_thresholds(malicious_threshold, suspicious_threshold)
+        if api_key is not None and not isinstance(api_key, str):
+            raise ValueError("api_key must be a string or None")
         self._api_key = api_key.strip() if api_key else None
         self._malicious_threshold = malicious_threshold
         self._suspicious_threshold = suspicious_threshold
-        self._timeout = timeout
+        self._timeout = _validate_positive_timeout(timeout)
         session_headers: dict[str, str] = {}
         if self._api_key:
             session_headers = {"x-apikey": self._api_key, "Accept": "application/json"}

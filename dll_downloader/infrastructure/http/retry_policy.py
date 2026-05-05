@@ -47,7 +47,21 @@ class RetryPolicy:
     rng: Random = field(default_factory=SystemRandom)
 
     def __post_init__(self) -> None:
-        self.retryable_status_codes = frozenset(self.retryable_status_codes)
+        try:
+            self.retryable_status_codes = frozenset(self.retryable_status_codes)
+        except TypeError as exc:
+            raise ValueError(
+                "retryable_status_codes must contain integer HTTP status codes"
+            ) from exc
+        if not all(
+            isinstance(status_code, int)
+            and not isinstance(status_code, bool)
+            and 100 <= status_code <= 599
+            for status_code in self.retryable_status_codes
+        ):
+            raise ValueError(
+                "retryable_status_codes must contain integer HTTP status codes"
+            )
         if isinstance(self.max_attempts, bool) or not isinstance(
             self.max_attempts, int
         ):

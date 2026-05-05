@@ -2,11 +2,37 @@
 Bounded HTTP response stream reading helpers.
 """
 
+import logging
 import time
 from collections.abc import Mapping
 
+from ...domain.services.http_client import HTTPFileInfo
 from ..http_session import HTTPResponseProtocol
-from .transport import HTTPClientError, header_value
+from .transport import HTTP_STREAM_ERROR_TYPES, HTTPClientError, header_value
+
+logger = logging.getLogger(__name__)
+
+_POSITIVE_INFINITY = float("inf")
+_NEGATIVE_INFINITY = float("-inf")
+
+
+def _is_finite_number(value: float) -> bool:
+    return value == value and value not in (_POSITIVE_INFINITY, _NEGATIVE_INFINITY)
+
+
+def validate_positive_timeout(value: object) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError("timeout must be a positive number")
+    timeout = float(value)
+    if not _is_finite_number(timeout) or timeout <= 0:
+        raise ValueError("timeout must be a positive number")
+    return timeout
+
+
+def validate_positive_size(value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError("max_download_bytes must be a positive integer")
+    return value
 
 
 def declared_content_length(
@@ -82,6 +108,38 @@ def read_bounded_response(
             url=url,
         )
     return content
+
+
+def close_response(response: HTTPResponseProtocol) -> None:
+    close = getattr(response, "close", None)
+    if not callable(close):
+        return
+    try:
+        close()
+    except HTTP_STREAM_ERROR_TYPES as exc:
+        logger.warning("Failed to close response: %s", exc)
+
+
+def file_info_from_headers(response_headers: Mapping[str, str]) -> HTTPFileInfo:
+    content_length = header_value(response_headers, "content-length")
+    length_value: int | None = None
+    if content_length:
+        try:
+            parsed_length = int(content_length)
+            if parsed_length >= 0:
+                length_value = parsed_length
+        except ValueError:
+            length_value = None
+    accept_ranges = header_value(response_headers, "accept-ranges")
+    return {
+        "content_type": header_value(response_headers, "content-type"),
+        "content_length": length_value,
+        "last_modified": header_value(response_headers, "last-modified"),
+        "etag": header_value(response_headers, "etag"),
+        "accept_ranges": bool(
+            accept_ranges is not None and accept_ranges.lower() == "bytes"
+        ),
+    }
 
 
 _TEXT_CHARSETS = frozenset(

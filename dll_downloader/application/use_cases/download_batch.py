@@ -58,7 +58,12 @@ class DownloadBatchResponse:
     items: Sequence[DownloadBatchItem] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "items", tuple(self.items))
+        if isinstance(self.items, (str, bytes)):
+            raise ValueError("items must be a sequence of DownloadBatchItem")
+        snapshot = tuple(self.items)
+        if not all(isinstance(item, DownloadBatchItem) for item in snapshot):
+            raise ValueError("items must contain DownloadBatchItem values")
+        object.__setattr__(self, "items", snapshot)
 
     @property
     def success_count(self) -> int:

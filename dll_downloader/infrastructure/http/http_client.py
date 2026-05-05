@@ -6,20 +6,23 @@ import logging
 from collections.abc import Mapping
 
 from ...domain.services.http_client import HTTPFileInfo
-from ..http_session import (
-    HTTPResponseProtocol,
-    HTTPSessionProtocol,
-    HTTPSessionResource,
-)
+from ..http_session import HTTPSessionProtocol, HTTPSessionResource
 from .request_headers import RequestHeaderBuilder
-from .response_stream import declared_content_length, decode_text, read_bounded_response
+from .response_stream import (
+    close_response,
+    declared_content_length,
+    decode_text,
+    file_info_from_headers,
+    read_bounded_response,
+    validate_positive_size,
+    validate_positive_timeout,
+)
 from .retry_policy import RetryPolicy
 from .transport import (
     HTTP_STREAM_ERROR_TYPES,
     HTTPClientError,
     HTTPResponse,
     RequestsTransport,
-    header_value,
 )
 from .user_agents import (
     FixedUserAgentProvider,
@@ -54,6 +57,10 @@ class RequestsHTTPClient:
         max_download_bytes: int = _DEFAULT_MAX_DOWNLOAD_BYTES,
         allowed_redirect_domains: set[str] | None = None,
     ) -> None:
+        timeout = validate_positive_timeout(timeout)
+        max_download_bytes = validate_positive_size(max_download_bytes)
+        if not isinstance(verify_ssl, bool):
+            raise ValueError("verify_ssl must be a boolean")
         self._timeout = timeout
         self._max_download_bytes = max_download_bytes
         self._user_agent = user_agent
@@ -63,7 +70,9 @@ class RequestsHTTPClient:
                 "SSL certificate verification is disabled; "
                 "HTTPS connections will be vulnerable to man-in-the-middle attacks"
             )
-        self._user_agent_provider = user_agent_provider or self._default_user_agent_provider(user_agent)
+        self._user_agent_provider = (
+            user_agent_provider or self._default_user_agent_provider(user_agent)
+        )
         self._retry_policy = retry_policy or RetryPolicy(
             max_attempts=max_retries,
             backoff_seconds=retry_backoff_seconds,
@@ -72,7 +81,9 @@ class RequestsHTTPClient:
         self._header_builder = RequestHeaderBuilder(self._user_agent_provider)
         self._transport = RequestsTransport(
             session_resource=session_resource
-            or HTTPSessionResource(headers=self._header_builder.initial_session_headers()),
+            or HTTPSessionResource(
+                headers=self._header_builder.initial_session_headers()
+            ),
             retry_policy=self._retry_policy,
             header_builder=self._header_builder,
             timeout=timeout,
@@ -82,7 +93,9 @@ class RequestsHTTPClient:
 
     @staticmethod
     def _default_user_agent_provider(user_agent: str | None) -> UserAgentProvider:
-        return FixedUserAgentProvider(user_agent) if user_agent else RandomUserAgentProvider()
+        if user_agent:
+            return FixedUserAgentProvider(user_agent)
+        return RandomUserAgentProvider()
 
     @property
     def session(self) -> HTTPSessionProtocol:
@@ -130,7 +143,7 @@ class RequestsHTTPClient:
                 url=response.url or url,
             ) from exc
         finally:
-            self._close_response(response)
+            close_response(response)
 
     def get_text(self, url: str, headers: Mapping[str, str] | None = None) -> str:
         response = self.get(url, headers=headers)
@@ -141,7 +154,9 @@ class RequestsHTTPClient:
         return decode_text(content, headers)
 
     def download(self, url: str, headers: Mapping[str, str] | None = None) -> bytes:
-        response = self._transport.execute("DOWNLOAD", url, headers=headers, stream=True)
+        response = self._transport.execute(
+            "DOWNLOAD", url, headers=headers, stream=True
+        )
         try:
             if not response.ok:
                 raise HTTPClientError(
@@ -170,51 +185,26 @@ class RequestsHTTPClient:
                 url=response.url or url,
             ) from exc
         finally:
-            self._close_response(response)
+            close_response(response)
 
-    @staticmethod
-    def _close_response(response: HTTPResponseProtocol) -> None:
-        close_response = getattr(response, "close", None)
-        if not callable(close_response):
-            return
-        try:
-            close_response()
-        except HTTP_STREAM_ERROR_TYPES as exc:
-            logger.warning("Failed to close response: %s", exc)
-
-    def head(self, url: str, headers: Mapping[str, str] | None = None) -> dict[str, str]:
+    def head(
+        self, url: str, headers: Mapping[str, str] | None = None
+    ) -> dict[str, str]:
         response = self._transport.execute(
             "HEAD", url, headers=headers, allow_redirects=True
         )
         try:
-            if not getattr(response, 'ok', False):
+            if not getattr(response, "ok", False):
                 raise HTTPClientError(
                     f"HEAD request failed with status {response.status_code}",
                     status_code=response.status_code,
-                    url=response.url if hasattr(response, 'url') else url,
+                    url=response.url if hasattr(response, "url") else url,
                 )
             return dict(response.headers)
         finally:
-            self._close_response(response)
+            close_response(response)
 
     def get_file_info(
         self, url: str, headers: Mapping[str, str] | None = None
     ) -> HTTPFileInfo:
-        response_headers = self.head(url, headers=headers)
-        content_length = header_value(response_headers, "content-length")
-        length_value: int | None = None
-        if content_length:
-            try:
-                parsed_length = int(content_length)
-                if parsed_length >= 0:
-                    length_value = parsed_length
-            except ValueError:
-                length_value = None
-        accept_ranges = header_value(response_headers, "accept-ranges")
-        return {
-            "content_type": header_value(response_headers, "content-type"),
-            "content_length": length_value,
-            "last_modified": header_value(response_headers, "last-modified"),
-            "etag": header_value(response_headers, "etag"),
-            "accept_ranges": bool(accept_ranges is not None and accept_ranges.lower() == "bytes"),
-        }
+        return file_info_from_headers(self.head(url, headers=headers))

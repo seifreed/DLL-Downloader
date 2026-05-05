@@ -147,6 +147,22 @@ def test_scan_result_rejects_non_string_detection_entries(
 
 
 @pytest.mark.unit
+def test_scan_result_rejects_invalid_status_type() -> None:
+    with pytest.raises(ValueError, match="status must be a SecurityStatus"):
+        ScanResult(file_hash="x", status=cast(SecurityStatus, "clean"))
+
+
+@pytest.mark.unit
+def test_scan_result_rejects_non_mapping_detections() -> None:
+    with pytest.raises(ValueError, match="detections must be a mapping"):
+        ScanResult(
+            file_hash="x",
+            status=SecurityStatus.CLEAN,
+            detections=cast(Mapping[str, str], "bad"),
+        )
+
+
+@pytest.mark.unit
 def test_scan_result_is_clean_property() -> None:
     clean = ScanResult(file_hash="x", status=SecurityStatus.CLEAN)
     dirty = ScanResult(file_hash="x", status=SecurityStatus.MALICIOUS)

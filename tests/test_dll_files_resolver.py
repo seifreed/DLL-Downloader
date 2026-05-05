@@ -54,7 +54,9 @@ def resolver_server(tmp_path: Path) -> Generator[str]:
     </body></html>
     """
     search_page = '<a href="/msvcp140.dll.html">msvcp140</a>'
-    download_page = '<a href="https://download.zip.dll-files.com/aaa/msvcp140.zip?token=1">zip</a>'
+    download_page = (
+        '<a href="https://download.zip.dll-files.com/aaa/msvcp140.zip?token=1">zip</a>'
+    )
 
     class Handler(http.server.BaseHTTPRequestHandler):
         def do_GET(self) -> None:
@@ -62,7 +64,9 @@ def resolver_server(tmp_path: Path) -> Generator[str]:
                 body = search_page
             elif self.path.startswith("/msvcp140.dll.html"):
                 body = dll_page
-            elif self.path.startswith("/download/aaa/") or self.path.startswith("/download/bbb/"):
+            elif self.path.startswith("/download/aaa/") or self.path.startswith(
+                "/download/bbb/"
+            ):
                 body = download_page
             else:
                 self.send_response(404)
@@ -89,7 +93,9 @@ def resolver_server(tmp_path: Path) -> Generator[str]:
 @pytest.mark.unit
 def test_resolver_resolves_x64(resolver_server: str) -> None:
     resolver = DllFilesResolver(
-        http_client=RequestsHTTPClient(timeout=5, verify_ssl=False, allowed_redirect_domains={"localhost"}),
+        http_client=RequestsHTTPClient(
+            timeout=5, verify_ssl=False, allowed_redirect_domains={"localhost"}
+        ),
         base_url=resolver_server,
     )
     url = resolver.resolve_download_url("msvcp140.dll", Architecture.X64)
@@ -99,7 +105,9 @@ def test_resolver_resolves_x64(resolver_server: str) -> None:
 @pytest.mark.unit
 def test_resolver_resolves_x86(resolver_server: str) -> None:
     resolver = DllFilesResolver(
-        http_client=RequestsHTTPClient(timeout=5, verify_ssl=False, allowed_redirect_domains={"localhost"}),
+        http_client=RequestsHTTPClient(
+            timeout=5, verify_ssl=False, allowed_redirect_domains={"localhost"}
+        ),
         base_url=resolver_server,
     )
     url = resolver.resolve_download_url("msvcp140.dll", Architecture.X86)
@@ -135,7 +143,9 @@ def test_resolver_uses_injected_http_contract() -> None:
 @pytest.mark.unit
 def test_resolver_unknown_architecture_uses_first_link(resolver_server: str) -> None:
     resolver = DllFilesResolver(
-        http_client=RequestsHTTPClient(timeout=5, verify_ssl=False, allowed_redirect_domains={"localhost"}),
+        http_client=RequestsHTTPClient(
+            timeout=5, verify_ssl=False, allowed_redirect_domains={"localhost"}
+        ),
         base_url=resolver_server,
     )
     url = resolver.resolve_download_url("msvcp140.dll", Architecture.UNKNOWN)
@@ -277,14 +287,17 @@ def test_extract_download_link_ignores_external_non_download() -> None:
     )
     html = (
         '<a href="https://www.microsoft.com/en-us/download/details.aspx?id=53840">'
-        'Microsoft</a>'
+        "Microsoft</a>"
         '<a href="/download/abc/file.dll.html">Download</a>'
     )
     # The download link has no architecture hints, so a specific
     # architecture request returns None (only UNKNOWN falls back
     # to the first candidate).
     assert resolver._extract_download_link(html, Architecture.X64) is None
-    assert resolver._extract_download_link(html, Architecture.UNKNOWN) == "/download/abc/file.dll.html"
+    assert (
+        resolver._extract_download_link(html, Architecture.UNKNOWN)
+        == "/download/abc/file.dll.html"
+    )
 
 
 @pytest.mark.unit
@@ -378,7 +391,9 @@ def test_extract_download_link_uses_link_text_for_sibling_architecture_links() -
 
 
 @pytest.mark.unit
-def test_extract_download_link_does_not_use_compatibility_text_as_architecture() -> None:
+def test_extract_download_link_does_not_use_compatibility_text_as_architecture() -> (
+    None
+):
     resolver = DllFilesResolver(
         http_client=StubTextHTTPClient({}),
         base_url="http://example.com",
@@ -462,7 +477,9 @@ def test_extract_download_link_uses_actual_anchor_when_href_is_repeated() -> Non
 
 
 @pytest.mark.unit
-def test_extract_download_link_falls_back_to_x86_href_when_context_is_ambiguous() -> None:
+def test_extract_download_link_falls_back_to_x86_href_when_context_is_ambiguous() -> (
+    None
+):
     resolver = DllFilesResolver(
         http_client=StubTextHTTPClient({}),
         base_url="http://example.com",
@@ -549,11 +566,14 @@ def test_extract_link_context_at_handles_unclosed_section() -> None:
     )
     html = '<section><a href="/download/abc/file.dll.html">Download</a>'
 
-    assert resolver._extract_link_context_at(
-        html,
-        html.find("/download/abc/file.dll.html"),
-        "Download",
-    ) == html
+    assert (
+        resolver._extract_link_context_at(
+            html,
+            html.find("/download/abc/file.dll.html"),
+            "Download",
+        )
+        == html
+    )
 
 
 @pytest.mark.unit
@@ -573,12 +593,16 @@ def test_is_valid_download_link_variants() -> None:
     )
     assert resolver._is_valid_download_link("") is False
     assert resolver._is_valid_download_link("/download/abc/file.dll.html") is True
-    assert resolver._is_valid_download_link(
-        "http://example.com/download/abc/file.dll.html"
-    ) is True
-    assert resolver._is_valid_download_link(
-        "//example.com/download/abc/file.dll.html"
-    ) is True
+    assert (
+        resolver._is_valid_download_link(
+            "http://example.com/download/abc/file.dll.html"
+        )
+        is True
+    )
+    assert (
+        resolver._is_valid_download_link("//example.com/download/abc/file.dll.html")
+        is True
+    )
     assert resolver._is_valid_download_link("http://example.com/other") is False
 
 
@@ -596,6 +620,36 @@ def test_extract_download_link_accepts_protocol_relative_base_host() -> None:
     assert resolver._extract_download_link(html, Architecture.X64) == (
         "//es.dll-files.com/download/abc/msvcp140.dll.html"
     )
+
+
+@pytest.mark.unit
+def test_extract_download_link_accepts_base_host_default_https_port() -> None:
+    resolver = DllFilesResolver(
+        http_client=StubTextHTTPClient({}),
+        base_url="https://es.dll-files.com",
+    )
+    html = (
+        '<a href="https://es.dll-files.com:443/download/abc/msvcp140.dll.html">'
+        "Download 64-bit</a>"
+    )
+
+    assert resolver._extract_download_link(html, Architecture.X64) == (
+        "https://es.dll-files.com:443/download/abc/msvcp140.dll.html"
+    )
+
+
+@pytest.mark.unit
+def test_extract_download_link_rejects_base_host_non_default_https_port() -> None:
+    resolver = DllFilesResolver(
+        http_client=StubTextHTTPClient({}),
+        base_url="https://es.dll-files.com",
+    )
+    html = (
+        '<a href="https://es.dll-files.com:444/download/abc/msvcp140.dll.html">'
+        "Download 64-bit</a>"
+    )
+
+    assert resolver._extract_download_link(html, Architecture.X64) is None
 
 
 @pytest.mark.unit
@@ -631,6 +685,21 @@ def test_extract_direct_link_fallback_zip_with_query_string() -> None:
 
     assert resolver._extract_direct_link(html) == (
         "https://mirror.example.com/file.zip?token=abc"
+    )
+
+
+@pytest.mark.unit
+def test_extract_direct_link_fallback_zip_accepts_base_host_default_https_port() -> (
+    None
+):
+    resolver = DllFilesResolver(
+        http_client=StubTextHTTPClient({}),
+        base_url="https://mirror.example.com",
+    )
+    html = '<a href="https://mirror.example.com:443/file.zip?token=abc">zip</a>'
+
+    assert resolver._extract_direct_link(html) == (
+        "https://mirror.example.com:443/file.zip?token=abc"
     )
 
 
@@ -754,6 +823,34 @@ def test_extract_direct_link_normalizes_protocol_relative_official_zip() -> None
 
 
 @pytest.mark.unit
+def test_extract_direct_link_accepts_protocol_relative_official_zip_default_port() -> (
+    None
+):
+    resolver = DllFilesResolver(
+        http_client=StubTextHTTPClient({}),
+        base_url="https://es.dll-files.com",
+    )
+    html = '<a href="//download.zip.dll-files.com:443/file.zip?token=1">zip</a>'
+
+    assert resolver._extract_direct_link(html) == (
+        "https://download.zip.dll-files.com:443/file.zip?token=1"
+    )
+
+
+@pytest.mark.unit
+def test_extract_direct_link_accepts_protocol_relative_base_zip_default_port() -> None:
+    resolver = DllFilesResolver(
+        http_client=StubTextHTTPClient({}),
+        base_url="https://es.dll-files.com:443",
+    )
+    html = '<a href="//es.dll-files.com:443/file.zip?token=1">zip</a>'
+
+    assert resolver._extract_direct_link(html) == (
+        "https://es.dll-files.com:443/file.zip?token=1"
+    )
+
+
+@pytest.mark.unit
 def test_extract_download_link_fallback_first() -> None:
     resolver = DllFilesResolver(
         http_client=StubTextHTTPClient({}),
@@ -766,7 +863,10 @@ def test_extract_download_link_fallback_first() -> None:
     # No architecture hints in the HTML; X64 request returns None.
     assert resolver._extract_download_link(html, Architecture.X64) is None
     # UNKNOWN architecture falls back to the first valid download link.
-    assert resolver._extract_download_link(html, Architecture.UNKNOWN) == "/download/aaa/file.dll.html"
+    assert (
+        resolver._extract_download_link(html, Architecture.UNKNOWN)
+        == "/download/aaa/file.dll.html"
+    )
 
 
 @pytest.mark.unit

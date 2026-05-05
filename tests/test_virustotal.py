@@ -173,6 +173,22 @@ def test_virustotal_scanner_rejects_invalid_thresholds(
         )
 
 
+@pytest.mark.unit
+@pytest.mark.parametrize("api_key", [cast(str, 1), cast(str, True)])
+def test_virustotal_scanner_rejects_non_string_api_key(api_key: str) -> None:
+    with pytest.raises(ValueError, match="api_key must be a string or None"):
+        VirusTotalScanner(api_key=api_key)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "timeout", [cast(float, True), 0, -1.0, float("nan"), float("inf")]
+)
+def test_virustotal_scanner_rejects_invalid_timeout(timeout: float) -> None:
+    with pytest.raises(ValueError, match="timeout must be a positive number"):
+        VirusTotalScanner(api_key="test_key", timeout=timeout)
+
+
 # ============================================================================
 # VirusTotalScanner Availability Tests
 # ============================================================================

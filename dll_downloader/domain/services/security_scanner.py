@@ -38,6 +38,10 @@ class ScanResult:
     error_message: str | None = None
 
     def __post_init__(self) -> None:
+        if not isinstance(self.status, SecurityStatus):
+            raise ValueError("status must be a SecurityStatus")
+        if not isinstance(self.detections, Mapping):
+            raise ValueError("detections must be a mapping")
         normalized_detections: dict[str, str] = {}
         for engine, verdict in self.detections.items():
             if not isinstance(engine, str) or not isinstance(verdict, str):

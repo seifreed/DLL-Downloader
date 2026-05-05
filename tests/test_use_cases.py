@@ -2832,6 +2832,20 @@ def test_download_batch_response_items_are_snapshot_immutable() -> None:
 
 
 @pytest.mark.unit
+def test_download_batch_response_rejects_scalar_string_items() -> None:
+    with pytest.raises(ValueError, match="items must be a sequence"):
+        DownloadBatchResponse(items=cast(tuple[DownloadBatchItem, ...], "bad"))
+
+
+@pytest.mark.unit
+def test_download_batch_response_rejects_non_batch_items() -> None:
+    with pytest.raises(ValueError, match="items must contain DownloadBatchItem"):
+        DownloadBatchResponse(
+            items=cast(tuple[DownloadBatchItem, ...], ("bad",)),
+        )
+
+
+@pytest.mark.unit
 def test_download_batch_request_names_are_snapshot_immutable() -> None:
     source_names = ["ok.dll"]
     request = DownloadBatchRequest(dll_names=cast(tuple[str, ...], source_names))

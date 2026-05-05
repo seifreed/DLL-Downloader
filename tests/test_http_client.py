@@ -252,6 +252,32 @@ def test_requests_http_client_rejects_invalid_retry_count() -> None:
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize(
+    "timeout", [cast(float, True), 0, -1.0, float("nan"), float("inf")]
+)
+def test_requests_http_client_rejects_invalid_timeout(timeout: float) -> None:
+    with pytest.raises(ValueError, match="timeout must be a positive number"):
+        RequestsHTTPClient(timeout=timeout)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("max_download_bytes", [cast(int, True), 0, -1])
+def test_requests_http_client_rejects_invalid_max_download_bytes(
+    max_download_bytes: int,
+) -> None:
+    with pytest.raises(
+        ValueError, match="max_download_bytes must be a positive integer"
+    ):
+        RequestsHTTPClient(max_download_bytes=max_download_bytes)
+
+
+@pytest.mark.unit
+def test_requests_http_client_rejects_non_boolean_verify_ssl() -> None:
+    with pytest.raises(ValueError, match="verify_ssl must be a boolean"):
+        RequestsHTTPClient(verify_ssl=cast(bool, "false"))
+
+
+@pytest.mark.unit
 def test_requests_http_client_session_lazy_initialization() -> None:
     """
     Test that HTTP session is created lazily on first access.
@@ -2137,6 +2163,24 @@ def test_retry_policy_retryable_status_codes_are_snapshot_immutable() -> None:
     retryable_status_codes.clear()
 
     assert policy.should_retry_status(500, 1) is True
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "retryable_status_codes",
+    [
+        cast(frozenset[int], None),
+        cast(frozenset[int], "500"),
+        cast(frozenset[int], {cast(int, True)}),
+        cast(frozenset[int], {99}),
+        cast(frozenset[int], {600}),
+    ],
+)
+def test_retry_policy_rejects_invalid_retryable_status_codes(
+    retryable_status_codes: frozenset[int],
+) -> None:
+    with pytest.raises(ValueError, match="retryable_status_codes"):
+        RetryPolicy(retryable_status_codes=retryable_status_codes)
 
 
 @pytest.mark.unit
