@@ -241,7 +241,13 @@ class RequestsTransport:
         allow_redirects: bool = True,
     ) -> HTTPResponseProtocol:
         if not allow_redirects:
-            return self._single_request(method_name, url, headers, stream=stream)
+            return self._single_request(
+                method_name,
+                url,
+                headers,
+                stream=stream,
+                allow_redirects=False,
+            )
 
         # Follow redirects manually so every hop is validated for SSRF.
         current_url = url

@@ -36,6 +36,12 @@ class DownloadBatchItem:
     dll_name: str
     response: DownloadDLLResponse
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.dll_name, str):
+            raise ValueError("dll_name must be a string")
+        if not isinstance(self.response, DownloadDLLResponse):
+            raise ValueError("response must be a DownloadDLLResponse")
+
 
 @dataclass(frozen=True)
 class DownloadBatchRequest:

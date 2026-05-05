@@ -437,7 +437,7 @@ class VirusTotalScanner(ISecurityScanner):
         self, url: str, **kwargs: object
     ) -> HTTPResponseProtocol:  # noqa: C901
         """Issue a GET request with SSRF and redirect validation."""
-        kwargs.setdefault("allow_redirects", False)
+        kwargs["allow_redirects"] = False
         kwargs.setdefault("timeout", self._timeout)
         current_url = url
         for _hop in range(self._MAX_REDIRECT_HOPS):
@@ -458,7 +458,7 @@ class VirusTotalScanner(ISecurityScanner):
         self, url: str, **kwargs: object
     ) -> HTTPResponseProtocol:  # noqa: C901
         """Issue a POST request with SSRF validation (no redirects for POST)."""
-        kwargs.setdefault("allow_redirects", False)
+        kwargs["allow_redirects"] = False
         kwargs.setdefault("timeout", self._timeout)
         self._validate_api_url(url, redirect=False)
         response = self.session.post(url, **kwargs)

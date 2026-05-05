@@ -1057,6 +1057,58 @@ def test_transport_allowed_redirect_domains_are_snapshot_immutable() -> None:
 
 
 @pytest.mark.unit
+def test_transport_execute_without_redirects_disables_requests_redirects() -> None:
+    class DummyResponse:
+        ok = True
+        is_redirect = False
+        status_code = 200
+        content = b"ok"
+        headers: dict[str, str] = {}
+        url = "https://localhost/file.dll"
+
+        def json(self) -> object:
+            return {}
+
+        def iter_content(self, chunk_size: int = 8192) -> Iterator[bytes]:
+            yield self.content
+
+        def close(self) -> None:
+            pass
+
+    class DummySession:
+        def __init__(self) -> None:
+            self.headers: dict[str, str] = {}
+            self.allow_redirects_seen: bool | None = None
+
+        def get(self, *args: Any, **kwargs: Any) -> HTTPResponseProtocol:
+            self.allow_redirects_seen = cast(bool, kwargs.get("allow_redirects"))
+            return cast(HTTPResponseProtocol, DummyResponse())
+
+        def head(self, *args: Any, **kwargs: Any) -> HTTPResponseProtocol:
+            raise NotImplementedError
+
+        def post(self, *args: Any, **kwargs: Any) -> HTTPResponseProtocol:
+            raise NotImplementedError
+
+        def close(self) -> None:
+            pass
+
+    session = DummySession()
+    transport = RequestsTransport(
+        session_resource=_resource_with_session(cast(HTTPSessionProtocol, session)),
+        retry_policy=RetryPolicy(max_attempts=1),
+        header_builder=RequestHeaderBuilder(SequenceUserAgentProvider(["ua-1"])),
+        timeout=1,
+        verify_ssl=True,
+        allowed_redirect_domains={"localhost"},
+    )
+
+    transport.execute("GET", "https://localhost/file.dll", allow_redirects=False)
+
+    assert session.allow_redirects_seen is False
+
+
+@pytest.mark.unit
 def test_http_client_head_request_exception_raises() -> None:
     """
     Verify head wraps request exceptions into HTTPClientError.

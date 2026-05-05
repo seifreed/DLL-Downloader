@@ -1162,6 +1162,94 @@ def test_scan_file_upload_success(
 
 
 @pytest.mark.unit
+def test_virustotal_safe_get_forces_manual_redirect_handling() -> None:
+    class DummyResponse:
+        is_redirect = False
+        status_code = 200
+
+        def json(self) -> dict[str, object]:
+            return {"data": {}}
+
+        def close(self) -> None:
+            pass
+
+    class DummySession:
+        def __init__(self) -> None:
+            self.headers: dict[str, str] = {}
+            self.allow_redirects_seen: bool | None = None
+
+        def get(self, url: str, **kwargs: Any) -> DummyResponse:
+            self.allow_redirects_seen = cast(bool, kwargs.get("allow_redirects"))
+            return DummyResponse()
+
+        def post(self, *args: Any, **kwargs: Any) -> Any:
+            raise NotImplementedError
+
+        def head(self, *args: Any, **kwargs: Any) -> Any:
+            raise NotImplementedError
+
+        def close(self) -> None:
+            pass
+
+    session = DummySession()
+    scanner = VirusTotalScanner(
+        api_key="key",
+        session_resource=_resource_with_session(cast(HTTPSessionProtocol, session)),
+    )
+
+    scanner._safe_get(
+        "https://www.virustotal.com/api/v3/files/" + ("a" * 64),
+        allow_redirects=True,
+    )
+
+    assert session.allow_redirects_seen is False
+
+
+@pytest.mark.unit
+def test_virustotal_safe_post_forces_manual_redirect_handling() -> None:
+    class DummyResponse:
+        is_redirect = False
+        status_code = 200
+
+        def json(self) -> dict[str, object]:
+            return {"data": {}}
+
+        def close(self) -> None:
+            pass
+
+    class DummySession:
+        def __init__(self) -> None:
+            self.headers: dict[str, str] = {}
+            self.allow_redirects_seen: bool | None = None
+
+        def get(self, *args: Any, **kwargs: Any) -> Any:
+            raise NotImplementedError
+
+        def post(self, url: str, **kwargs: Any) -> DummyResponse:
+            self.allow_redirects_seen = cast(bool, kwargs.get("allow_redirects"))
+            return DummyResponse()
+
+        def head(self, *args: Any, **kwargs: Any) -> Any:
+            raise NotImplementedError
+
+        def close(self) -> None:
+            pass
+
+    session = DummySession()
+    scanner = VirusTotalScanner(
+        api_key="key",
+        session_resource=_resource_with_session(cast(HTTPSessionProtocol, session)),
+    )
+
+    scanner._safe_post(
+        "https://www.virustotal.com/api/v3/files",
+        allow_redirects=True,
+    )
+
+    assert session.allow_redirects_seen is False
+
+
+@pytest.mark.unit
 def test_scan_file_upload_failure_raises(
     tmp_download_dir: Path,
 ) -> None:

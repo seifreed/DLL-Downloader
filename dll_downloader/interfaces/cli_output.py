@@ -52,7 +52,17 @@ class CLICommandResult:
     def __post_init__(self) -> None:
         if isinstance(self.stdout_lines, (str, bytes)):
             raise ValueError("stdout_lines must be a sequence of lines")
-        object.__setattr__(self, "stdout_lines", tuple(self.stdout_lines))
+        stdout_lines = tuple(self.stdout_lines)
+        if not all(isinstance(line, str) for line in stdout_lines):
+            raise ValueError("stdout_lines must contain strings")
+        if not isinstance(self.session, CLISessionResult):
+            raise ValueError("session must be a CLISessionResult")
+        if self.boundary_failure is not None and not isinstance(
+            self.boundary_failure,
+            CLIBoundaryFailure,
+        ):
+            raise ValueError("boundary_failure must be a CLIBoundaryFailure or None")
+        object.__setattr__(self, "stdout_lines", stdout_lines)
 
 
 def emit_command_result(writer: OutputWriter, result: CLICommandResult) -> None:

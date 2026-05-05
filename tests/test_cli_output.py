@@ -65,6 +65,34 @@ def test_cli_command_result_rejects_scalar_string_lines() -> None:
 
 
 @pytest.mark.unit
+def test_cli_command_result_rejects_non_string_lines() -> None:
+    with pytest.raises(ValueError, match="stdout_lines must contain strings"):
+        CLICommandResult(
+            stdout_lines=cast(list[str], [1]),
+            session=CLISessionResult(success_count=1, failure_count=0, exit_code=0),
+        )
+
+
+@pytest.mark.unit
+def test_cli_command_result_rejects_invalid_session() -> None:
+    with pytest.raises(ValueError, match="session must be a CLISessionResult"):
+        CLICommandResult(
+            stdout_lines=[],
+            session=cast(CLISessionResult, "bad"),
+        )
+
+
+@pytest.mark.unit
+def test_cli_command_result_rejects_invalid_boundary_failure() -> None:
+    with pytest.raises(ValueError, match="boundary_failure must be"):
+        CLICommandResult(
+            stdout_lines=[],
+            session=CLISessionResult(success_count=0, failure_count=1, exit_code=1),
+            boundary_failure=cast(CLIBoundaryFailure, "bad"),
+        )
+
+
+@pytest.mark.unit
 def test_emit_command_result_without_traceback_text() -> None:
     writer = RecordingWriter()
 

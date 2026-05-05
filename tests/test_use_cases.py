@@ -2846,6 +2846,24 @@ def test_download_batch_response_rejects_non_batch_items() -> None:
 
 
 @pytest.mark.unit
+def test_download_batch_item_rejects_non_string_name() -> None:
+    with pytest.raises(ValueError, match="dll_name must be a string"):
+        DownloadBatchItem(
+            dll_name=cast(str, 1),
+            response=DownloadDLLResponse(success=True),
+        )
+
+
+@pytest.mark.unit
+def test_download_batch_item_rejects_invalid_response() -> None:
+    with pytest.raises(ValueError, match="response must be a DownloadDLLResponse"):
+        DownloadBatchItem(
+            dll_name="ok.dll",
+            response=cast(DownloadDLLResponse, "bad"),
+        )
+
+
+@pytest.mark.unit
 def test_download_batch_request_names_are_snapshot_immutable() -> None:
     source_names = ["ok.dll"]
     request = DownloadBatchRequest(dll_names=cast(tuple[str, ...], source_names))
