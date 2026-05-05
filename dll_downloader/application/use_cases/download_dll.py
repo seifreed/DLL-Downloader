@@ -50,6 +50,7 @@ _ZIP_MEMBER_READ_ERRORS = (
 _ZIP_COMPRESSION_RATIO_LIMIT = 100
 _ZIP_MEMBER_SIZE_LIMIT = 512 * 1024 * 1024  # 512 MiB
 _ZIP_COMPRESSED_SIZE_LIMIT = 100 * 1024 * 1024  # 100 MiB
+_ZIP_SIGNATURES = (b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08", b"PK\x01\x02")
 _READ_FILE_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0)
 
 
@@ -504,6 +505,8 @@ class DownloadDLLUseCase:
         except (ValueError, OSError):
             is_zip_archive = False
         if not is_zip_archive:
+            if request.extract_archive and content.startswith(_ZIP_SIGNATURES):
+                raise ArchiveExtractionError("Downloaded archive is not a valid ZIP file")
             self._validate_dll_architecture(content, request.architecture)
             return content
 

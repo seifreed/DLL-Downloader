@@ -769,6 +769,16 @@ def test_virustotal_scheme_relative_redirect_strips_credentials() -> None:
 
 
 @pytest.mark.unit
+def test_virustotal_ipv6_redirect_strips_credentials_preserves_brackets() -> None:
+    redirect_url = VirusTotalScanner._resolve_redirect_url(
+        "https://www.virustotal.com/api/v3/files",
+        "https://user:pass@[2606:4700:4700::1111]:443/api/v3/next",
+    )
+
+    assert redirect_url == "https://[2606:4700:4700::1111]:443/api/v3/next"
+
+
+@pytest.mark.unit
 def test_virustotal_uppercase_https_redirect_is_supported() -> None:
     redirect_url = VirusTotalScanner._resolve_redirect_url(
         "https://www.virustotal.com/api/v3/files",

@@ -887,18 +887,12 @@ def test_settings_load_validates_after_env_precedence(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
-def test_settings_load_logs_warning_for_unreadable_config(
-    tmp_path: Path,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
+def test_settings_load_explicit_unreadable_config_raises_error(tmp_path: Path) -> None:
     config_path = tmp_path / "config.json"
     config_path.mkdir()
 
-    with caplog.at_level("WARNING"):
-        settings = SettingsLoader.load(config_path=str(config_path))
-
-    assert "Failed to load config" in caplog.text
-    assert settings.download_directory == Settings().download_directory
+    with pytest.raises(OSError, match="[Cc]onfiguration"):
+        SettingsLoader.load(config_path=str(config_path))
 
 
 @pytest.mark.unit
@@ -920,9 +914,15 @@ def test_settings_load_fifo_config_does_not_block(tmp_path: Path) -> None:
     config_path = tmp_path / "config.json"
     os.mkfifo(config_path)
     code = (
-        "from dll_downloader.infrastructure.config.loader import SettingsLoader; "
-        f"SettingsLoader.load(config_path={str(config_path)!r}); "
-        "print('done')"
+        "from dll_downloader.infrastructure.config.loader import SettingsLoader\n"
+        "import sys\n"
+        "try:\n"
+        f"    SettingsLoader.load(config_path={str(config_path)!r})\n"
+        "except OSError:\n"
+        "    print('failed-fast')\n"
+        "    sys.exit(0)\n"
+        "print('unexpected')\n"
+        "sys.exit(1)\n"
     )
 
     completed = subprocess.run(
@@ -934,7 +934,7 @@ def test_settings_load_fifo_config_does_not_block(tmp_path: Path) -> None:
     )
 
     assert completed.returncode == 0
-    assert completed.stdout.strip() == "done"
+    assert completed.stdout.strip() == "failed-fast"
 
 
 @pytest.mark.unit
@@ -1130,36 +1130,34 @@ def test_settings_load_searches_default_locations() -> None:
 
 
 @pytest.mark.unit
-def test_settings_load_invalid_json_logs_warning(
-    tmp_download_dir: Path,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
+def test_settings_load_invalid_json_raises_error(tmp_download_dir: Path) -> None:
     """
-    Verify Settings.load logs warning on invalid JSON and returns defaults.
+    Verify Settings.load fails fast on invalid explicit JSON.
     """
     bad_config = tmp_download_dir / "bad_config.json"
     bad_config.write_text("{invalid json")
 
-    with caplog.at_level("WARNING"):
-        settings = SettingsLoader.load(config_path=str(bad_config))
-
-    assert "Failed to load config" in caplog.text
-    assert settings.download_directory == Settings().download_directory
+    with pytest.raises(json.JSONDecodeError):
+        SettingsLoader.load(config_path=str(bad_config))
 
 
 @pytest.mark.unit
-def test_settings_load_invalid_encoding_logs_warning(
-    tmp_download_dir: Path,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
+def test_settings_load_discovered_invalid_json_raises_error(tmp_path: Path) -> None:
+    (tmp_path / ".config.json").write_text("{invalid json")
+
+    with _temporary_env({"HOME": str(tmp_path)}), _temporary_cwd(tmp_path), pytest.raises(
+        json.JSONDecodeError,
+    ):
+        SettingsLoader.load(config_path=None)
+
+
+@pytest.mark.unit
+def test_settings_load_invalid_encoding_raises_error(tmp_download_dir: Path) -> None:
     bad_config = tmp_download_dir / "bad_encoding.json"
     bad_config.write_bytes(b"\xff\xfe\x00")
 
-    with caplog.at_level("WARNING"):
-        settings = SettingsLoader.load(config_path=str(bad_config))
-
-    assert "Failed to load config" in caplog.text
-    assert settings.download_directory == Settings().download_directory
+    with pytest.raises(UnicodeDecodeError):
+        SettingsLoader.load(config_path=str(bad_config))
 
 
 @pytest.mark.unit

@@ -35,11 +35,12 @@ def normalize_dll_name(name: str) -> str:
         normalized_name = f"{normalized_name}.dll"
 
     base_name = normalized_name[:-4]
+    reserved_stem = base_name.split(".", 1)[0]
     if (
         "/" in normalized_name
         or "\\" in normalized_name
         or not _SAFE_DLL_NAME_PATTERN.fullmatch(normalized_name)
-        or base_name in _WINDOWS_RESERVED_NAMES
+        or reserved_stem in _WINDOWS_RESERVED_NAMES
     ):
         raise ValueError("DLL name must be a simple filename")
 

@@ -1567,6 +1567,26 @@ def test_main_json_output_for_invalid_loaded_settings(
 
 
 @pytest.mark.unit
+def test_main_json_output_for_invalid_discovered_config(
+    tmp_path: Path,
+    capsys: CaptureFixture[str],
+) -> None:
+    (tmp_path / ".config.json").write_text("{invalid json")
+
+    with (
+        _temporary_env({"HOME": str(tmp_path), "USERPROFILE": str(tmp_path)}),
+        _temporary_cwd(tmp_path),
+        _temporary_argv(["dll-downloader.py", "test.dll", "--json"]),
+    ):
+        assert main(None) == 1
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["format"] == "json"
+    assert payload["error"]["kind"] == "boundary"
+    assert "Expecting property name" in payload["error"]["message"]
+
+
+@pytest.mark.unit
 def test_main_sarif_output_for_invalid_loaded_settings(
     capsys: CaptureFixture[str],
 ) -> None:

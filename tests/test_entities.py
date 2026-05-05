@@ -213,6 +213,12 @@ def test_dll_file_validation_empty_name_raises_error() -> None:
         ".dll",
         "bad:name.dll",
         "bad*name.dll",
+        "con.payload.dll",
+        "aux.payload.dll",
+        "nul.payload.dll",
+        "prn.payload.dll",
+        "com1.payload.dll",
+        "lpt1.payload.dll",
     ],
 )
 def test_dll_file_rejects_unsafe_names(name: str) -> None:

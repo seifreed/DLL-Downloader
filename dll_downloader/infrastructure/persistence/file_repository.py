@@ -1089,9 +1089,22 @@ class FileSystemDLLRepository(IDLLRepository):
             key = self._get_file_key(dll_file.name, dll_file.architecture)
             if key not in index["files"]:
                 raise RepositoryOperationError(f"DLL not found in index: {dll_file.name}")
-            index["files"][key] = self._serialize_dll(dll_file)
+            existing_dll = self._try_deserialize_dll(index["files"][key])
+            if not existing_dll or not self._indexed_payload_is_valid(
+                existing_dll,
+                expected_name=dll_file.name,
+                expected_architecture=dll_file.architecture,
+            ):
+                raise RepositoryOperationError(f"DLL payload not found: {dll_file.name}")
+            updated_dll = replace(
+                dll_file,
+                file_hash=existing_dll.file_hash,
+                file_path=existing_dll.file_path,
+                file_size=existing_dll.file_size,
+            )
+            index["files"][key] = self._serialize_dll(updated_dll)
             self._save_index(index)
-        return dll_file
+        return updated_dll
 
     def exists(self, name: str, architecture: Architecture | None = None) -> bool:
         """

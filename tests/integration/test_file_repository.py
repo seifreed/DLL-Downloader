@@ -2522,6 +2522,38 @@ class TestFileSystemDLLRepositoryRealWorldScenarios:
         found_deleted = repository.find_by_name("lifecycle.dll", Architecture.X64)
         assert found_deleted is None
 
+    def test_update_metadata_preserves_saved_payload_identity(
+        self,
+        repository: FileSystemDLLRepository,
+        sample_dll_content: bytes,
+        tmp_path: Path,
+    ) -> None:
+        saved = repository.save(
+            DLLFile(name="metadata.dll", architecture=Architecture.X64),
+            sample_dll_content,
+        )
+        poisoned_update = replace(
+            saved,
+            file_hash="0" * 64,
+            file_path=str(tmp_path / "x64" / "other.dll"),
+            file_size=len(sample_dll_content) + 1,
+            security_status=SecurityStatus.CLEAN,
+            vt_detection_ratio="0/72",
+        )
+
+        updated = repository.update_metadata(poisoned_update)
+
+        assert updated.security_status == SecurityStatus.CLEAN
+        assert updated.vt_detection_ratio == "0/72"
+        assert updated.file_hash == saved.file_hash
+        assert updated.file_path == saved.file_path
+        assert updated.file_size == saved.file_size
+        found = repository.find_by_name("metadata.dll", Architecture.X64)
+        assert found is not None
+        assert found.file_hash == saved.file_hash
+        assert repository.find_by_hash(_require_str(saved.file_hash)) is not None
+        assert [dll.name for dll in repository.list_all()] == ["metadata.dll"]
+
     def test_repository_with_large_number_of_files(
         self,
         repository: FileSystemDLLRepository,

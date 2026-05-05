@@ -346,6 +346,19 @@ def test_transport_scheme_relative_redirect_strips_credentials() -> None:
 
 
 @pytest.mark.unit
+def test_transport_ipv6_redirect_strips_credentials_preserves_brackets() -> None:
+    class DummyResponse:
+        headers = {"Location": "https://user:pass@[2606:4700:4700::1111]:443/next"}
+
+    redirect_url = RequestsTransport._resolve_redirect(
+        "https://source.example/start",
+        cast(HTTPResponseProtocol, DummyResponse()),
+    )
+
+    assert redirect_url == "https://[2606:4700:4700::1111]:443/next"
+
+
+@pytest.mark.unit
 def test_transport_uppercase_https_redirect_is_supported() -> None:
     class DummyResponse:
         headers = {"Location": "HTTPS://user:pass@example.com/next"}

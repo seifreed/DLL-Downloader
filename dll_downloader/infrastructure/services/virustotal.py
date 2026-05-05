@@ -39,6 +39,13 @@ _VT_RESPONSE_MAX_BYTES = 64 * 1024 * 1024  # 64 MiB
 _READ_FILE_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0)
 
 
+def _host_port_netloc(hostname: str, port: int | None) -> str:
+    host = f"[{hostname}]" if ":" in hostname else hostname
+    if port is None:
+        return host
+    return f"{host}:{port}"
+
+
 def _is_valid_hash(value: str) -> bool:
     """Return True when value is a hex hash with valid length for VirusTotal lookups."""
     if not value:
@@ -460,10 +467,9 @@ class VirusTotalScanner(ISecurityScanner):
         if not redirect_parsed.username and not redirect_parsed.password:
             return location
         hostname = redirect_parsed.hostname or ""
-        netloc = hostname
-        if port:
-            netloc = f"{hostname}:{port}"
-        return redirect_parsed._replace(netloc=netloc).geturl()
+        return redirect_parsed._replace(
+            netloc=_host_port_netloc(hostname, port),
+        ).geturl()
 
     def __enter__(self) -> "VirusTotalScanner":
         return self

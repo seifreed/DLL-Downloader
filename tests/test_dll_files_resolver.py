@@ -708,6 +708,17 @@ def test_extract_direct_link_rejects_http_official_zip_downgrade() -> None:
 
 
 @pytest.mark.unit
+def test_extract_direct_link_rejects_official_zip_with_invalid_port() -> None:
+    resolver = DllFilesResolver(
+        http_client=StubTextHTTPClient({}),
+        base_url="https://es.dll-files.com",
+    )
+    html = '<a href="https://download.zip.dll-files.com:bad/file.zip">zip</a>'
+
+    assert resolver._extract_direct_link(html) is None
+
+
+@pytest.mark.unit
 def test_extract_direct_link_rejects_http_base_zip_downgrade() -> None:
     resolver = DllFilesResolver(
         http_client=StubTextHTTPClient({}),

@@ -1014,6 +1014,32 @@ def test_download_dll_use_case_fails_when_zip_reader_is_invalid() -> None:
 
 
 @pytest.mark.unit
+def test_download_dll_use_case_fails_when_zip_signature_is_invalid() -> None:
+    repository = InMemoryRepository()
+    http_client = StubHTTPClient()
+    http_client.add_response(
+        "https://dll.website/download/x64/test.dll",
+        b"PK\x03\x04not-a-valid-zip",
+    )
+    use_case = DownloadDLLUseCase(
+        repository=repository,
+        http_client=http_client,
+        download_base_url="https://dll.website/download",
+    )
+
+    response = use_case.execute(
+        DownloadDLLRequest(
+            dll_name="test.dll",
+            architecture=Architecture.X64,
+            extract_archive=True,
+        )
+    )
+
+    assert response.success is False
+    assert response.error_message == "Download failed: Downloaded archive is not a valid ZIP file"
+
+
+@pytest.mark.unit
 def test_download_dll_use_case_allows_valid_zip_without_extract_flag() -> None:
     repository = InMemoryRepository()
     http_client = StubHTTPClient()

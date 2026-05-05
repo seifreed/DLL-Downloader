@@ -242,7 +242,11 @@ class DllFilesResolver:
                 if parsed.username is not None:
                     continue
                 if parsed.scheme == "https":
-                    if parsed.port is not None and parsed.port != 443:
+                    try:
+                        port = parsed.port
+                    except ValueError:
+                        continue
+                    if port is not None and port != 443:
                         continue
                     return href
                 if parsed.scheme == "" and parsed.netloc:

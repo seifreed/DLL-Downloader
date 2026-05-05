@@ -71,6 +71,13 @@ def _hostname_resolves_to_private_ip(hostname: str) -> bool:
 logger = logging.getLogger(__name__)
 
 
+def _host_port_netloc(hostname: str, port: int | None) -> str:
+    host = f"[{hostname}]" if ":" in hostname else hostname
+    if port is None:
+        return host
+    return f"{host}:{port}"
+
+
 def header_value(headers: Mapping[str, str], name: str) -> str | None:
     """Return an HTTP header value using case-insensitive field names.
 
@@ -467,7 +474,6 @@ class RequestsTransport:
         if not parsed_location.username and not parsed_location.password:
             return location
         hostname = parsed_location.hostname or ""
-        netloc = hostname
-        if port:
-            netloc = f"{hostname}:{port}"
-        return parsed_location._replace(netloc=netloc).geturl()
+        return parsed_location._replace(
+            netloc=_host_port_netloc(hostname, port),
+        ).geturl()

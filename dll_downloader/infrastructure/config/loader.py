@@ -206,23 +206,16 @@ class SettingsLoader:
             resolved_config_path = cls._find_config_path()
 
         if resolved_config_path and os.path.exists(resolved_config_path):
-            try:
-                config_values = _JSONSettingsSource.load(resolved_config_path)
-                config_disables_vt_fallback = (
-                    "virustotal_api_key" in config_values
-                    and config_values["virustotal_api_key"] is None
-                )
-                settings = cls._merge(
-                    settings,
-                    config_values,
-                    allow_none_overrides=True,
-                )
-            except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-                logging.warning(
-                    "Failed to load config from %s: %s",
-                    resolved_config_path,
-                    exc,
-                )
+            config_values = _JSONSettingsSource.load(resolved_config_path)
+            config_disables_vt_fallback = (
+                "virustotal_api_key" in config_values
+                and config_values["virustotal_api_key"] is None
+            )
+            settings = cls._merge(
+                settings,
+                config_values,
+                allow_none_overrides=True,
+            )
 
         if settings.virustotal_api_key is None and not config_disables_vt_fallback:
             vt_key = _VTTomlSettingsSource.load(os.environ.get("HOME"))
