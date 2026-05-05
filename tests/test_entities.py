@@ -12,6 +12,7 @@ properties, and business logic.
 
 from dataclasses import replace
 from datetime import UTC, datetime
+from typing import cast
 
 import pytest
 
@@ -24,6 +25,7 @@ from dll_downloader.domain.entities.dll_file import (
 # ============================================================================
 # Architecture Enum Tests
 # ============================================================================
+
 
 @pytest.mark.unit
 def test_architecture_enum_values() -> None:
@@ -63,6 +65,7 @@ def test_architecture_enum_comparison() -> None:
 # SecurityStatus Enum Tests
 # ============================================================================
 
+
 @pytest.mark.unit
 def test_security_status_enum_values() -> None:
     """
@@ -100,6 +103,7 @@ def test_security_status_enum_comparison() -> None:
 # ============================================================================
 # DLLFile Entity Creation Tests
 # ============================================================================
+
 
 @pytest.mark.unit
 def test_dll_file_creation_minimal() -> None:
@@ -145,7 +149,7 @@ def test_dll_file_creation_with_all_fields() -> None:
         file_size=642304,
         security_status=SecurityStatus.CLEAN,
         vt_detection_ratio="0/72",
-        vt_scan_date=scan_date
+        vt_scan_date=scan_date,
     )
 
     assert dll.name == "msvcp140.dll"
@@ -182,6 +186,7 @@ def test_dll_file_creation_sets_timestamp() -> None:
 # DLLFile Validation Tests
 # ============================================================================
 
+
 @pytest.mark.unit
 def test_dll_file_validation_empty_name_raises_error() -> None:
     """
@@ -195,6 +200,35 @@ def test_dll_file_validation_empty_name_raises_error() -> None:
     """
     with pytest.raises(ValueError, match="DLL name cannot be empty"):
         DLLFile(name="")
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("name", [cast(str, None), cast(str, 1)])
+def test_dll_file_rejects_non_string_name(name: str) -> None:
+    with pytest.raises(ValueError, match="DLL name must be a string"):
+        DLLFile(name=name)
+
+
+@pytest.mark.unit
+def test_dll_file_rejects_invalid_architecture_type() -> None:
+    with pytest.raises(ValueError, match="architecture must be an Architecture"):
+        DLLFile(name="kernel32.dll", architecture=cast(Architecture, "x64"))
+
+
+@pytest.mark.unit
+def test_dll_file_rejects_invalid_security_status_type() -> None:
+    with pytest.raises(ValueError, match="security_status must be a SecurityStatus"):
+        DLLFile(
+            name="kernel32.dll",
+            security_status=cast(SecurityStatus, "clean"),
+        )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("file_size", [cast(int, True), -1])
+def test_dll_file_rejects_invalid_file_size(file_size: int) -> None:
+    with pytest.raises(ValueError, match="file_size must be a non-negative integer"):
+        DLLFile(name="kernel32.dll", file_size=file_size)
 
 
 @pytest.mark.unit
@@ -282,6 +316,7 @@ def test_dll_file_extension_case_insensitive() -> None:
 # DLLFile Property Tests
 # ============================================================================
 
+
 @pytest.mark.unit
 def test_dll_file_is_scanned_property() -> None:
     """
@@ -295,17 +330,10 @@ def test_dll_file_is_scanned_property() -> None:
         - Returns True for any other security status
     """
     dll_not_scanned = DLLFile(
-        name="test.dll",
-        security_status=SecurityStatus.NOT_SCANNED
+        name="test.dll", security_status=SecurityStatus.NOT_SCANNED
     )
-    dll_clean = DLLFile(
-        name="test.dll",
-        security_status=SecurityStatus.CLEAN
-    )
-    dll_malicious = DLLFile(
-        name="test.dll",
-        security_status=SecurityStatus.MALICIOUS
-    )
+    dll_clean = DLLFile(name="test.dll", security_status=SecurityStatus.CLEAN)
+    dll_malicious = DLLFile(name="test.dll", security_status=SecurityStatus.MALICIOUS)
 
     assert dll_not_scanned.is_scanned is False
     assert dll_clean.is_scanned is True
@@ -324,21 +352,11 @@ def test_dll_file_is_safe_property() -> None:
         - Returns True only when status is CLEAN
         - Returns False for all other statuses
     """
-    dll_clean = DLLFile(
-        name="test.dll",
-        security_status=SecurityStatus.CLEAN
-    )
-    dll_suspicious = DLLFile(
-        name="test.dll",
-        security_status=SecurityStatus.SUSPICIOUS
-    )
-    dll_malicious = DLLFile(
-        name="test.dll",
-        security_status=SecurityStatus.MALICIOUS
-    )
+    dll_clean = DLLFile(name="test.dll", security_status=SecurityStatus.CLEAN)
+    dll_suspicious = DLLFile(name="test.dll", security_status=SecurityStatus.SUSPICIOUS)
+    dll_malicious = DLLFile(name="test.dll", security_status=SecurityStatus.MALICIOUS)
     dll_not_scanned = DLLFile(
-        name="test.dll",
-        security_status=SecurityStatus.NOT_SCANNED
+        name="test.dll", security_status=SecurityStatus.NOT_SCANNED
     )
 
     assert dll_clean.is_safe is True
@@ -374,10 +392,7 @@ def test_dll_file_display_name_with_version() -> None:
     Expected Behavior:
         Returns filename with version in parentheses.
     """
-    dll = DLLFile(
-        name="msvcp140.dll",
-        version="14.0.24215.1"
-    )
+    dll = DLLFile(name="msvcp140.dll", version="14.0.24215.1")
 
     assert dll.display_name == "msvcp140.dll (v14.0.24215.1)"
 
@@ -385,6 +400,7 @@ def test_dll_file_display_name_with_version() -> None:
 # ============================================================================
 # DLLFile Business Logic Tests
 # ============================================================================
+
 
 @pytest.mark.unit
 def test_dll_file_immutability_of_created_at() -> None:
@@ -402,6 +418,7 @@ def test_dll_file_immutability_of_created_at() -> None:
 
     # Access multiple times with delay
     import time
+
     time.sleep(0.01)
 
     assert dll.created_at == original_timestamp
@@ -419,17 +436,14 @@ def test_dll_file_immutability_with_replace() -> None:
         Using replace() creates a new instance with updated fields,
         original instance remains unchanged.
     """
-    dll = DLLFile(
-        name="test.dll",
-        security_status=SecurityStatus.NOT_SCANNED
-    )
+    dll = DLLFile(name="test.dll", security_status=SecurityStatus.NOT_SCANNED)
 
     # Use replace to create updated copy (since DLLFile is frozen)
     scanned_dll = replace(
         dll,
         security_status=SecurityStatus.CLEAN,
         vt_detection_ratio="0/72",
-        vt_scan_date=datetime.now()
+        vt_scan_date=datetime.now(),
     )
 
     # Original is unchanged

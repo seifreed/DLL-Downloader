@@ -136,6 +136,18 @@ def test_cli_batch_download_command_names_are_snapshot_immutable() -> None:
 
 
 @pytest.mark.unit
+def test_cli_batch_download_command_rejects_scalar_string_names() -> None:
+    with pytest.raises(ValueError, match="dll_names must be a sequence"):
+        CLIBatchDownloadCommand(
+            dll_names=cast(tuple[str, ...], "kernel32.dll"),
+            architecture=Architecture.X64,
+            scan_enabled=False,
+            force_download=False,
+            extract_archive=False,
+        )
+
+
+@pytest.mark.unit
 def test_cli_invocation_names_are_snapshot_immutable() -> None:
     source_names = ["ok.dll"]
     invocation = CLIInvocation(
@@ -152,6 +164,19 @@ def test_cli_invocation_names_are_snapshot_immutable() -> None:
     assert invocation.dll_names == ("ok.dll",)
     with pytest.raises(AttributeError):
         cast(Any, invocation.dll_names).append("bad.dll")
+
+
+@pytest.mark.unit
+def test_cli_invocation_rejects_scalar_string_names() -> None:
+    with pytest.raises(ValueError, match="dll_names must be a sequence"):
+        CLIInvocation(
+            dll_names=cast(tuple[str, ...], "kernel32.dll"),
+            architecture=Architecture.X64,
+            scan_enabled=False,
+            force_download=False,
+            extract_archive=False,
+            debug=False,
+        )
 
 
 def _application_with_use_case(use_case: SuccessfulUseCase) -> DownloadApplication:

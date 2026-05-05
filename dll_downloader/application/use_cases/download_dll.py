@@ -180,8 +180,7 @@ class DownloadDLLUseCase:
             return self._execute_download(request)
         except DownloadExecutionError as e:
             return DownloadDLLResponse(
-                success=False,
-                error_message=f"Download failed: {str(e)}"
+                success=False, error_message=f"Download failed: {str(e)}"
             )
 
     def _execute_download(self, request: DownloadDLLRequest) -> DownloadDLLResponse:
@@ -199,10 +198,12 @@ class DownloadDLLUseCase:
 
         dll_file = DLLFile(
             name=request.dll_name,
-            architecture=self._resolve_actual_architecture(content, request.architecture),
+            architecture=self._resolve_actual_architecture(
+                content, request.architecture
+            ),
             download_url=download_url,
             file_size=len(content),
-            file_hash=self._calculate_hash(content)
+            file_hash=self._calculate_hash(content),
         )
 
         dll_file, security_warning = self._scan_for_malware(
@@ -215,7 +216,7 @@ class DownloadDLLUseCase:
             success=True,
             dll_file=dll_file,
             was_cached=False,
-            security_warning=security_warning
+            security_warning=security_warning,
         )
 
     def _validate_request(
@@ -233,8 +234,7 @@ class DownloadDLLUseCase:
         if not request.force_download:
             try:
                 existing = self._repository.find_by_name(
-                    request.dll_name,
-                    request.architecture
+                    request.dll_name, request.architecture
                 )
             except RepositoryOperationError as exc:
                 raise DownloadExecutionError(str(exc)) from exc
@@ -273,11 +273,7 @@ class DownloadDLLUseCase:
         should_scan: bool,
     ) -> tuple[DLLFile, str | None]:
         """Scan a cache hit when requested, otherwise preserve known warnings."""
-        if (
-            should_scan
-            and self._scanner is not None
-            and self._scanner.is_available
-        ):
+        if should_scan and self._scanner is not None and self._scanner.is_available:
             scanned_dll, security_warning = self._scan_for_malware(
                 dll_file,
                 should_scan,
@@ -297,7 +293,9 @@ class DownloadDLLUseCase:
         try:
             return self._repository.update_metadata(scanned_dll)
         except RepositoryOperationError:
-            logger.warning("Failed to persist scan results for cached DLL %s", cached_dll.name)
+            logger.warning(
+                "Failed to persist scan results for cached DLL %s", cached_dll.name
+            )
             return scanned_dll
 
     @classmethod
@@ -367,6 +365,15 @@ class DownloadDLLUseCase:
             normalized_name = normalize_dll_name(request.dll_name)
         except ValueError as exc:
             raise DownloadExecutionError(str(exc)) from exc
+        if not isinstance(request.architecture, Architecture):
+            raise DownloadExecutionError("architecture must be an Architecture")
+        for field_name in (
+            "scan_before_save",
+            "force_download",
+            "extract_archive",
+        ):
+            if not isinstance(getattr(request, field_name), bool):
+                raise DownloadExecutionError(f"{field_name} must be a boolean")
         if normalized_name == request.dll_name:
             return request
         return replace(request, dll_name=normalized_name)
@@ -384,11 +391,7 @@ class DownloadDLLUseCase:
         Returns:
             Tuple of (updated DLLFile, security warning message or None)
         """
-        if (
-            not should_scan
-            or self._scanner is None
-            or not self._scanner.is_available
-        ):
+        if not should_scan or self._scanner is None or not self._scanner.is_available:
             return dll_file, None
 
         try:
@@ -396,9 +399,7 @@ class DownloadDLLUseCase:
         except SecurityServiceError as exc:
             raise DownloadExecutionError(str(exc)) from exc
         except Exception as exc:
-            raise DownloadExecutionError(
-                "Security scan failed unexpectedly"
-            ) from exc
+            raise DownloadExecutionError("Security scan failed unexpectedly") from exc
 
         if scanned_dll.security_status in {
             SecurityStatus.UNKNOWN,
@@ -452,7 +453,9 @@ class DownloadDLLUseCase:
         Returns:
             Complete download URL
         """
-        arch_path = architecture.value if architecture != Architecture.UNKNOWN else "x64"
+        arch_path = (
+            architecture.value if architecture != Architecture.UNKNOWN else "x64"
+        )
         base = self._download_base_url.rstrip("/")
         return f"{base}/{arch_path}/{quote(dll_name, safe='')}"
 
@@ -473,8 +476,7 @@ class DownloadDLLUseCase:
         if self._resolver is not None:
             try:
                 return self._resolver.resolve_download_url(
-                    request.dll_name,
-                    request.architecture
+                    request.dll_name, request.architecture
                 )
             except (DownloadResolutionError, HTTPServiceError, ValueError) as exc:
                 raise DownloadExecutionError(str(exc)) from exc
@@ -506,7 +508,9 @@ class DownloadDLLUseCase:
             is_zip_archive = False
         if not is_zip_archive:
             if request.extract_archive and content.startswith(_ZIP_SIGNATURES):
-                raise ArchiveExtractionError("Downloaded archive is not a valid ZIP file")
+                raise ArchiveExtractionError(
+                    "Downloaded archive is not a valid ZIP file"
+                )
             self._validate_dll_architecture(content, request.architecture)
             return content
 
@@ -515,8 +519,18 @@ class DownloadDLLUseCase:
                 self._validate_zip_contains_valid_dll(content, request)
                 return content
             return self._extract_valid_dll_from_zip(content, request)
-        except (RuntimeError, NotImplementedError, zipfile.BadZipFile, zlib.error, ValueError, OverflowError, OSError) as exc:
-            raise ArchiveExtractionError("Downloaded archive is not a valid ZIP file") from exc
+        except (
+            RuntimeError,
+            NotImplementedError,
+            zipfile.BadZipFile,
+            zlib.error,
+            ValueError,
+            OverflowError,
+            OSError,
+        ) as exc:
+            raise ArchiveExtractionError(
+                "Downloaded archive is not a valid ZIP file"
+            ) from exc
 
     def _validate_zip_contains_valid_dll(
         self,
@@ -538,9 +552,7 @@ class DownloadDLLUseCase:
                 if member.is_dir():
                     continue
                 if member.file_size > _ZIP_MEMBER_SIZE_LIMIT:
-                    raise ArchiveExtractionError(
-                        "ZIP member exceeds size limit"
-                    )
+                    raise ArchiveExtractionError("ZIP member exceeds size limit")
                 if member.compress_size > _ZIP_COMPRESSED_SIZE_LIMIT:
                     raise ArchiveExtractionError(
                         "ZIP member compressed size exceeds safe limit"
@@ -564,7 +576,8 @@ class DownloadDLLUseCase:
                     "ZIP total decompressed size exceeds limit"
                 )
             matching_members = [
-                member for member in archive.infolist()
+                member
+                for member in archive.infolist()
                 if not member.is_dir() and member.filename.lower().endswith(".dll")
             ]
 
@@ -578,8 +591,10 @@ class DownloadDLLUseCase:
             # Sort so that members with fewer path segments come first.
             requested_members = sorted(
                 [
-                    member for member in matching_members
-                    if member.filename.replace("\\", "/").rsplit("/", 1)[-1].lower() == expected_name
+                    member
+                    for member in matching_members
+                    if member.filename.replace("\\", "/").rsplit("/", 1)[-1].lower()
+                    == expected_name
                 ],
                 key=lambda m: m.filename.replace("\\", "/").count("/"),
             )
@@ -601,9 +616,7 @@ class DownloadDLLUseCase:
                     empty_member_found = True
                     continue
                 if len(extracted_content) > _ZIP_MEMBER_SIZE_LIMIT:
-                    raise ArchiveExtractionError(
-                        "Extracted DLL exceeds size limit"
-                    )
+                    raise ArchiveExtractionError("Extracted DLL exceeds size limit")
                 if len(extracted_content) != member.file_size:
                     raise ArchiveExtractionError(
                         "Extracted size does not match ZIP metadata, possible ZIP bomb"

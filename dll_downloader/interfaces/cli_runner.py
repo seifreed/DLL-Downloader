@@ -9,6 +9,7 @@ from typing import Protocol
 from ..application.use_cases.download_batch import (
     DownloadBatchRequest,
     DownloadBatchUseCase,
+    snapshot_dll_names,
 )
 from ..application.use_cases.download_dll import DownloadDLLRequest, DownloadDLLResponse
 from ..bootstrap import DownloadApplication
@@ -57,7 +58,7 @@ class CLIBatchDownloadCommand:
     debug: bool = False
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "dll_names", tuple(self.dll_names))
+        object.__setattr__(self, "dll_names", snapshot_dll_names(self.dll_names))
 
 
 @dataclass(frozen=True)
@@ -88,7 +89,7 @@ class CLIInvocation:
     output_dir: str | None = None
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "dll_names", tuple(self.dll_names))
+        object.__setattr__(self, "dll_names", snapshot_dll_names(self.dll_names))
 
 
 class DownloadCLIService:

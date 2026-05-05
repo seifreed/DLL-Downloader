@@ -55,6 +55,8 @@ class RandomUserAgentProvider:
         user_agents: Sequence[str] | None = None,
         rng: Random | None = None,
     ) -> None:
+        if isinstance(user_agents, str):
+            raise ValueError("user_agents must be a sequence of user agents")
         self._user_agents = (
             tuple(self.DEFAULT_USER_AGENTS)
             if user_agents is None

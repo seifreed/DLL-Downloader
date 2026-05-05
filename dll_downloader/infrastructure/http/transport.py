@@ -214,7 +214,11 @@ class RequestsTransport:
         self._header_builder = header_builder
         self._timeout = timeout
         self._verify_ssl = verify_ssl
-        self._allowed_redirect_domains = allowed_redirect_domains
+        self._allowed_redirect_domains = (
+            frozenset(allowed_redirect_domains)
+            if allowed_redirect_domains is not None
+            else None
+        )
 
     @property
     def session(self) -> HTTPSessionProtocol:

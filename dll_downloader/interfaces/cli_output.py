@@ -50,6 +50,8 @@ class CLICommandResult:
     boundary_failure: CLIBoundaryFailure | None = None
 
     def __post_init__(self) -> None:
+        if isinstance(self.stdout_lines, (str, bytes)):
+            raise ValueError("stdout_lines must be a sequence of lines")
         object.__setattr__(self, "stdout_lines", tuple(self.stdout_lines))
 
 

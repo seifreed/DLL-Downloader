@@ -1,4 +1,5 @@
 import argparse
+from typing import cast
 
 import pytest
 
@@ -33,6 +34,13 @@ def test_parse_architecture_rejects_unknown_values() -> None:
         parse_architecture("unknown")
     with pytest.raises(ValueError, match="Unsupported architecture"):
         parse_architecture("")
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("arch_str", [cast(str, None), cast(str, 1)])
+def test_parse_architecture_rejects_non_string_values(arch_str: str) -> None:
+    with pytest.raises(ValueError, match="Unsupported architecture"):
+        parse_architecture(arch_str)
 
 
 @pytest.mark.unit

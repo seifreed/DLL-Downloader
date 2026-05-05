@@ -975,6 +975,62 @@ def test_http_client_download_rejects_invalid_target_before_session_call(
 
 
 @pytest.mark.unit
+def test_transport_allowed_redirect_domains_are_snapshot_immutable() -> None:
+    class DummyResponse:
+        ok = True
+        is_redirect = False
+        status_code = 200
+        content = b"ok"
+        headers: dict[str, str] = {}
+        url = "https://127.0.0.1/file.dll"
+
+        def json(self) -> object:
+            return {}
+
+        def iter_content(self, chunk_size: int = 8192) -> Iterator[bytes]:
+            yield self.content
+
+        def close(self) -> None:
+            pass
+
+    class DummySession:
+        def __init__(self) -> None:
+            self.headers: dict[str, str] = {}
+            self.calls = 0
+
+        def get(self, *args: Any, **kwargs: Any) -> HTTPResponseProtocol:
+            self.calls += 1
+            return cast(HTTPResponseProtocol, DummyResponse())
+
+        def head(self, *args: Any, **kwargs: Any) -> HTTPResponseProtocol:
+            raise NotImplementedError
+
+        def post(self, *args: Any, **kwargs: Any) -> HTTPResponseProtocol:
+            raise NotImplementedError
+
+        def close(self) -> None:
+            pass
+
+    allowed_domains = {"example.com"}
+    session = DummySession()
+    transport = RequestsTransport(
+        session_resource=_resource_with_session(cast(HTTPSessionProtocol, session)),
+        retry_policy=RetryPolicy(max_attempts=1),
+        header_builder=RequestHeaderBuilder(SequenceUserAgentProvider(["ua-1"])),
+        timeout=1,
+        verify_ssl=True,
+        allowed_redirect_domains=allowed_domains,
+    )
+
+    allowed_domains.add("127.0.0.1")
+
+    with pytest.raises(HTTPClientError, match="private/reserved address"):
+        transport.execute("GET", "https://127.0.0.1/file.dll")
+
+    assert session.calls == 0
+
+
+@pytest.mark.unit
 def test_http_client_head_request_exception_raises() -> None:
     """
     Verify head wraps request exceptions into HTTPClientError.
@@ -1941,6 +1997,12 @@ def test_random_user_agent_provider_rejects_empty_pool() -> None:
 
 
 @pytest.mark.unit
+def test_random_user_agent_provider_rejects_scalar_string_pool() -> None:
+    with pytest.raises(ValueError, match="sequence of user agents"):
+        RandomUserAgentProvider(user_agents=cast(tuple[str, ...], "ua-a"))
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize("user_agent", ["", "   ", cast(str, 1)])
 def test_fixed_user_agent_provider_rejects_invalid_values(user_agent: str) -> None:
     with pytest.raises(ValueError, match="user_agent must be a non-empty string"):
@@ -2062,6 +2124,19 @@ def test_retry_policy_pause_uses_sleep_callback() -> None:
     policy.pause_before_retry(2)
 
     assert calls == [1.0]
+
+
+@pytest.mark.unit
+def test_retry_policy_retryable_status_codes_are_snapshot_immutable() -> None:
+    retryable_status_codes = {500}
+    policy = RetryPolicy(
+        max_attempts=2,
+        retryable_status_codes=cast(frozenset[int], retryable_status_codes),
+    )
+
+    retryable_status_codes.clear()
+
+    assert policy.should_retry_status(500, 1) is True
 
 
 @pytest.mark.unit

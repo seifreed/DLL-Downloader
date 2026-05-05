@@ -15,6 +15,13 @@ from .download_dll import DownloadDLLRequest, DownloadDLLResponse
 logger = logging.getLogger(__name__)
 
 
+def snapshot_dll_names(dll_names: Sequence[str]) -> tuple[str, ...]:
+    """Return an immutable DLL-name sequence without splitting scalar strings."""
+    if isinstance(dll_names, (str, bytes)):
+        raise ValueError("dll_names must be a sequence of names, not a string")
+    return tuple(dll_names)
+
+
 class SupportsDownloadExecution(Protocol):
     """Minimal contract required to execute a single DLL download."""
 
@@ -41,7 +48,7 @@ class DownloadBatchRequest:
     extract_archive: bool = False
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "dll_names", tuple(self.dll_names))
+        object.__setattr__(self, "dll_names", snapshot_dll_names(self.dll_names))
 
 
 @dataclass(frozen=True)

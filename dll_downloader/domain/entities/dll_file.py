@@ -10,11 +10,32 @@ from datetime import UTC, datetime
 from enum import Enum
 
 _SAFE_DLL_NAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*\.dll", re.IGNORECASE)
-_WINDOWS_RESERVED_NAMES = frozenset({
-    "con", "nul", "aux", "prn",
-    "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8", "com9",
-    "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
-})
+_WINDOWS_RESERVED_NAMES = frozenset(
+    {
+        "con",
+        "nul",
+        "aux",
+        "prn",
+        "com1",
+        "com2",
+        "com3",
+        "com4",
+        "com5",
+        "com6",
+        "com7",
+        "com8",
+        "com9",
+        "lpt1",
+        "lpt2",
+        "lpt3",
+        "lpt4",
+        "lpt5",
+        "lpt6",
+        "lpt7",
+        "lpt8",
+        "lpt9",
+    }
+)
 
 
 def normalize_dll_name(name: str) -> str:
@@ -26,12 +47,14 @@ def normalize_dll_name(name: str) -> str:
     Returns:
         Name with .dll extension appended if not present
     """
+    if not isinstance(name, str):
+        raise ValueError("DLL name must be a string")
     stripped_name = name.strip()
     if not stripped_name:
         raise ValueError("DLL name cannot be empty")
 
     normalized_name = stripped_name.lower()
-    if not normalized_name.endswith('.dll'):
+    if not normalized_name.endswith(".dll"):
         normalized_name = f"{normalized_name}.dll"
 
     base_name = normalized_name[:-4]
@@ -49,6 +72,7 @@ def normalize_dll_name(name: str) -> str:
 
 class Architecture(Enum):
     """CPU architecture types for DLL files."""
+
     X86 = "x86"
     X64 = "x64"
     ARM = "arm"
@@ -58,6 +82,7 @@ class Architecture(Enum):
 
 class SecurityStatus(Enum):
     """Security scan status for a DLL file."""
+
     NOT_SCANNED = "not_scanned"
     CLEAN = "clean"
     SUSPICIOUS = "suspicious"
@@ -101,12 +126,25 @@ class DLLFile:
 
     def __post_init__(self) -> None:
         """Validate and normalize entity after initialization."""
-        object.__setattr__(self, 'name', normalize_dll_name(self.name))
+        if not isinstance(self.architecture, Architecture):
+            raise ValueError("architecture must be an Architecture")
+        if not isinstance(self.security_status, SecurityStatus):
+            raise ValueError("security_status must be a SecurityStatus")
+        if self.file_size is not None and (
+            isinstance(self.file_size, bool)
+            or not isinstance(self.file_size, int)
+            or self.file_size < 0
+        ):
+            raise ValueError("file_size must be a non-negative integer")
+        object.__setattr__(self, "name", normalize_dll_name(self.name))
 
     @property
     def is_scanned(self) -> bool:
         """Check if the DLL has been security scanned."""
-        return self.security_status not in {SecurityStatus.NOT_SCANNED, SecurityStatus.UNKNOWN}
+        return self.security_status not in {
+            SecurityStatus.NOT_SCANNED,
+            SecurityStatus.UNKNOWN,
+        }
 
     @property
     def is_safe(self) -> bool:

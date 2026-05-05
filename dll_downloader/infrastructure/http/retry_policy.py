@@ -47,6 +47,7 @@ class RetryPolicy:
     rng: Random = field(default_factory=SystemRandom)
 
     def __post_init__(self) -> None:
+        self.retryable_status_codes = frozenset(self.retryable_status_codes)
         if isinstance(self.max_attempts, bool) or not isinstance(
             self.max_attempts, int
         ):

@@ -56,6 +56,15 @@ def test_cli_command_result_stdout_lines_are_snapshot_immutable() -> None:
 
 
 @pytest.mark.unit
+def test_cli_command_result_rejects_scalar_string_lines() -> None:
+    with pytest.raises(ValueError, match="stdout_lines must be a sequence of lines"):
+        CLICommandResult(
+            stdout_lines=cast(list[str], "one"),
+            session=CLISessionResult(success_count=1, failure_count=0, exit_code=0),
+        )
+
+
+@pytest.mark.unit
 def test_emit_command_result_without_traceback_text() -> None:
     writer = RecordingWriter()
 

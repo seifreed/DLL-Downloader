@@ -580,6 +580,63 @@ def test_download_dll_use_case_invalid_programmatic_name_returns_failure() -> No
 
 
 @pytest.mark.unit
+def test_download_dll_use_case_invalid_programmatic_architecture_returns_failure() -> (
+    None
+):
+    repository = InMemoryRepository()
+    use_case = DownloadDLLUseCase(
+        repository=repository,
+        http_client=NoDownloadHTTPClient(),
+        download_base_url="https://dll.website/download",
+    )
+
+    response = use_case.execute(
+        DownloadDLLRequest(
+            dll_name="kernel32.dll",
+            architecture=cast(Architecture, "x64"),
+            scan_before_save=False,
+        )
+    )
+
+    assert response.success is False
+    assert response.error_message == (
+        "Download failed: architecture must be an Architecture"
+    )
+    assert repository.list_all() == []
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "field_name", ["scan_before_save", "force_download", "extract_archive"]
+)
+def test_download_dll_use_case_invalid_programmatic_bool_fields_return_failure(
+    field_name: str,
+) -> None:
+    repository = InMemoryRepository()
+    use_case = DownloadDLLUseCase(
+        repository=repository,
+        http_client=NoDownloadHTTPClient(),
+        download_base_url="https://dll.website/download",
+    )
+    base_request = DownloadDLLRequest(
+        dll_name="kernel32.dll",
+        scan_before_save=False,
+    )
+    if field_name == "scan_before_save":
+        request = replace(base_request, scan_before_save=cast(bool, "false"))
+    elif field_name == "force_download":
+        request = replace(base_request, force_download=cast(bool, "false"))
+    else:
+        request = replace(base_request, extract_archive=cast(bool, "false"))
+
+    response = use_case.execute(request)
+
+    assert response.success is False
+    assert response.error_message == f"Download failed: {field_name} must be a boolean"
+    assert repository.list_all() == []
+
+
+@pytest.mark.unit
 def test_download_dll_use_case_calculates_hash() -> None:
     """
     Test that the use case calculates file hash correctly.
@@ -2784,6 +2841,12 @@ def test_download_batch_request_names_are_snapshot_immutable() -> None:
     assert request.dll_names == ("ok.dll",)
     with pytest.raises(AttributeError):
         cast(Any, request.dll_names).append("bad.dll")
+
+
+@pytest.mark.unit
+def test_download_batch_request_rejects_scalar_string_names() -> None:
+    with pytest.raises(ValueError, match="dll_names must be a sequence"):
+        DownloadBatchRequest(dll_names=cast(tuple[str, ...], "kernel32.dll"))
 
 
 @pytest.mark.unit
