@@ -906,3 +906,108 @@ def test_get_wraps_http_client_failures() -> None:
 
     with pytest.raises(DllFilesResolverError, match="transport failed"):
         resolver.resolve_download_url("test.dll", Architecture.X64)
+
+
+@pytest.mark.unit
+def test_default_port_returns_none_for_unknown_scheme() -> None:
+    """Regression: schemes outside http/https resolve to no default port."""
+    from dll_downloader.infrastructure.http.dll_files_resolver import _default_port
+
+    assert _default_port("ftp") is None
+    assert _default_port("") is None
+
+
+@pytest.mark.unit
+def test_resolve_download_url_raises_when_search_page_lacks_dll_link() -> None:
+    """Regression: an empty search result raises a clear resolver error."""
+    base = "https://es.dll-files.com"
+    client = StubTextHTTPClient({f"{base}/search/?q=missing.dll": "<html></html>"})
+    resolver = DllFilesResolver(http_client=client, base_url=base)
+
+    with pytest.raises(DllFilesResolverError, match="Could not find DLL page"):
+        resolver.resolve_download_url("missing.dll", Architecture.X64)
+
+
+@pytest.mark.unit
+def test_resolve_download_url_raises_when_dll_page_lacks_download_link() -> None:
+    """Regression: a DLL page without a recognizable download link errors out."""
+    base = "https://es.dll-files.com"
+    client = StubTextHTTPClient(
+        {
+            f"{base}/search/?q=foo.dll": '<a href="/foo.dll.html">foo</a>',
+            f"{base}/foo.dll.html": "<html><body>no download links here</body></html>",
+        }
+    )
+    resolver = DllFilesResolver(http_client=client, base_url=base)
+
+    with pytest.raises(DllFilesResolverError, match="Could not find download link"):
+        resolver.resolve_download_url("foo.dll", Architecture.X64)
+
+
+@pytest.mark.unit
+def test_resolve_download_url_raises_when_download_page_lacks_direct_link() -> None:
+    """Regression: a download page without a direct ZIP link errors out."""
+    base = "https://es.dll-files.com"
+    client = StubTextHTTPClient(
+        {
+            f"{base}/search/?q=foo.dll": '<a href="/foo.dll.html">foo</a>',
+            f"{base}/foo.dll.html": (
+                '<a href="/download/aaa/foo.dll.html">Download 64-bit</a>'
+            ),
+            f"{base}/download/aaa/foo.dll.html": "<html><body>no zip</body></html>",
+        }
+    )
+    resolver = DllFilesResolver(http_client=client, base_url=base)
+
+    with pytest.raises(
+        DllFilesResolverError,
+        match="Could not resolve direct download",
+    ):
+        resolver.resolve_download_url("foo.dll", Architecture.X64)
+
+
+@pytest.mark.unit
+def test_extract_direct_link_skips_official_zip_with_userinfo() -> None:
+    """Regression: official-zip URLs carrying userinfo must be skipped."""
+    resolver = DllFilesResolver(
+        http_client=StubTextHTTPClient({}),
+        base_url="https://es.dll-files.com",
+    )
+    html = (
+        '<a href="https://user:pass@download.zip.dll-files.com/aaa/foo.zip">zip</a>'
+    )
+    assert resolver._extract_direct_link(html) is None
+
+
+@pytest.mark.unit
+def test_extract_direct_link_skips_protocol_relative_with_userinfo_at_sign() -> None:
+    """Regression: protocol-relative URLs whose netloc contains '@' are skipped."""
+    resolver = DllFilesResolver(
+        http_client=StubTextHTTPClient({}),
+        base_url="https://es.dll-files.com",
+    )
+    html = '<a href="//user@download.zip.dll-files.com/aaa/foo.zip">zip</a>'
+    assert resolver._extract_direct_link(html) is None
+
+
+@pytest.mark.unit
+def test_extract_direct_link_skips_protocol_relative_with_disallowed_host() -> None:
+    """Regression: protocol-relative URLs to non-allowed hosts are skipped."""
+    resolver = DllFilesResolver(
+        http_client=StubTextHTTPClient({}),
+        base_url="https://es.dll-files.com",
+    )
+    html = '<a href="//attacker.example/foo.zip">zip</a>'
+    assert resolver._extract_direct_link(html) is None
+
+
+@pytest.mark.unit
+def test_is_base_url_link_rejects_protocol_relative_when_base_scheme_unsupported() -> (
+    None
+):
+    """Regression: protocol-relative href is rejected when base scheme isn't HTTP/S."""
+    resolver = DllFilesResolver(
+        http_client=StubTextHTTPClient({}),
+        base_url="ftp://example.com",
+    )
+    assert resolver._is_base_url_link("//example.com/path") is False

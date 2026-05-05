@@ -220,20 +220,6 @@ class DllFilesResolver:
             )
         return False
 
-    def _href_has_architecture_hint(self, href: str) -> bool:
-        return self._href_matches_architecture(
-            href,
-            Architecture.X64,
-        ) or self._href_matches_architecture(href, Architecture.X86)
-
-    def _context_has_architecture_hint(self, context: str) -> bool:
-        return self._context_has_bits_hint(
-            context, "32"
-        ) or self._context_has_bits_hint(
-            context,
-            "64",
-        )
-
     def _context_has_bits_hint(self, context: str, bits: str) -> bool:
         text = self._html_text(context)
         return bool(

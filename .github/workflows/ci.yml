@@ -57,6 +57,9 @@ jobs:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
   tests:
+    # Windows is intentionally excluded: the persistence and use-case layers
+    # rely on POSIX-only primitives (fcntl advisory locks and O_NOFOLLOW for
+    # symlink-safe opens) that are not available on Windows.
     name: >-
       ${{ matrix.target.platform }} / py${{ matrix.python-version }}
     runs-on: ${{ matrix.target.runs-on }}
@@ -71,12 +74,6 @@ jobs:
           - platform: linux-arm64
             arch: arm64
             runs-on: ubuntu-24.04-arm
-          - platform: windows-x64
-            arch: x64
-            runs-on: windows-2025
-          - platform: windows-arm64
-            arch: arm64
-            runs-on: windows-11-arm
           - platform: macos-intel
             arch: x64
             runs-on: macos-15-intel
