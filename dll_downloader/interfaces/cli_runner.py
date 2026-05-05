@@ -35,17 +35,28 @@ _RUNTIME_CLOSE_ERROR_TYPES: tuple[type[Exception], ...] = (Exception,)
 
 
 class SupportsClose(Protocol):
-    """Minimal closeable contract for runtime resources."""
-
     def close(self) -> None:
-        """Release underlying resources."""
+        pass
 
 
 class SupportsDownloadExecution(Protocol):
-    """Minimal single-item download use case contract for CLI orchestration."""
-
     def execute(self, request: DownloadDLLRequest) -> DownloadDLLResponse:
-        """Execute a single download request."""
+        pass
+
+
+def _validate_cli_architecture(value: object) -> None:
+    if not isinstance(value, Architecture):
+        raise ValueError("architecture must be an Architecture")
+
+
+def _validate_cli_bool(value: object, field_name: str) -> None:
+    if not isinstance(value, bool):
+        raise ValueError(f"{field_name} must be a boolean")
+
+
+def _validate_cli_output_dir(value: object) -> None:
+    if value is not None and not isinstance(value, str):
+        raise ValueError("output_dir must be a string or None")
 
 
 @dataclass(frozen=True)
@@ -59,12 +70,15 @@ class CLIBatchDownloadCommand:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "dll_names", snapshot_dll_names(self.dll_names))
+        _validate_cli_architecture(self.architecture)
+        _validate_cli_bool(self.scan_enabled, "scan_enabled")
+        _validate_cli_bool(self.force_download, "force_download")
+        _validate_cli_bool(self.extract_archive, "extract_archive")
+        _validate_cli_bool(self.debug, "debug")
 
 
 @dataclass(frozen=True)
 class CLIBatchDownloadResult:
-    """Summary values returned to the CLI entrypoint."""
-
     lines: tuple[str, ...]
     success_count: int
     failure_count: int
@@ -72,8 +86,6 @@ class CLIBatchDownloadResult:
 
 @dataclass(frozen=True)
 class CLIRunResult:
-    """CLI session result plus normalized invocation metadata."""
-
     invocation: "CLIInvocation"
     session: CLISessionResult
 
@@ -90,6 +102,12 @@ class CLIInvocation:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "dll_names", snapshot_dll_names(self.dll_names))
+        _validate_cli_architecture(self.architecture)
+        _validate_cli_bool(self.scan_enabled, "scan_enabled")
+        _validate_cli_bool(self.force_download, "force_download")
+        _validate_cli_bool(self.extract_archive, "extract_archive")
+        _validate_cli_bool(self.debug, "debug")
+        _validate_cli_output_dir(self.output_dir)
 
 
 class DownloadCLIService:
@@ -152,7 +170,6 @@ class DownloadCLIService:
         self,
         command: CLIBatchDownloadCommand,
     ) -> CLICommandResult:
-        """Execute a CLI batch command and normalize boundary failures."""
         return execute_boundary_command(
             command=command,
             run_command=self.run,
@@ -165,12 +182,6 @@ def execute_boundary_command(
     run_command: "BatchCommandRunner",
     boundary_failure_factory: "BoundaryFailureFactory",
 ) -> CLICommandResult:
-    """
-    Execute one outermost CLI boundary command.
-
-    The broad catch lives here intentionally: this is the final translation
-    point between runtime failures and user-facing CLI output.
-    """
     try:
         result = run_command(command)
     except (KeyboardInterrupt, SystemExit):
@@ -192,7 +203,6 @@ def cleanup_runtime_resources(
     http_client: SupportsClose,
     scanner: SupportsClose | None,
 ) -> None:
-    """Close runtime adapters created by the composition root."""
     _close_runtime_resource(http_client, "HTTP client")
     if scanner is not None:
         _close_runtime_resource(scanner, "security scanner")
@@ -222,7 +232,6 @@ class CLIApplicationService:
 
     @property
     def is_structured(self) -> bool:
-        """Whether structured (JSON/SARIF) output mode is active."""
         return self._is_structured
 
     def create_invocation(
@@ -232,7 +241,6 @@ class CLIApplicationService:
         settings: Settings,
         read_dll_list: "DLLListReader",
     ) -> CLIInvocation:
-        """Normalize raw CLI arguments into a validated invocation."""
         dll_names = resolve_dll_names(args, parser, read_dll_list)
 
         return CLIInvocation(
@@ -265,7 +273,6 @@ class CLIApplicationService:
         settings: Settings,
         read_dll_list: "DLLListReader",
     ) -> CLIRunResult:
-        """Normalize args and execute one CLI session."""
         invocation = self.create_invocation(args, parser, settings, read_dll_list)
         return CLIRunResult(
             invocation=invocation,
@@ -273,7 +280,6 @@ class CLIApplicationService:
         )
 
     def render_summary(self, result: CLIRunResult) -> str | None:
-        """Render summary text only for batch sessions."""
         if len(result.invocation.dll_names) <= 1:
             return None
         return self._presenter.summary_counts(
@@ -282,7 +288,6 @@ class CLIApplicationService:
         )
 
     def emit(self, result: CLICommandResult) -> None:
-        """Write rendered command output to the configured writer."""
         emit_command_result(self._writer, result)
 
     def _run_application(
@@ -313,27 +318,21 @@ class CLIApplicationService:
 
 
 class ApplicationBuilder(Protocol):
-    """Build a runtime application graph for one CLI session."""
-
     def __call__(
         self,
         settings: Settings,
         output_dir: str | None = None,
     ) -> DownloadApplication:
-        """Return the assembled runtime application."""
+        pass
 
 
 class BatchCommandRunner(Protocol):
-    """Run one normalized batch command."""
-
     def __call__(self, command: CLIBatchDownloadCommand) -> CLIBatchDownloadResult:
-        """Return the rendered batch result."""
+        pass
 
 
 class BoundaryFailureFactory(Protocol):
-    """Build a normalized CLI failure result from an unexpected exception."""
-
     def __call__(
         self, command: CLIBatchDownloadCommand, exc: Exception
     ) -> CLICommandResult:
-        """Translate an unexpected boundary exception."""
+        pass

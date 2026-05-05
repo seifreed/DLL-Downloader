@@ -93,6 +93,56 @@ def test_cli_command_result_rejects_invalid_boundary_failure() -> None:
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("value", [cast(int, True), -1, "1"])
+def test_cli_session_result_rejects_invalid_counts(value: int) -> None:
+    with pytest.raises(
+        ValueError, match="success_count must be a non-negative integer"
+    ):
+        CLISessionResult(
+            success_count=value,
+            failure_count=0,
+            exit_code=0,
+        )
+    with pytest.raises(
+        ValueError, match="failure_count must be a non-negative integer"
+    ):
+        CLISessionResult(
+            success_count=0,
+            failure_count=value,
+            exit_code=0,
+        )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("exit_code", [cast(int, True), -1, "1"])
+def test_cli_session_result_rejects_invalid_exit_code(exit_code: int) -> None:
+    with pytest.raises(ValueError, match="exit_code must be a non-negative integer"):
+        CLISessionResult(
+            success_count=0,
+            failure_count=0,
+            exit_code=exit_code,
+        )
+
+
+@pytest.mark.unit
+def test_cli_boundary_failure_rejects_invalid_message() -> None:
+    with pytest.raises(ValueError, match="message must be a string"):
+        CLIBoundaryFailure(message=cast(str, 1))
+
+
+@pytest.mark.unit
+def test_cli_boundary_failure_rejects_invalid_traceback_text() -> None:
+    with pytest.raises(ValueError, match="traceback_text must be a string or None"):
+        CLIBoundaryFailure(message="problem", traceback_text=cast(str, 1))
+
+
+@pytest.mark.unit
+def test_cli_boundary_failure_rejects_invalid_structured_flag() -> None:
+    with pytest.raises(ValueError, match="is_structured must be a boolean"):
+        CLIBoundaryFailure(message="problem", is_structured=cast(bool, "false"))
+
+
+@pytest.mark.unit
 def test_emit_command_result_without_traceback_text() -> None:
     writer = RecordingWriter()
 

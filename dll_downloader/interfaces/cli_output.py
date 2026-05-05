@@ -7,6 +7,11 @@ from dataclasses import dataclass
 from typing import Protocol
 
 
+def _validate_non_negative_int(value: object, field_name: str) -> None:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"{field_name} must be a non-negative integer")
+
+
 @dataclass(frozen=True)
 class CLISessionResult:
     """Aggregate result returned by the CLI session runner."""
@@ -14,6 +19,11 @@ class CLISessionResult:
     success_count: int
     failure_count: int
     exit_code: int
+
+    def __post_init__(self) -> None:
+        _validate_non_negative_int(self.success_count, "success_count")
+        _validate_non_negative_int(self.failure_count, "failure_count")
+        _validate_non_negative_int(self.exit_code, "exit_code")
 
 
 class OutputWriter(Protocol):
@@ -39,6 +49,17 @@ class CLIBoundaryFailure:
     message: str
     traceback_text: str | None = None
     is_structured: bool = False
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.message, str):
+            raise ValueError("message must be a string")
+        if self.traceback_text is not None and not isinstance(
+            self.traceback_text,
+            str,
+        ):
+            raise ValueError("traceback_text must be a string or None")
+        if not isinstance(self.is_structured, bool):
+            raise ValueError("is_structured must be a boolean")
 
 
 @dataclass(frozen=True)

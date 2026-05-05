@@ -2797,6 +2797,31 @@ def test_download_batch_use_case_skips_invalid_names_with_failure_items() -> Non
     assert "DLL name" in (bad_item.response.error_message or "")
 
 
+@pytest.mark.unit
+def test_download_batch_use_case_reports_non_string_names_as_failure_items() -> None:
+    repository = InMemoryRepository()
+    http_client = StubHTTPClient()
+    single_use_case = DownloadDLLUseCase(
+        repository=repository,
+        http_client=http_client,
+        download_base_url="https://dll.website/download",
+    )
+    batch_use_case = DownloadBatchUseCase(single_use_case)
+
+    response = batch_use_case.execute(
+        DownloadBatchRequest(
+            dll_names=cast(tuple[str, ...], (123,)),
+            architecture=Architecture.X64,
+            scan_before_save=False,
+        )
+    )
+
+    assert response.failure_count == 1
+    assert response.items[0].dll_name == "123"
+    assert response.items[0].response.success is False
+    assert response.items[0].response.error_message == "DLL name must be a string"
+
+
 # ---------------------------------------------------------------------------
 # Regression tests for fixed bugs
 # ---------------------------------------------------------------------------
@@ -2864,6 +2889,31 @@ def test_download_batch_item_rejects_invalid_response() -> None:
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"success": "true"}, "success must be a boolean"),
+        ({"success": True, "dll_file": "bad"}, "dll_file must be a DLLFile or None"),
+        (
+            {"success": False, "error_message": 1},
+            "error_message must be a string or None",
+        ),
+        ({"success": True, "was_cached": "false"}, "was_cached must be a boolean"),
+        (
+            {"success": True, "security_warning": 1},
+            "security_warning must be a string or None",
+        ),
+    ],
+)
+def test_download_dll_response_rejects_invalid_field_types(
+    kwargs: dict[str, object],
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        DownloadDLLResponse(**cast(Any, kwargs))
+
+
+@pytest.mark.unit
 def test_download_batch_request_names_are_snapshot_immutable() -> None:
     source_names = ["ok.dll"]
     request = DownloadBatchRequest(dll_names=cast(tuple[str, ...], source_names))
@@ -2879,6 +2929,35 @@ def test_download_batch_request_names_are_snapshot_immutable() -> None:
 def test_download_batch_request_rejects_scalar_string_names() -> None:
     with pytest.raises(ValueError, match="dll_names must be a sequence"):
         DownloadBatchRequest(dll_names=cast(tuple[str, ...], "kernel32.dll"))
+
+
+@pytest.mark.unit
+def test_download_batch_request_rejects_invalid_architecture() -> None:
+    with pytest.raises(ValueError, match="architecture must be an Architecture"):
+        DownloadBatchRequest(
+            dll_names=("kernel32.dll",),
+            architecture=cast(Architecture, "x64"),
+        )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "field_name", ["scan_before_save", "force_download", "extract_archive"]
+)
+def test_download_batch_request_rejects_invalid_boolean_flags(
+    field_name: str,
+) -> None:
+    kwargs: dict[str, object] = {
+        "dll_names": ("kernel32.dll",),
+        "architecture": Architecture.X64,
+        "scan_before_save": False,
+        "force_download": False,
+        "extract_archive": False,
+    }
+    kwargs[field_name] = "false"
+
+    with pytest.raises(ValueError, match=f"{field_name} must be a boolean"):
+        DownloadBatchRequest(**cast(Any, kwargs))
 
 
 @pytest.mark.unit

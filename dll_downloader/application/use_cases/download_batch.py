@@ -22,6 +22,20 @@ def snapshot_dll_names(dll_names: Sequence[str]) -> tuple[str, ...]:
     return tuple(dll_names)
 
 
+def _display_dll_name(dll_name: object) -> str:
+    return dll_name if isinstance(dll_name, str) else repr(dll_name)
+
+
+def _validate_batch_architecture(value: object) -> None:
+    if not isinstance(value, Architecture):
+        raise ValueError("architecture must be an Architecture")
+
+
+def _validate_batch_bool(value: object, field_name: str) -> None:
+    if not isinstance(value, bool):
+        raise ValueError(f"{field_name} must be a boolean")
+
+
 class SupportsDownloadExecution(Protocol):
     """Minimal contract required to execute a single DLL download."""
 
@@ -55,6 +69,10 @@ class DownloadBatchRequest:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "dll_names", snapshot_dll_names(self.dll_names))
+        _validate_batch_architecture(self.architecture)
+        _validate_batch_bool(self.scan_before_save, "scan_before_save")
+        _validate_batch_bool(self.force_download, "force_download")
+        _validate_batch_bool(self.extract_archive, "extract_archive")
 
 
 @dataclass(frozen=True)
@@ -96,7 +114,7 @@ class DownloadBatchUseCase:
                 logger.warning("Skipping invalid DLL name in batch: %s", exc)
                 items.append(
                     DownloadBatchItem(
-                        dll_name=dll_name,
+                        dll_name=_display_dll_name(dll_name),
                         response=DownloadDLLResponse(
                             success=False,
                             error_message=str(exc),

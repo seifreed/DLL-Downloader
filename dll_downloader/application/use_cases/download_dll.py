@@ -115,6 +115,21 @@ class DownloadDLLResponse:
     was_cached: bool = False
     security_warning: str | None = None
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.success, bool):
+            raise ValueError("success must be a boolean")
+        if self.dll_file is not None and not isinstance(self.dll_file, DLLFile):
+            raise ValueError("dll_file must be a DLLFile or None")
+        if self.error_message is not None and not isinstance(self.error_message, str):
+            raise ValueError("error_message must be a string or None")
+        if not isinstance(self.was_cached, bool):
+            raise ValueError("was_cached must be a boolean")
+        if self.security_warning is not None and not isinstance(
+            self.security_warning,
+            str,
+        ):
+            raise ValueError("security_warning must be a string or None")
+
 
 class DownloadDLLUseCase:
     """

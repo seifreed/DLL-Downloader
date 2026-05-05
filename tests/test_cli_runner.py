@@ -148,6 +148,39 @@ def test_cli_batch_download_command_rejects_scalar_string_names() -> None:
 
 
 @pytest.mark.unit
+def test_cli_batch_download_command_rejects_invalid_architecture() -> None:
+    with pytest.raises(ValueError, match="architecture must be an Architecture"):
+        CLIBatchDownloadCommand(
+            dll_names=("kernel32.dll",),
+            architecture=cast(Architecture, "x64"),
+            scan_enabled=False,
+            force_download=False,
+            extract_archive=False,
+        )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "field_name", ["scan_enabled", "force_download", "extract_archive", "debug"]
+)
+def test_cli_batch_download_command_rejects_invalid_boolean_flags(
+    field_name: str,
+) -> None:
+    kwargs: dict[str, object] = {
+        "dll_names": ("kernel32.dll",),
+        "architecture": Architecture.X64,
+        "scan_enabled": False,
+        "force_download": False,
+        "extract_archive": False,
+        "debug": False,
+    }
+    kwargs[field_name] = "false"
+
+    with pytest.raises(ValueError, match=f"{field_name} must be a boolean"):
+        CLIBatchDownloadCommand(**cast(Any, kwargs))
+
+
+@pytest.mark.unit
 def test_cli_invocation_names_are_snapshot_immutable() -> None:
     source_names = ["ok.dll"]
     invocation = CLIInvocation(
@@ -176,6 +209,52 @@ def test_cli_invocation_rejects_scalar_string_names() -> None:
             force_download=False,
             extract_archive=False,
             debug=False,
+        )
+
+
+@pytest.mark.unit
+def test_cli_invocation_rejects_invalid_architecture() -> None:
+    with pytest.raises(ValueError, match="architecture must be an Architecture"):
+        CLIInvocation(
+            dll_names=("kernel32.dll",),
+            architecture=cast(Architecture, "x64"),
+            scan_enabled=False,
+            force_download=False,
+            extract_archive=False,
+            debug=False,
+        )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "field_name", ["scan_enabled", "force_download", "extract_archive", "debug"]
+)
+def test_cli_invocation_rejects_invalid_boolean_flags(field_name: str) -> None:
+    kwargs: dict[str, object] = {
+        "dll_names": ("kernel32.dll",),
+        "architecture": Architecture.X64,
+        "scan_enabled": False,
+        "force_download": False,
+        "extract_archive": False,
+        "debug": False,
+    }
+    kwargs[field_name] = "false"
+
+    with pytest.raises(ValueError, match=f"{field_name} must be a boolean"):
+        CLIInvocation(**cast(Any, kwargs))
+
+
+@pytest.mark.unit
+def test_cli_invocation_rejects_invalid_output_dir() -> None:
+    with pytest.raises(ValueError, match="output_dir must be a string or None"):
+        CLIInvocation(
+            dll_names=("kernel32.dll",),
+            architecture=Architecture.X64,
+            scan_enabled=False,
+            force_download=False,
+            extract_archive=False,
+            debug=False,
+            output_dir=cast(str, 1),
         )
 
 
