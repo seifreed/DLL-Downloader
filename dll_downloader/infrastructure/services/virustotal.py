@@ -61,6 +61,27 @@ def _is_finite_number(value: float) -> bool:
     return value == value and value not in (_POSITIVE_INFINITY, _NEGATIVE_INFINITY)
 
 
+def _validate_detection_thresholds(
+    malicious_threshold: int,
+    suspicious_threshold: int,
+) -> None:
+    """Reject thresholds that would invert or collapse VT status semantics."""
+    if (
+        isinstance(malicious_threshold, bool)
+        or not isinstance(malicious_threshold, int)
+        or malicious_threshold <= 0
+    ):
+        raise ValueError("malicious_threshold must be a positive integer")
+    if (
+        isinstance(suspicious_threshold, bool)
+        or not isinstance(suspicious_threshold, int)
+        or suspicious_threshold <= 0
+    ):
+        raise ValueError("suspicious_threshold must be a positive integer")
+    if suspicious_threshold >= malicious_threshold:
+        raise ValueError("suspicious_threshold must be less than malicious_threshold")
+
+
 class VirusTotalError(SecurityServiceError):
     """Exception raised for VirusTotal API errors."""
 
@@ -321,6 +342,7 @@ class VirusTotalScanner(ISecurityScanner):
             suspicious_threshold: Number of positive detections to mark as suspicious
             timeout: Timeout in seconds for VirusTotal API requests
         """
+        _validate_detection_thresholds(malicious_threshold, suspicious_threshold)
         self._api_key = api_key.strip() if api_key else None
         self._malicious_threshold = malicious_threshold
         self._suspicious_threshold = suspicious_threshold
@@ -851,6 +873,8 @@ class VirusTotalScanner(ISecurityScanner):
             return {}
         detections: dict[str, str] = {}
         for engine, result in results.items():
+            if not isinstance(engine, str):
+                continue
             if not isinstance(result, dict):
                 continue
             verdict = result.get("result")
@@ -892,7 +916,9 @@ class VirusTotalScanner(ISecurityScanner):
 
         scan_timestamp = attributes.get("last_analysis_date")
         scan_date: datetime | None = None
-        if isinstance(scan_timestamp, (int, float)):
+        if isinstance(scan_timestamp, (int, float)) and not isinstance(
+            scan_timestamp, bool
+        ):
             try:
                 scan_date = datetime.fromtimestamp(float(scan_timestamp), tz=UTC)
             except (OverflowError, OSError, ValueError):

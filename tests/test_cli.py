@@ -1137,6 +1137,23 @@ def test_sanitize_boundary_message_redacts_windows_paths(message: str) -> None:
     assert "<path>" in sanitized
 
 
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Failed to read file 'secrets/dlls.txt': boom",
+        "Failed to read file './secrets/dlls.txt': boom",
+        "Failed to read file '../secret/dlls.txt': boom",
+    ],
+)
+def test_sanitize_boundary_message_redacts_relative_paths(message: str) -> None:
+    sanitized = sanitize_boundary_message(ValueError(message))
+
+    assert "secret" not in sanitized
+    assert "dlls.txt" not in sanitized
+    assert "<path>" in sanitized
+
+
 # ============================================================================
 # Download Request Tests
 # ============================================================================

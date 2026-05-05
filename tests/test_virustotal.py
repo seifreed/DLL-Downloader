@@ -152,6 +152,27 @@ def test_virustotal_scanner_custom_thresholds() -> None:
     assert scanner._suspicious_threshold == 3
 
 
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("malicious_threshold", "suspicious_threshold"),
+    [
+        (0, 1),
+        (5, 0),
+        (5, 5),
+    ],
+)
+def test_virustotal_scanner_rejects_invalid_thresholds(
+    malicious_threshold: int,
+    suspicious_threshold: int,
+) -> None:
+    with pytest.raises(ValueError, match="threshold"):
+        VirusTotalScanner(
+            api_key="test_key",
+            malicious_threshold=malicious_threshold,
+            suspicious_threshold=suspicious_threshold,
+        )
+
+
 # ============================================================================
 # VirusTotalScanner Availability Tests
 # ============================================================================
@@ -257,6 +278,30 @@ def test_virustotal_scanner_parse_response_with_non_mapping_stats_defaults_unkno
 
     assert result.status == SecurityStatus.UNKNOWN
     assert result.detection_ratio is None
+
+
+@pytest.mark.unit
+def test_virustotal_scanner_ignores_boolean_analysis_date() -> None:
+    scanner = VirusTotalScanner(api_key="test_key")
+
+    result = scanner._parse_response(
+        "a" * 64,
+        {
+            "data": {
+                "attributes": {
+                    "last_analysis_stats": {
+                        "malicious": 0,
+                        "suspicious": 0,
+                        "undetected": 1,
+                    },
+                    "last_analysis_date": True,
+                }
+            }
+        },
+    )
+
+    assert result.status == SecurityStatus.CLEAN
+    assert result.scan_date is None
 
 
 @pytest.mark.unit
@@ -513,6 +558,7 @@ def test_virustotal_scanner_extract_engine_detections_ignores_invalid_shapes() -
                 "attributes": {
                     "last_analysis_results": {
                         "good": {"result": "Malware"},
+                        42: {"result": "Other"},
                         "bad": "oops",
                     }
                 }

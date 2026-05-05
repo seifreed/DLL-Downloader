@@ -2014,6 +2014,34 @@ def test_retry_policy_rejects_negative_jitter() -> None:
         RetryPolicy(jitter_seconds=-0.1)
 
 
+@pytest.mark.unit
+@pytest.mark.parametrize("max_attempts", [cast(int, True), cast(int, 1.5)])
+def test_retry_policy_rejects_non_integer_attempt_count(max_attempts: int) -> None:
+    with pytest.raises(ValueError, match="max_attempts must be a positive integer"):
+        RetryPolicy(max_attempts=max_attempts)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("field_name", "value"),
+    [
+        ("backoff_seconds", float("nan")),
+        ("backoff_seconds", float("inf")),
+        ("jitter_seconds", float("nan")),
+        ("jitter_seconds", float("inf")),
+    ],
+)
+def test_retry_policy_rejects_non_finite_delays(
+    field_name: str,
+    value: float,
+) -> None:
+    with pytest.raises(ValueError, match=f"{field_name} must be finite"):
+        if field_name == "backoff_seconds":
+            RetryPolicy(backoff_seconds=value)
+        else:
+            RetryPolicy(jitter_seconds=value)
+
+
 # ---------------------------------------------------------------------------
 # Regression tests for fixed bugs
 # ---------------------------------------------------------------------------

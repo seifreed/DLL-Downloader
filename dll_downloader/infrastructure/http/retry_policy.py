@@ -4,6 +4,7 @@ Retry policy for infrastructure HTTP requests.
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from math import isfinite
 from random import Random, SystemRandom
 from time import sleep
 
@@ -37,20 +38,27 @@ class RetryPolicy:
     rng: Random = field(default_factory=SystemRandom)
 
     def __post_init__(self) -> None:
+        if isinstance(self.max_attempts, bool) or not isinstance(
+            self.max_attempts, int
+        ):
+            raise ValueError("max_attempts must be a positive integer")
         if self.max_attempts <= 0:
             raise ValueError("max_attempts must be positive")
         if self.max_attempts > _MAX_RETRY_ATTEMPTS:
             raise ValueError(f"max_attempts must not exceed {_MAX_RETRY_ATTEMPTS}")
+        if not isfinite(self.backoff_seconds):
+            raise ValueError("backoff_seconds must be finite")
         if self.backoff_seconds < 0:
             raise ValueError("backoff_seconds cannot be negative")
+        if not isfinite(self.jitter_seconds):
+            raise ValueError("jitter_seconds must be finite")
         if self.jitter_seconds < 0:
             raise ValueError("jitter_seconds cannot be negative")
 
     def should_retry_status(self, status_code: int, attempt: int) -> bool:
         """Return whether a response status should be retried."""
         return (
-            status_code in self.retryable_status_codes
-            and attempt < self.max_attempts
+            status_code in self.retryable_status_codes and attempt < self.max_attempts
         )
 
     def should_retry_exception(
