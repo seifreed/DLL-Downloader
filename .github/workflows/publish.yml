@@ -89,3 +89,50 @@ jobs:
 
       - name: Publish distributions to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+
+  github-release:
+    name: Publish GitHub Release
+    needs: validate-and-build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: python-package-distributions
+          path: dist/
+
+      - name: Generate SHA256 checksums
+        working-directory: dist
+        run: sha256sum * > SHA256SUMS
+
+      - name: Detect prerelease
+        id: prerelease
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          if [[ "$tag" =~ -(rc|beta|alpha|dev|pre)([.0-9]+)?$ ]]; then
+            echo "value=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          generate_release_notes: true
+          prerelease: ${{ steps.prerelease.outputs.value }}
+          fail_on_unmatched_files: true
+          files: |
+            dist/*.whl
+            dist/*.tar.gz
+            dist/SHA256SUMS
