@@ -82,9 +82,11 @@ class FixedResultScanner(VirusTotalScanner):
     def scan_hash(self, file_hash: str) -> ScanResult:
         return self._result
 
+
 # ============================================================================
 # VirusTotalScanner Initialization Tests
 # ============================================================================
+
 
 @pytest.mark.unit
 def test_virustotal_scanner_initialization_with_api_key() -> None:
@@ -143,9 +145,7 @@ def test_virustotal_scanner_custom_thresholds() -> None:
         Custom threshold values are stored.
     """
     scanner = VirusTotalScanner(
-        api_key="test_key",
-        malicious_threshold=10,
-        suspicious_threshold=3
+        api_key="test_key", malicious_threshold=10, suspicious_threshold=3
     )
 
     assert scanner._malicious_threshold == 10
@@ -155,6 +155,7 @@ def test_virustotal_scanner_custom_thresholds() -> None:
 # ============================================================================
 # VirusTotalScanner Availability Tests
 # ============================================================================
+
 
 @pytest.mark.unit
 def test_virustotal_scanner_is_available_with_key() -> None:
@@ -194,6 +195,7 @@ def test_virustotal_scanner_is_available_without_key() -> None:
 # VirusTotalScanner Response Parsing Tests
 # ============================================================================
 
+
 @pytest.mark.unit
 def test_virustotal_scanner_parse_response_clean_file() -> None:
     """
@@ -219,10 +221,10 @@ def test_virustotal_scanner_parse_response_clean_file() -> None:
                     "suspicious": 0,
                     "undetected": 70,
                     "harmless": 2,
-                    "timeout": 0
+                    "timeout": 0,
                 },
                 "last_analysis_results": {},
-                "last_analysis_date": int(datetime.now().timestamp())
+                "last_analysis_date": int(datetime.now().timestamp()),
             }
         }
     }
@@ -237,7 +239,9 @@ def test_virustotal_scanner_parse_response_clean_file() -> None:
 
 
 @pytest.mark.unit
-def test_virustotal_scanner_parse_response_with_non_mapping_stats_defaults_unknown() -> None:
+def test_virustotal_scanner_parse_response_with_non_mapping_stats_defaults_unknown() -> (
+    None
+):
     scanner = VirusTotalScanner(api_key="test_key")
     result = scanner._parse_response(
         "z" * 64,
@@ -276,6 +280,28 @@ def test_virustotal_scanner_parse_response_ignores_negative_noncritical_stats() 
 
     assert result.status == SecurityStatus.CLEAN
     assert result.detection_ratio == "0/72"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("value", [0.4, 0.6, "0.4", "0.6"])
+def test_virustotal_scanner_rejects_fractional_critical_stats(value: object) -> None:
+    scanner = VirusTotalScanner(api_key="test_key")
+
+    with pytest.raises(VirusTotalError, match="non-integer count"):
+        scanner._parse_response(
+            "a" * 64,
+            {
+                "data": {
+                    "attributes": {
+                        "last_analysis_stats": {
+                            "malicious": value,
+                            "suspicious": 0,
+                            "harmless": 70,
+                        },
+                    }
+                }
+            },
+        )
 
 
 @pytest.mark.unit
@@ -332,9 +358,7 @@ def test_virustotal_scanner_parse_response_suspicious_file() -> None:
         - Status is SUSPICIOUS when detections < malicious_threshold
     """
     scanner = VirusTotalScanner(
-        api_key="test_key",
-        malicious_threshold=5,
-        suspicious_threshold=1
+        api_key="test_key", malicious_threshold=5, suspicious_threshold=1
     )
     file_hash = "b" * 64
 
@@ -347,14 +371,14 @@ def test_virustotal_scanner_parse_response_suspicious_file() -> None:
                     "suspicious": 1,
                     "undetected": 69,
                     "harmless": 0,
-                    "timeout": 0
+                    "timeout": 0,
                 },
                 "last_analysis_results": {
                     "Kaspersky": {"result": "Trojan.Generic"},
                     "Avast": {"result": "Malware"},
-                    "AVG": {"result": None}
+                    "AVG": {"result": None},
                 },
-                "last_analysis_date": int(datetime.now().timestamp())
+                "last_analysis_date": int(datetime.now().timestamp()),
             }
         }
     }
@@ -378,9 +402,7 @@ def test_virustotal_scanner_parse_response_malicious_file() -> None:
         Status is MALICIOUS when detections >= malicious_threshold.
     """
     scanner = VirusTotalScanner(
-        api_key="test_key",
-        malicious_threshold=5,
-        suspicious_threshold=1
+        api_key="test_key", malicious_threshold=5, suspicious_threshold=1
     )
     file_hash = "c" * 64
 
@@ -393,14 +415,14 @@ def test_virustotal_scanner_parse_response_malicious_file() -> None:
                     "suspicious": 2,
                     "undetected": 62,
                     "harmless": 0,
-                    "timeout": 0
+                    "timeout": 0,
                 },
                 "last_analysis_results": {
                     "Kaspersky": {"result": "Trojan.Win32.Generic"},
                     "Avast": {"result": "Win32:Malware-gen"},
                     "BitDefender": {"result": "Gen:Variant.Trojan"},
                 },
-                "last_analysis_date": int(datetime.now().timestamp())
+                "last_analysis_date": int(datetime.now().timestamp()),
             }
         }
     }
@@ -435,7 +457,7 @@ def test_virustotal_scanner_parse_response_with_detections_dict() -> None:
                     "suspicious": 0,
                     "undetected": 69,
                     "harmless": 0,
-                    "timeout": 0
+                    "timeout": 0,
                 },
                 "last_analysis_results": {
                     "Kaspersky": {"result": "HEUR:Trojan.Win32.Generic"},
@@ -443,7 +465,7 @@ def test_virustotal_scanner_parse_response_with_detections_dict() -> None:
                     "Microsoft": {"result": "Trojan:Win32/Wacatac"},
                     "Sophos": {"result": None},  # No detection
                 },
-                "last_analysis_date": 1706745600
+                "last_analysis_date": 1706745600,
             }
         }
     }
@@ -477,15 +499,22 @@ def test_virustotal_scanner_extract_engine_detections_ignores_invalid_shapes() -
 
 
 @pytest.mark.unit
-def test_virustotal_scanner_extract_engine_detections_returns_empty_for_non_mapping_results() -> None:
+def test_virustotal_scanner_extract_engine_detections_returns_empty_for_non_mapping_results() -> (
+    None
+):
     scanner = VirusTotalScanner(api_key="test_key")
-    assert scanner._extract_engine_detections(
-        {"data": {"attributes": {"last_analysis_results": "bad"}}}
-    ) == {}
+    assert (
+        scanner._extract_engine_detections(
+            {"data": {"attributes": {"last_analysis_results": "bad"}}}
+        )
+        == {}
+    )
 
 
 @pytest.mark.unit
-def test_virustotal_scanner_extract_attributes_returns_empty_for_invalid_shapes() -> None:
+def test_virustotal_scanner_extract_attributes_returns_empty_for_invalid_shapes() -> (
+    None
+):
     scanner = VirusTotalScanner(api_key="test_key")
     assert scanner._extract_attributes({"data": "bad"}) == {}
     assert scanner._extract_attributes({"data": {"attributes": "bad"}}) == {}
@@ -494,6 +523,7 @@ def test_virustotal_scanner_extract_attributes_returns_empty_for_invalid_shapes(
 # ============================================================================
 # VirusTotalScanner scan_hash Tests
 # ============================================================================
+
 
 @pytest.mark.unit
 def test_virustotal_scanner_scan_hash_unavailable_returns_unknown() -> None:
@@ -537,7 +567,11 @@ def test_virustotal_scanner_scan_hash_with_mock_server(vt_mock_server: int) -> N
     scanner.VT_API_URL = f"http://localhost:{vt_mock_server}"
     original_domains = VirusTotalScanner._VT_ALLOWED_DOMAINS.copy()
     original_private_domains = VirusTotalScanner._VT_PRIVATE_IP_ALLOWED_DOMAINS.copy()
-    VirusTotalScanner._VT_ALLOWED_DOMAINS = {"www.virustotal.com", "virustotal.com", "localhost"}
+    VirusTotalScanner._VT_ALLOWED_DOMAINS = {
+        "www.virustotal.com",
+        "virustotal.com",
+        "localhost",
+    }
     VirusTotalScanner._VT_PRIVATE_IP_ALLOWED_DOMAINS = {"localhost"}
 
     try:
@@ -556,6 +590,7 @@ def test_virustotal_scanner_scan_hash_with_mock_server(vt_mock_server: int) -> N
 # ============================================================================
 # VirusTotalScanner scan_dll Tests
 # ============================================================================
+
 
 @pytest.mark.unit
 def test_virustotal_scanner_scan_dll_without_hash() -> None:
@@ -594,9 +629,7 @@ def test_virustotal_scanner_scan_dll_updates_entity() -> None:
     # and testing _parse_response in isolation
     file_hash = "f" * 64
     dll = DLLFile(
-        name="test.dll",
-        file_hash=file_hash,
-        security_status=SecurityStatus.NOT_SCANNED
+        name="test.dll", file_hash=file_hash, security_status=SecurityStatus.NOT_SCANNED
     )
 
     # We can't easily test this without mocking or a real API,
@@ -609,10 +642,10 @@ def test_virustotal_scanner_scan_dll_updates_entity() -> None:
                     "suspicious": 0,
                     "undetected": 70,
                     "harmless": 2,
-                    "timeout": 0
+                    "timeout": 0,
                 },
                 "last_analysis_results": {},
-                "last_analysis_date": int(datetime.now().timestamp())
+                "last_analysis_date": int(datetime.now().timestamp()),
             }
         }
     }
@@ -624,7 +657,7 @@ def test_virustotal_scanner_scan_dll_updates_entity() -> None:
         dll,
         security_status=scan_result.status,
         vt_detection_ratio=scan_result.detection_ratio,
-        vt_scan_date=scan_result.scan_date
+        vt_scan_date=scan_result.scan_date,
     )
 
     assert updated_dll is not dll  # Different object
@@ -637,6 +670,7 @@ def test_virustotal_scanner_scan_dll_updates_entity() -> None:
 # ============================================================================
 # VirusTotalScanner Session Management Tests
 # ============================================================================
+
 
 @pytest.mark.unit
 def test_virustotal_scanner_session_lazy_initialization() -> None:
@@ -732,6 +766,7 @@ def test_virustotal_scanner_context_manager() -> None:
 # VirusTotalError Tests
 # ============================================================================
 
+
 @pytest.mark.unit
 def test_virustotal_error_creation() -> None:
     """
@@ -810,6 +845,7 @@ def test_virustotal_redirect_with_invalid_port_raises_virustotal_error() -> None
 # Threshold Logic Tests
 # ============================================================================
 
+
 @pytest.mark.unit
 def test_virustotal_scanner_threshold_boundaries() -> None:
     """
@@ -824,9 +860,7 @@ def test_virustotal_scanner_threshold_boundaries() -> None:
         - Below suspicious_threshold = CLEAN
     """
     scanner = VirusTotalScanner(
-        api_key="test_key",
-        malicious_threshold=5,
-        suspicious_threshold=2
+        api_key="test_key", malicious_threshold=5, suspicious_threshold=2
     )
 
     # Exactly at suspicious threshold (2 positives)
@@ -838,10 +872,10 @@ def test_virustotal_scanner_threshold_boundaries() -> None:
                     "suspicious": 1,
                     "undetected": 70,
                     "harmless": 0,
-                    "timeout": 0
+                    "timeout": 0,
                 },
                 "last_analysis_results": {},
-                "last_analysis_date": int(datetime.now().timestamp())
+                "last_analysis_date": int(datetime.now().timestamp()),
             }
         }
     }
@@ -858,10 +892,10 @@ def test_virustotal_scanner_threshold_boundaries() -> None:
                     "suspicious": 0,
                     "undetected": 71,
                     "harmless": 0,
-                    "timeout": 0
+                    "timeout": 0,
                 },
                 "last_analysis_results": {},
-                "last_analysis_date": int(datetime.now().timestamp())
+                "last_analysis_date": int(datetime.now().timestamp()),
             }
         }
     }
@@ -878,10 +912,10 @@ def test_virustotal_scanner_threshold_boundaries() -> None:
                     "suspicious": 1,
                     "undetected": 67,
                     "harmless": 0,
-                    "timeout": 0
+                    "timeout": 0,
                 },
                 "last_analysis_results": {},
-                "last_analysis_date": int(datetime.now().timestamp())
+                "last_analysis_date": int(datetime.now().timestamp()),
             }
         }
     }
@@ -989,8 +1023,10 @@ def test_scan_file_upload_success(
     """
     Verify scan_file uploads when hash not found and returns pending result.
     """
+
     class DummyResponse:
         is_redirect = False
+
         def __init__(self, status_code: int, payload: dict[str, object]) -> None:
             self.status_code = status_code
             self._payload = payload
@@ -1045,8 +1081,10 @@ def test_scan_file_upload_failure_raises(
     """
     Verify scan_file raises on upload failure.
     """
+
     class DummyResponse:
         is_redirect = False
+
         def __init__(self, status_code: int) -> None:
             self.status_code = status_code
 
@@ -1070,7 +1108,9 @@ def test_scan_file_upload_failure_raises(
 
     scanner = HashNotFoundScanner(
         api_key="key",
-        session_resource=_resource_with_session(cast(HTTPSessionProtocol, DummySession())),
+        session_resource=_resource_with_session(
+            cast(HTTPSessionProtocol, DummySession())
+        ),
     )
 
     sample = tmp_download_dir / "file.dll"
@@ -1134,7 +1174,9 @@ def test_scan_file_upload_type_error_raises(
         def get(self, *args: object, **kwargs: object) -> object:
             raise NotImplementedError
 
-        def post(self, url: str, files: object = None, **kwargs: object) -> DummyResponse:
+        def post(
+            self, url: str, files: object = None, **kwargs: object
+        ) -> DummyResponse:
             return DummyResponse()
 
         def head(self, *args: object, **kwargs: object) -> object:
@@ -1145,7 +1187,9 @@ def test_scan_file_upload_type_error_raises(
 
     scanner = HashNotFoundScanner(
         api_key="key",
-        session_resource=_resource_with_session(cast(HTTPSessionProtocol, DummySession())),
+        session_resource=_resource_with_session(
+            cast(HTTPSessionProtocol, DummySession())
+        ),
     )
 
     sample = tmp_download_dir / "file.dll"
@@ -1173,7 +1217,9 @@ def test_scan_file_upload_runtime_json_error_raises_virustotal_error(
         def get(self, *args: object, **kwargs: object) -> object:
             raise NotImplementedError
 
-        def post(self, url: str, files: object = None, **kwargs: object) -> DummyResponse:
+        def post(
+            self, url: str, files: object = None, **kwargs: object
+        ) -> DummyResponse:
             return DummyResponse()
 
         def head(self, *args: object, **kwargs: object) -> object:
@@ -1184,7 +1230,9 @@ def test_scan_file_upload_runtime_json_error_raises_virustotal_error(
 
     scanner = HashNotFoundScanner(
         api_key="key",
-        session_resource=_resource_with_session(cast(HTTPSessionProtocol, DummySession())),
+        session_resource=_resource_with_session(
+            cast(HTTPSessionProtocol, DummySession())
+        ),
     )
 
     sample = tmp_download_dir / "file.dll"
@@ -1199,8 +1247,10 @@ def test_scan_hash_404_raises() -> None:
     """
     Verify scan_hash raises HashNotFoundError on 404.
     """
+
     class DummyResponse:
         is_redirect = False
+
         def __init__(self, status_code: int) -> None:
             self.status_code = status_code
 
@@ -1224,7 +1274,9 @@ def test_scan_hash_404_raises() -> None:
 
     scanner = VirusTotalScanner(
         api_key="key",
-        session_resource=_resource_with_session(cast(HTTPSessionProtocol, DummySession())),
+        session_resource=_resource_with_session(
+            cast(HTTPSessionProtocol, DummySession())
+        ),
     )
 
     with pytest.raises(HashNotFoundError):
@@ -1332,8 +1384,10 @@ def test_scan_hash_non_200_raises() -> None:
     """
     Verify scan_hash raises VirusTotalError on non-200.
     """
+
     class DummyResponse:
         is_redirect = False
+
         def __init__(self, status_code: int) -> None:
             self.status_code = status_code
 
@@ -1357,7 +1411,9 @@ def test_scan_hash_non_200_raises() -> None:
 
     scanner = VirusTotalScanner(
         api_key="key",
-        session_resource=_resource_with_session(cast(HTTPSessionProtocol, DummySession())),
+        session_resource=_resource_with_session(
+            cast(HTTPSessionProtocol, DummySession())
+        ),
     )
 
     with pytest.raises(VirusTotalError):
@@ -1369,6 +1425,7 @@ def test_scan_hash_request_exception_raises() -> None:
     """
     Verify scan_hash wraps exceptions into VirusTotalError.
     """
+
     class DummySession:
         headers: dict[str, str] = {}
 
@@ -1386,7 +1443,9 @@ def test_scan_hash_request_exception_raises() -> None:
 
     scanner = VirusTotalScanner(
         api_key="key",
-        session_resource=_resource_with_session(cast(HTTPSessionProtocol, DummySession())),
+        session_resource=_resource_with_session(
+            cast(HTTPSessionProtocol, DummySession())
+        ),
     )
 
     with pytest.raises(VirusTotalError):
@@ -1434,13 +1493,13 @@ def test_scan_dll_success_updates_entity() -> None:
                         "suspicious": 0,
                         "undetected": 1,
                         "harmless": 0,
-                        "timeout": 0
+                        "timeout": 0,
                     },
                     "last_analysis_results": {},
-                    "last_analysis_date": int(datetime.now().timestamp())
+                    "last_analysis_date": int(datetime.now().timestamp()),
                 }
             }
-        }
+        },
     )
     scanner = FixedResultScanner(scan_result, api_key="key")
 
@@ -1454,8 +1513,10 @@ def test_get_detailed_report_success() -> None:
     """
     Verify get_detailed_report returns JSON on success.
     """
+
     class DummyResponse:
         is_redirect = False
+
         def __init__(self, status_code: int, payload: dict[str, object]) -> None:
             self.status_code = status_code
             self._payload = payload
@@ -1540,8 +1601,10 @@ def test_get_detailed_report_non_200_raises() -> None:
     """
     Verify get_detailed_report raises on non-200 response.
     """
+
     class DummyResponse:
         is_redirect = False
+
         def __init__(self, status_code: int) -> None:
             self.status_code = status_code
 
@@ -1565,7 +1628,9 @@ def test_get_detailed_report_non_200_raises() -> None:
 
     scanner = VirusTotalScanner(
         api_key="key",
-        session_resource=_resource_with_session(cast(HTTPSessionProtocol, DummySession())),
+        session_resource=_resource_with_session(
+            cast(HTTPSessionProtocol, DummySession())
+        ),
     )
 
     with pytest.raises(VirusTotalError):
@@ -1577,6 +1642,7 @@ def test_get_detailed_report_exception_raises() -> None:
     """
     Verify get_detailed_report wraps exceptions into VirusTotalError.
     """
+
     class DummySession:
         headers: dict[str, str] = {}
 
@@ -1594,7 +1660,9 @@ def test_get_detailed_report_exception_raises() -> None:
 
     scanner = VirusTotalScanner(
         api_key="key",
-        session_resource=_resource_with_session(cast(HTTPSessionProtocol, DummySession())),
+        session_resource=_resource_with_session(
+            cast(HTTPSessionProtocol, DummySession())
+        ),
     )
 
     with pytest.raises(VirusTotalError):
@@ -1628,7 +1696,9 @@ def test_get_detailed_report_invalid_json_raises() -> None:
 
     scanner = VirusTotalScanner(
         api_key="key",
-        session_resource=_resource_with_session(cast(HTTPSessionProtocol, DummySession())),
+        session_resource=_resource_with_session(
+            cast(HTTPSessionProtocol, DummySession())
+        ),
     )
 
     with pytest.raises((VirusTotalError, TypeError)):
@@ -1660,6 +1730,7 @@ def test_scan_file_accepts_exact_size_limit(tmp_path: Path) -> None:
         _VT_UPLOAD_MAX_BYTES,
         VirusTotalScanner,
     )
+
     exact_limit_bytes = 32 * 1024 * 1024
     assert exact_limit_bytes == _VT_UPLOAD_MAX_BYTES
 
@@ -1676,6 +1747,9 @@ def test_scan_file_accepts_exact_size_limit(tmp_path: Path) -> None:
     # and compares: if file_size > _VT_UPLOAD_MAX_BYTES => reject.
     # So file_size == _VT_UPLOAD_MAX_BYTES must be accepted.
     import os
+
     st = os.stat(exact_file)
     assert st.st_size == _VT_UPLOAD_MAX_BYTES
-    assert not (st.st_size > _VT_UPLOAD_MAX_BYTES), "exact limit should not exceed upload max"
+    assert not (
+        st.st_size > _VT_UPLOAD_MAX_BYTES
+    ), "exact limit should not exceed upload max"

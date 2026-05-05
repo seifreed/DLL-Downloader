@@ -20,9 +20,39 @@ STRUCTURED_OUTPUT_VERSION = "1.0"
 _logger = logging.getLogger(__name__)
 
 
+def _quote_uri_path(path: str) -> str:
+    parts = path.replace("\\", "/").split("/")
+    return "/".join(quote(part, safe="-._~") for part in parts if part)
+
+
+def _windows_path_to_uri(file_path: str) -> str | None:
+    if file_path.startswith("\\\\"):
+        parts = [part for part in file_path.replace("\\", "/").split("/") if part]
+        if len(parts) < 2:
+            return None
+        host = quote(parts[0], safe="-._~")
+        path = "/".join(quote(part, safe="-._~") for part in parts[1:])
+        return f"file://{host}/{path}"
+
+    if (
+        len(file_path) >= 3
+        and file_path[0].isalpha()
+        and file_path[1] == ":"
+        and file_path[2] in ("\\", "/")
+    ):
+        quoted_path = _quote_uri_path(file_path[2:])
+        suffix = f"/{quoted_path}" if quoted_path else "/"
+        return f"file:///{file_path[:2]}{suffix}"
+
+    return None
+
+
 def _path_to_uri(file_path: str | None) -> str | None:
     if file_path is None or not file_path:
         return None
+    windows_uri = _windows_path_to_uri(file_path)
+    if windows_uri is not None:
+        return windows_uri
     p = Path(file_path)
     try:
         return p.as_uri()
@@ -184,7 +214,9 @@ class DownloadBatchSARIFPresenter:
         results: list[dict[str, Any]] = []
         for item in items:
             results.append(
-                self._build_item_result(item.dll_name, item.response, architecture_label)
+                self._build_item_result(
+                    item.dll_name, item.response, architecture_label
+                )
             )
             if item.response.security_warning:
                 results.append(
@@ -243,7 +275,9 @@ class DownloadBatchSARIFPresenter:
             result["locations"] = [
                 {
                     "physicalLocation": {
-                        "artifactLocation": {"uri": _path_to_uri(response.dll_file.file_path)}
+                        "artifactLocation": {
+                            "uri": _path_to_uri(response.dll_file.file_path)
+                        }
                     }
                 }
             ]
@@ -269,7 +303,9 @@ class DownloadBatchSARIFPresenter:
             result["locations"] = [
                 {
                     "physicalLocation": {
-                        "artifactLocation": {"uri": _path_to_uri(response.dll_file.file_path)}
+                        "artifactLocation": {
+                            "uri": _path_to_uri(response.dll_file.file_path)
+                        }
                     }
                 }
             ]

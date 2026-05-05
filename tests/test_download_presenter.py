@@ -41,7 +41,10 @@ def test_download_batch_presenter_summary_and_boundary_error() -> None:
     )
 
     assert summary == "\nSummary: 1 succeeded, 1 failed"
-    assert presenter.boundary_error("boom") == "[ERROR] Batch download failed (1 failed): boom"
+    assert (
+        presenter.boundary_error("boom")
+        == "[ERROR] Batch download failed (1 failed): boom"
+    )
 
 
 @pytest.mark.unit
@@ -183,11 +186,19 @@ def test_download_batch_sarif_presenter_emits_warning_and_locations() -> None:
     )
     results = payload["runs"][0]["results"]
 
-    assert results[0]["locations"][0]["physicalLocation"]["artifactLocation"]["uri"].startswith("file:///")
-    assert results[0]["locations"][0]["physicalLocation"]["artifactLocation"]["uri"].endswith("/warn.dll")
+    assert results[0]["locations"][0]["physicalLocation"]["artifactLocation"][
+        "uri"
+    ].startswith("file:///")
+    assert results[0]["locations"][0]["physicalLocation"]["artifactLocation"][
+        "uri"
+    ].endswith("/warn.dll")
     assert results[1]["ruleId"] == "dll-downloader/security-warning"
-    assert results[1]["locations"][0]["physicalLocation"]["artifactLocation"]["uri"].startswith("file:///")
-    assert results[1]["locations"][0]["physicalLocation"]["artifactLocation"]["uri"].endswith("/warn.dll")
+    assert results[1]["locations"][0]["physicalLocation"]["artifactLocation"][
+        "uri"
+    ].startswith("file:///")
+    assert results[1]["locations"][0]["physicalLocation"]["artifactLocation"][
+        "uri"
+    ].endswith("/warn.dll")
 
 
 @pytest.mark.unit
@@ -275,5 +286,65 @@ def test_sarif_uses_file_uri_scheme_for_absolute_paths() -> None:
             "x64",
         )[0]
     )
-    uri = payload["runs"][0]["results"][0]["locations"][0]["physicalLocation"]["artifactLocation"]["uri"]
+    uri = payload["runs"][0]["results"][0]["locations"][0]["physicalLocation"][
+        "artifactLocation"
+    ]["uri"]
     assert uri.startswith("file:///"), f"Expected file:/// URI, got: {uri}"
+
+
+@pytest.mark.unit
+def test_sarif_uses_file_uri_scheme_for_windows_absolute_paths() -> None:
+    presenter = DownloadBatchSARIFPresenter()
+    dll_file = DLLFile(
+        name="test.dll",
+        architecture=Architecture.X64,
+        file_path=r"C:\Downloads\x64\test.dll",
+    )
+
+    payload = json.loads(
+        presenter.render_batch(
+            DownloadBatchResponse(
+                items=[
+                    DownloadBatchItem(
+                        dll_name="test.dll",
+                        response=DownloadDLLResponse(success=True, dll_file=dll_file),
+                    )
+                ]
+            ),
+            "x64",
+        )[0]
+    )
+
+    uri = payload["runs"][0]["results"][0]["locations"][0]["physicalLocation"][
+        "artifactLocation"
+    ]["uri"]
+    assert uri == "file:///C:/Downloads/x64/test.dll"
+
+
+@pytest.mark.unit
+def test_sarif_uses_file_uri_scheme_for_windows_unc_paths() -> None:
+    presenter = DownloadBatchSARIFPresenter()
+    dll_file = DLLFile(
+        name="test.dll",
+        architecture=Architecture.X64,
+        file_path=r"\\server\share\test.dll",
+    )
+
+    payload = json.loads(
+        presenter.render_batch(
+            DownloadBatchResponse(
+                items=[
+                    DownloadBatchItem(
+                        dll_name="test.dll",
+                        response=DownloadDLLResponse(success=True, dll_file=dll_file),
+                    )
+                ]
+            ),
+            "x64",
+        )[0]
+    )
+
+    uri = payload["runs"][0]["results"][0]["locations"][0]["physicalLocation"][
+        "artifactLocation"
+    ]["uri"]
+    assert uri == "file://server/share/test.dll"

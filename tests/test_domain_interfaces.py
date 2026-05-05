@@ -1,4 +1,4 @@
-from collections.abc import Mapping
+from collections.abc import Mapping, MutableMapping
 from typing import cast
 
 import pytest
@@ -97,14 +97,34 @@ def test_idllrepository_pass_throughs() -> None:
 
 @pytest.mark.unit
 def test_scan_result_detection_count_variants() -> None:
-    empty_detections = ScanResult(file_hash="x", status=SecurityStatus.CLEAN, detection_ratio="5/70")
+    empty_detections = ScanResult(
+        file_hash="x", status=SecurityStatus.CLEAN, detection_ratio="5/70"
+    )
     assert empty_detections.detection_count == 0
 
-    bad_ratio = ScanResult(file_hash="x", status=SecurityStatus.CLEAN, detection_ratio="bad")
+    bad_ratio = ScanResult(
+        file_hash="x", status=SecurityStatus.CLEAN, detection_ratio="bad"
+    )
     assert bad_ratio.detection_count == 0
 
-    from_detections = ScanResult(file_hash="x", status=SecurityStatus.CLEAN, detections={"a": "X", "b": ""})
+    from_detections = ScanResult(
+        file_hash="x", status=SecurityStatus.CLEAN, detections={"a": "X", "b": ""}
+    )
     assert from_detections.detection_count == 1
+
+
+@pytest.mark.unit
+def test_scan_result_detections_are_snapshot_immutable() -> None:
+    source = {"Engine": "Malware"}
+    result = ScanResult(
+        file_hash="x", status=SecurityStatus.MALICIOUS, detections=source
+    )
+
+    source["Later"] = "Other"
+
+    assert dict(result.detections) == {"Engine": "Malware"}
+    with pytest.raises(TypeError):
+        cast(MutableMapping[str, str], result.detections)["New"] = "Bad"
 
 
 @pytest.mark.unit
@@ -130,7 +150,10 @@ def test_isecurityscanner_pass_throughs() -> None:
 @pytest.mark.unit
 def test_download_resolver_protocol_body() -> None:
     resolver = cast(IDownloadURLResolver, None)
-    assert IDownloadURLResolver.resolve_download_url(resolver, "a.dll", Architecture.X64) is None
+    assert (
+        IDownloadURLResolver.resolve_download_url(resolver, "a.dll", Architecture.X64)
+        is None
+    )
 
 
 @pytest.mark.unit

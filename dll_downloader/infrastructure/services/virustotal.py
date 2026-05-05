@@ -37,6 +37,8 @@ _API_KEY_MISSING = "VirusTotal API key not configured"
 _VT_UPLOAD_MAX_BYTES = 32 * 1024 * 1024  # 32 MiB
 _VT_RESPONSE_MAX_BYTES = 64 * 1024 * 1024  # 64 MiB
 _READ_FILE_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0)
+_POSITIVE_INFINITY = float("inf")
+_NEGATIVE_INFINITY = float("-inf")
 
 
 def _host_port_netloc(hostname: str, port: int | None) -> str:
@@ -55,6 +57,10 @@ def _is_valid_hash(value: str) -> bool:
     return all(c in "0123456789abcdefABCDEF" for c in value)
 
 
+def _is_finite_number(value: float) -> bool:
+    return value == value and value not in (_POSITIVE_INFINITY, _NEGATIVE_INFINITY)
+
+
 class VirusTotalError(SecurityServiceError):
     """Exception raised for VirusTotal API errors."""
 
@@ -65,6 +71,7 @@ class VirusTotalError(SecurityServiceError):
 
 class HashNotFoundError(VirusTotalError):
     """Exception raised when a hash has no VirusTotal results."""
+
     pass
 
 
@@ -83,8 +90,12 @@ def _safe_int(value: object, *, strict: bool = False) -> int:  # noqa: C901
     """
     if isinstance(value, bool):
         if strict:
-            raise VirusTotalError(f"VT API returned boolean for integer field: {value!r}")
-        logger.warning("VT API returned boolean for integer field: %r, defaulting to 0", value)
+            raise VirusTotalError(
+                f"VT API returned boolean for integer field: {value!r}"
+            )
+        logger.warning(
+            "VT API returned boolean for integer field: %r, defaulting to 0", value
+        )
         return 0
     if isinstance(value, int):
         if value < 0:
@@ -94,9 +105,16 @@ def _safe_int(value: object, *, strict: bool = False) -> int:  # noqa: C901
             return 0
         return value
     if isinstance(value, float):
-        if value != value or value == float('inf') or value == float('-inf'):
+        if not _is_finite_number(value):
             raise VirusTotalError(f"VT API returned non-finite float: {value!r}")
-        result = int(round(value))
+        if not value.is_integer():
+            if strict:
+                raise VirusTotalError(f"VT API returned non-integer count: {value!r}")
+            logger.warning(
+                "VT API returned non-integer count: %r, defaulting to 0", value
+            )
+            return 0
+        result = int(value)
         if result < 0:
             if strict:
                 raise VirusTotalError(f"VT API returned negative count: {result}")
@@ -105,21 +123,40 @@ def _safe_int(value: object, *, strict: bool = False) -> int:  # noqa: C901
         return result
     if isinstance(value, str):
         try:
-            result = int(round(float(value)))
-            if result < 0:
-                if strict:
-                    raise VirusTotalError(f"VT API returned negative count: {result}")
-                logger.warning(
-                    "VT API returned negative count: %r, defaulting to 0",
-                    value,
-                )
-                return 0
-            return result
-        except (ValueError, OverflowError) as exc:
+            parsed = float(value)
+        except ValueError as exc:
             if strict:
-                raise VirusTotalError(f"VT API returned unparseable integer value: {value!r}") from exc
-            logger.warning("VT API returned unparseable integer value: %r, defaulting to 0", value)
+                raise VirusTotalError(
+                    f"VT API returned unparseable integer value: {value!r}"
+                ) from exc
+            logger.warning(
+                "VT API returned unparseable integer value: %r, defaulting to 0", value
+            )
             return 0
+        if not _is_finite_number(parsed):
+            if strict:
+                raise VirusTotalError(f"VT API returned non-finite count: {value!r}")
+            logger.warning(
+                "VT API returned non-finite count: %r, defaulting to 0", value
+            )
+            return 0
+        if not parsed.is_integer():
+            if strict:
+                raise VirusTotalError(f"VT API returned non-integer count: {value!r}")
+            logger.warning(
+                "VT API returned non-integer count: %r, defaulting to 0", value
+            )
+            return 0
+        result = int(parsed)
+        if result < 0:
+            if strict:
+                raise VirusTotalError(f"VT API returned negative count: {result}")
+            logger.warning(
+                "VT API returned negative count: %r, defaulting to 0",
+                value,
+            )
+            return 0
+        return result
     if value is None:
         if strict:
             raise VirusTotalError("VT API returned null for integer field")
@@ -127,10 +164,17 @@ def _safe_int(value: object, *, strict: bool = False) -> int:  # noqa: C901
         return 0
     if isinstance(value, (dict, list)):
         if strict:
-            raise VirusTotalError(f"VT API returned unexpected type for integer field: {value!r}")
-        logger.warning("VT API returned unexpected type for integer field: %r, defaulting to 0", value)
+            raise VirusTotalError(
+                f"VT API returned unexpected type for integer field: {value!r}"
+            )
+        logger.warning(
+            "VT API returned unexpected type for integer field: %r, defaulting to 0",
+            value,
+        )
         return 0
-    raise VirusTotalError(f"VT API returned unexpected type for integer field: {value!r}")
+    raise VirusTotalError(
+        f"VT API returned unexpected type for integer field: {value!r}"
+    )
 
 
 def _safe_json(response: HTTPResponseProtocol) -> dict[str, object]:
@@ -299,10 +343,7 @@ class VirusTotalScanner(ISecurityScanner):
         self._timeout = timeout
         session_headers: dict[str, str] = {}
         if self._api_key:
-            session_headers = {
-                'x-apikey': self._api_key,
-                'Accept': 'application/json'
-            }
+            session_headers = {"x-apikey": self._api_key, "Accept": "application/json"}
         self._session_resource = session_resource or HTTPSessionResource(
             headers=session_headers
         )
@@ -339,26 +380,45 @@ class VirusTotalScanner(ISecurityScanner):
             addr = ipaddress.ip_address(hostname)
             if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped is not None:
                 addr = addr.ipv4_mapped
-            return addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved or addr.is_multicast
+            return (
+                addr.is_private
+                or addr.is_loopback
+                or addr.is_link_local
+                or addr.is_reserved
+                or addr.is_multicast
+            )
         except ValueError:
             pass
         try:
-            resolved = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+            resolved = socket.getaddrinfo(
+                hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM
+            )
             for _family, _type, _proto, _canonname, sockaddr in resolved:
                 ip_str = sockaddr[0]
                 try:
                     resolved_addr = ipaddress.ip_address(ip_str)
-                    if isinstance(resolved_addr, ipaddress.IPv6Address) and resolved_addr.ipv4_mapped is not None:
+                    if (
+                        isinstance(resolved_addr, ipaddress.IPv6Address)
+                        and resolved_addr.ipv4_mapped is not None
+                    ):
                         resolved_addr = resolved_addr.ipv4_mapped
                 except ValueError:
                     continue
-                if resolved_addr.is_private or resolved_addr.is_loopback or resolved_addr.is_link_local or resolved_addr.is_reserved or resolved_addr.is_multicast:
+                if (
+                    resolved_addr.is_private
+                    or resolved_addr.is_loopback
+                    or resolved_addr.is_link_local
+                    or resolved_addr.is_reserved
+                    or resolved_addr.is_multicast
+                ):
                     return True
         except (socket.gaierror, socket.herror, OSError):
             return True
         return False
 
-    def _safe_get(self, url: str, **kwargs: object) -> HTTPResponseProtocol:  # noqa: C901
+    def _safe_get(
+        self, url: str, **kwargs: object
+    ) -> HTTPResponseProtocol:  # noqa: C901
         """Issue a GET request with SSRF and redirect validation."""
         kwargs.setdefault("allow_redirects", False)
         kwargs.setdefault("timeout", self._timeout)
@@ -371,11 +431,15 @@ class VirusTotalScanner(ISecurityScanner):
             location = _header_value(dict(response.headers), "location") or ""
             self._close_response(response)
             if not location:
-                raise VirusTotalError(f"Redirect response missing Location header for {current_url}")
+                raise VirusTotalError(
+                    f"Redirect response missing Location header for {current_url}"
+                )
             current_url = self._resolve_redirect_url(current_url, location)
         raise VirusTotalError(f"Too many redirects (> {self._MAX_REDIRECT_HOPS})")
 
-    def _safe_post(self, url: str, **kwargs: object) -> HTTPResponseProtocol:  # noqa: C901
+    def _safe_post(
+        self, url: str, **kwargs: object
+    ) -> HTTPResponseProtocol:  # noqa: C901
         """Issue a POST request with SSRF validation (no redirects for POST)."""
         kwargs.setdefault("allow_redirects", False)
         kwargs.setdefault("timeout", self._timeout)
@@ -389,7 +453,9 @@ class VirusTotalScanner(ISecurityScanner):
             location = location.strip()
             self._close_response(response)
             if not location:
-                raise VirusTotalError(f"Redirect response missing Location header for {current_url}")
+                raise VirusTotalError(
+                    f"Redirect response missing Location header for {current_url}"
+                )
             current_url = self._resolve_redirect_url(current_url, location)
             self._validate_api_url(current_url, redirect=True)
             if response.status_code in (307, 308):
@@ -433,10 +499,9 @@ class VirusTotalScanner(ISecurityScanner):
             raise VirusTotalError(
                 f"{prefix} to disallowed or private-address hostname rejected: {hostname}"
             )
-        if (
-            self._hostname_resolves_to_private_ip(hostname)
-            and not self._hostname_private_ip_is_allowed(hostname)
-        ):
+        if self._hostname_resolves_to_private_ip(
+            hostname
+        ) and not self._hostname_private_ip_is_allowed(hostname):
             prefix = "Redirect" if redirect else "Request"
             raise VirusTotalError(
                 f"{prefix} to hostname resolving to private IP rejected: {hostname}"
@@ -450,10 +515,9 @@ class VirusTotalScanner(ISecurityScanner):
             resolved_url = urljoin(current_url, location)
         else:
             resolved_url = location
-        if (
-            current_url.lower().startswith("https://")
-            and resolved_url.lower().startswith("http://")
-        ):
+        if current_url.lower().startswith(
+            "https://"
+        ) and resolved_url.lower().startswith("http://"):
             raise VirusTotalError(f"HTTPS to HTTP redirect rejected: {resolved_url}")
         return VirusTotalScanner._strip_url_credentials(resolved_url)
 
@@ -510,7 +574,7 @@ class VirusTotalScanner(ISecurityScanner):
             return ScanResult(
                 file_hash=computed_hash,
                 status=SecurityStatus.UNKNOWN,
-                error_message=_API_KEY_MISSING
+                error_message=_API_KEY_MISSING,
             )
 
         content = self._read_upload_content(file_path)
@@ -531,7 +595,7 @@ class VirusTotalScanner(ISecurityScanner):
                 for indicator in ("unauthorized", "forbidden", "rate limit")
             ):
                 raise
-            status_code = getattr(exc, 'status_code', None)
+            status_code = getattr(exc, "status_code", None)
             if status_code is not None:
                 raise
             logger.info(
@@ -541,7 +605,7 @@ class VirusTotalScanner(ISecurityScanner):
         response: HTTPResponseProtocol | None = None
         try:
             filename = Path(file_path).name
-            files = {'file': (filename, upload_content)}
+            files = {"file": (filename, upload_content)}
             response = self._safe_post(
                 f"{self.VT_API_URL}/files",
                 files=files,
@@ -560,7 +624,7 @@ class VirusTotalScanner(ISecurityScanner):
             return ScanResult(
                 file_hash=file_hash,
                 status=SecurityStatus.UNKNOWN,
-                error_message="File submitted for analysis. Results pending."
+                error_message="File submitted for analysis. Results pending.",
             )
 
         except (
@@ -594,14 +658,10 @@ class VirusTotalScanner(ISecurityScanner):
         try:
             fd = os.open(str(path), _READ_FILE_FLAGS)
         except FileNotFoundError:
-            raise VirusTotalError(
-                "File upload failed: path does not exist"
-            ) from None
+            raise VirusTotalError("File upload failed: path does not exist") from None
         except OSError as e:
             if e.errno == errno.ELOOP:
-                raise VirusTotalError(
-                    "File upload failed: path is a symlink"
-                ) from e
+                raise VirusTotalError("File upload failed: path is a symlink") from e
             raise VirusTotalError(f"File upload failed: {e}") from e
 
         try:
@@ -609,9 +669,7 @@ class VirusTotalScanner(ISecurityScanner):
             if not stat.S_ISREG(st.st_mode):
                 os.close(fd)
                 fd = -1
-                raise VirusTotalError(
-                    "File upload failed: path is not a regular file"
-                )
+                raise VirusTotalError("File upload failed: path is not a regular file")
             file_size = st.st_size
             if file_size > _VT_UPLOAD_MAX_BYTES:
                 raise VirusTotalError(
@@ -650,7 +708,7 @@ class VirusTotalScanner(ISecurityScanner):
             return ScanResult(
                 file_hash=file_hash,
                 status=SecurityStatus.UNKNOWN,
-                error_message=_API_KEY_MISSING
+                error_message=_API_KEY_MISSING,
             )
 
         if not _is_valid_hash(file_hash):
@@ -705,7 +763,9 @@ class VirusTotalScanner(ISecurityScanner):
             )
 
         except HashNotFoundError:
-            logger.info("No VT results for %s, file not previously scanned", dll_file.name)
+            logger.info(
+                "No VT results for %s, file not previously scanned", dll_file.name
+            )
             return replace(
                 dll_file,
                 security_status=SecurityStatus.UNKNOWN,
@@ -837,8 +897,8 @@ class VirusTotalScanner(ISecurityScanner):
         if not isinstance(stats, dict):
             stats = {}
 
-        malicious = _safe_int(stats.get('malicious', 0), strict=True)
-        suspicious = _safe_int(stats.get('suspicious', 0), strict=True)
+        malicious = _safe_int(stats.get("malicious", 0), strict=True)
+        suspicious = _safe_int(stats.get("suspicious", 0), strict=True)
         total = sum(_safe_int(v) for v in stats.values())
         total_positives = malicious + suspicious
 
@@ -862,7 +922,7 @@ class VirusTotalScanner(ISecurityScanner):
             detection_ratio=detection_ratio,
             detections=detections,
             scan_date=scan_date,
-            permalink=f"https://www.virustotal.com/gui/file/{file_hash}"
+            permalink=f"https://www.virustotal.com/gui/file/{file_hash}",
         )
 
     @staticmethod

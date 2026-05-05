@@ -38,19 +38,21 @@ class ScanResult:
     error_message: str | None = None
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, 'detections', MappingProxyType(self.detections))
+        object.__setattr__(self, "detections", MappingProxyType(dict(self.detections)))
 
     def __hash__(self) -> int:
         detections_tuple = tuple(sorted(self.detections.items()))
-        return hash((
-            self.file_hash,
-            self.status,
-            self.detection_ratio,
-            detections_tuple,
-            self.scan_date,
-            self.permalink,
-            self.error_message,
-        ))
+        return hash(
+            (
+                self.file_hash,
+                self.status,
+                self.detection_ratio,
+                detections_tuple,
+                self.scan_date,
+                self.permalink,
+                self.error_message,
+            )
+        )
 
     @property
     def is_clean(self) -> bool:
@@ -61,10 +63,13 @@ class ScanResult:
     def detection_count(self) -> int:
         """Get the number of positive detections from the detailed engine results."""
         non_detection_values = {"", "undetected", "clean", "safe"}
-        return len([
-            d for d in self.detections.values()
-            if d and d.lower() not in non_detection_values
-        ])
+        return len(
+            [
+                d
+                for d in self.detections.values()
+                if d and d.lower() not in non_detection_values
+            ]
+        )
 
 
 class ISecurityScanner(ABC):
