@@ -3014,13 +3014,13 @@ def test_zip_with_too_many_members_rejected() -> None:
     must be rejected before per-member iteration to prevent enumeration DoS.
     """
     from dll_downloader.application.errors import ArchiveExtractionError
-    from dll_downloader.application.use_cases.download_dll import (
-        _ZIP_MEMBER_COUNT_LIMIT,
+    from dll_downloader.domain.services.archive_safety import (
+        ZIP_MEMBER_COUNT_LIMIT,
     )
 
     archive_buffer = io.BytesIO()
     with zipfile.ZipFile(archive_buffer, "w", compression=zipfile.ZIP_STORED) as archive:
-        for index in range(_ZIP_MEMBER_COUNT_LIMIT + 1):
+        for index in range(ZIP_MEMBER_COUNT_LIMIT + 1):
             archive.writestr(f"entry_{index:05d}.bin", b"")
     payload = archive_buffer.getvalue()
 

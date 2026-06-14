@@ -30,6 +30,11 @@ from ...domain.errors import (
 )
 from ...domain.repositories.dll_repository import IDLLRepository
 from ...domain.services import IHTTPClient, calculate_sha256
+from ...domain.services.archive_safety import (
+    ZIP_MEMBER_COUNT_LIMIT,
+    ZIP_MEMBER_SIZE_LIMIT,
+    zip_member_basename,
+)
 from ...domain.services.download_resolver import IDownloadURLResolver
 from ...domain.services.pe_validation import (
     inspect_pe_dll_architecture,
@@ -48,9 +53,7 @@ _ZIP_MEMBER_READ_ERRORS = (
     ValueError,
 )
 _ZIP_COMPRESSION_RATIO_LIMIT = 100
-_ZIP_MEMBER_SIZE_LIMIT = 512 * 1024 * 1024  # 512 MiB
 _ZIP_COMPRESSED_SIZE_LIMIT = 100 * 1024 * 1024  # 100 MiB
-_ZIP_MEMBER_COUNT_LIMIT = 4096
 _ZIP_SIGNATURES = (b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08", b"PK\x01\x02")
 _READ_FILE_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0)
 
@@ -564,7 +567,7 @@ class DownloadDLLUseCase:
         """Extract and validate the preferred DLL member from a ZIP payload."""
         with zipfile.ZipFile(BytesIO(content)) as archive:
             members = archive.infolist()
-            if len(members) > _ZIP_MEMBER_COUNT_LIMIT:
+            if len(members) > ZIP_MEMBER_COUNT_LIMIT:
                 raise ArchiveExtractionError(
                     "ZIP archive has too many members, possible enumeration bomb"
                 )
@@ -572,7 +575,7 @@ class DownloadDLLUseCase:
             for member in members:
                 if member.is_dir():
                     continue
-                if member.file_size > _ZIP_MEMBER_SIZE_LIMIT:
+                if member.file_size > ZIP_MEMBER_SIZE_LIMIT:
                     raise ArchiveExtractionError("ZIP member exceeds size limit")
                 if member.compress_size > _ZIP_COMPRESSED_SIZE_LIMIT:
                     raise ArchiveExtractionError(
@@ -592,7 +595,7 @@ class DownloadDLLUseCase:
                         "ZIP member has suspicious compression ratio, possible ZIP bomb"
                     )
                 total_decompressed_size += member.file_size
-            if total_decompressed_size > _ZIP_MEMBER_SIZE_LIMIT:
+            if total_decompressed_size > ZIP_MEMBER_SIZE_LIMIT:
                 raise ArchiveExtractionError(
                     "ZIP total decompressed size exceeds limit"
                 )
@@ -614,8 +617,7 @@ class DownloadDLLUseCase:
                 [
                     member
                     for member in matching_members
-                    if member.filename.replace("\\", "/").rsplit("/", 1)[-1].lower()
-                    == expected_name
+                    if zip_member_basename(member.filename) == expected_name
                 ],
                 key=lambda m: m.filename.replace("\\", "/").count("/"),
             )
@@ -636,7 +638,7 @@ class DownloadDLLUseCase:
                 if not extracted_content:
                     empty_member_found = True
                     continue
-                if len(extracted_content) > _ZIP_MEMBER_SIZE_LIMIT:
+                if len(extracted_content) > ZIP_MEMBER_SIZE_LIMIT:
                     raise ArchiveExtractionError("Extracted DLL exceeds size limit")
                 if len(extracted_content) != member.file_size:
                     raise ArchiveExtractionError(
@@ -677,9 +679,8 @@ class DownloadDLLUseCase:
             raise DownloadExecutionError(
                 f"Downloaded DLL uses unsupported PE machine type 0x{inspection.unsupported_machine:04x}"
             )
-        if not inspection.is_valid_dll:
+        if not inspection.is_valid_dll or inspection.architecture is None:
             raise DownloadExecutionError(_INVALID_PE_MESSAGE)
-        assert inspection.architecture is not None
         return inspection.architecture
 
     @classmethod

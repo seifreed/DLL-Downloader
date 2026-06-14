@@ -7,6 +7,7 @@ from collections.abc import Mapping
 
 from ...domain.services.http_client import HTTPFileInfo
 from ..http_session import HTTPSessionProtocol, HTTPSessionResource
+from ..validation import validate_positive_timeout
 from .request_headers import RequestHeaderBuilder
 from .response_stream import (
     close_response,
@@ -15,7 +16,6 @@ from .response_stream import (
     file_info_from_headers,
     read_bounded_response,
     validate_positive_size,
-    validate_positive_timeout,
 )
 from .retry_policy import RetryPolicy
 from .transport import (

@@ -14,6 +14,7 @@ from ..application.use_cases.download_batch import (
 from ..application.use_cases.download_dll import DownloadDLLRequest, DownloadDLLResponse
 from ..bootstrap import DownloadApplication
 from ..domain.entities.dll_file import Architecture
+from ..domain.validation import validate_is_architecture, validate_is_bool
 from ..infrastructure.config.settings import Settings
 from .cli_contracts import (
     BatchPresenter,
@@ -44,16 +45,6 @@ class SupportsDownloadExecution(Protocol):
         pass
 
 
-def _validate_cli_architecture(value: object) -> None:
-    if not isinstance(value, Architecture):
-        raise ValueError("architecture must be an Architecture")
-
-
-def _validate_cli_bool(value: object, field_name: str) -> None:
-    if not isinstance(value, bool):
-        raise ValueError(f"{field_name} must be a boolean")
-
-
 def _validate_cli_output_dir(value: object) -> None:
     if value is not None and not isinstance(value, str):
         raise ValueError("output_dir must be a string or None")
@@ -70,11 +61,11 @@ class CLIBatchDownloadCommand:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "dll_names", snapshot_dll_names(self.dll_names))
-        _validate_cli_architecture(self.architecture)
-        _validate_cli_bool(self.scan_enabled, "scan_enabled")
-        _validate_cli_bool(self.force_download, "force_download")
-        _validate_cli_bool(self.extract_archive, "extract_archive")
-        _validate_cli_bool(self.debug, "debug")
+        validate_is_architecture(self.architecture)
+        validate_is_bool(self.scan_enabled, "scan_enabled")
+        validate_is_bool(self.force_download, "force_download")
+        validate_is_bool(self.extract_archive, "extract_archive")
+        validate_is_bool(self.debug, "debug")
 
 
 @dataclass(frozen=True)
@@ -102,11 +93,11 @@ class CLIInvocation:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "dll_names", snapshot_dll_names(self.dll_names))
-        _validate_cli_architecture(self.architecture)
-        _validate_cli_bool(self.scan_enabled, "scan_enabled")
-        _validate_cli_bool(self.force_download, "force_download")
-        _validate_cli_bool(self.extract_archive, "extract_archive")
-        _validate_cli_bool(self.debug, "debug")
+        validate_is_architecture(self.architecture)
+        validate_is_bool(self.scan_enabled, "scan_enabled")
+        validate_is_bool(self.force_download, "force_download")
+        validate_is_bool(self.extract_archive, "extract_archive")
+        validate_is_bool(self.debug, "debug")
         _validate_cli_output_dir(self.output_dir)
 
 

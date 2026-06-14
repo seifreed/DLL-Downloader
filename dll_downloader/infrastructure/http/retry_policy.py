@@ -4,12 +4,13 @@ Retry policy for infrastructure HTTP requests.
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from math import isfinite
 from random import Random, SystemRandom
 from time import sleep
 
 import requests
 from requests import exceptions as requests_exceptions
+
+from ..validation import validate_non_negative_number
 
 _NON_RETRYABLE_EXCEPTIONS: tuple[type[requests.RequestException], ...] = (
     requests_exceptions.InvalidSchema,
@@ -22,15 +23,6 @@ _NON_RETRYABLE_EXCEPTIONS: tuple[type[requests.RequestException], ...] = (
 
 
 _MAX_RETRY_ATTEMPTS = 100
-
-
-def _validate_delay(value: float, field_name: str) -> None:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ValueError(f"{field_name} must be a number")
-    if not isfinite(value):
-        raise ValueError(f"{field_name} must be finite")
-    if value < 0:
-        raise ValueError(f"{field_name} cannot be negative")
 
 
 @dataclass
@@ -70,8 +62,8 @@ class RetryPolicy:
             raise ValueError("max_attempts must be positive")
         if self.max_attempts > _MAX_RETRY_ATTEMPTS:
             raise ValueError(f"max_attempts must not exceed {_MAX_RETRY_ATTEMPTS}")
-        _validate_delay(self.backoff_seconds, "backoff_seconds")
-        _validate_delay(self.jitter_seconds, "jitter_seconds")
+        validate_non_negative_number(self.backoff_seconds, "backoff_seconds")
+        validate_non_negative_number(self.jitter_seconds, "jitter_seconds")
 
     def should_retry_status(self, status_code: int, attempt: int) -> bool:
         """Return whether a response status should be retried."""

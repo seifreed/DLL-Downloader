@@ -9,6 +9,7 @@ from typing import Protocol
 
 from ...domain.entities.dll_file import Architecture, normalize_dll_name
 from ...domain.errors import DomainPortError
+from ...domain.validation import validate_is_architecture, validate_is_bool
 from ..errors import ApplicationError
 from .download_dll import DownloadDLLRequest, DownloadDLLResponse
 
@@ -24,16 +25,6 @@ def snapshot_dll_names(dll_names: Sequence[str]) -> tuple[str, ...]:
 
 def _display_dll_name(dll_name: object) -> str:
     return dll_name if isinstance(dll_name, str) else repr(dll_name)
-
-
-def _validate_batch_architecture(value: object) -> None:
-    if not isinstance(value, Architecture):
-        raise ValueError("architecture must be an Architecture")
-
-
-def _validate_batch_bool(value: object, field_name: str) -> None:
-    if not isinstance(value, bool):
-        raise ValueError(f"{field_name} must be a boolean")
 
 
 class SupportsDownloadExecution(Protocol):
@@ -69,10 +60,10 @@ class DownloadBatchRequest:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "dll_names", snapshot_dll_names(self.dll_names))
-        _validate_batch_architecture(self.architecture)
-        _validate_batch_bool(self.scan_before_save, "scan_before_save")
-        _validate_batch_bool(self.force_download, "force_download")
-        _validate_batch_bool(self.extract_archive, "extract_archive")
+        validate_is_architecture(self.architecture)
+        validate_is_bool(self.scan_before_save, "scan_before_save")
+        validate_is_bool(self.force_download, "force_download")
+        validate_is_bool(self.extract_archive, "extract_archive")
 
 
 @dataclass(frozen=True)

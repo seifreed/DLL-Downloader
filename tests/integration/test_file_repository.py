@@ -25,6 +25,7 @@ from dll_downloader.domain.entities.dll_file import (
     DLLFile,
     SecurityStatus,
 )
+from dll_downloader.domain.services.archive_safety import ZIP_MEMBER_COUNT_LIMIT
 from dll_downloader.infrastructure.persistence.file_repository import (
     FileSystemDLLRepository,
     RepositoryError,
@@ -2607,7 +2608,7 @@ def test_detect_zip_payload_architecture_rejects_excessive_member_count(
     central-directory entries.
     """
     repository = FileSystemDLLRepository(tmp_path)
-    limit = FileSystemDLLRepository._ZIP_MEMBER_COUNT_LIMIT
+    limit = ZIP_MEMBER_COUNT_LIMIT
 
     archive_buffer = io.BytesIO()
     with zipfile.ZipFile(

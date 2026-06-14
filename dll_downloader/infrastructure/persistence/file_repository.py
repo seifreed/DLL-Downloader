@@ -32,6 +32,11 @@ from ...domain.entities.dll_file import (
 from ...domain.errors import RepositoryOperationError
 from ...domain.repositories.dll_repository import IDLLRepository
 from ...domain.services import calculate_sha256
+from ...domain.services.archive_safety import (
+    ZIP_MEMBER_COUNT_LIMIT,
+    ZIP_MEMBER_SIZE_LIMIT,
+    zip_member_basename,
+)
 from ...domain.services.pe_validation import (
     detect_pe_dll_architecture as _detect_pe_dll_architecture,
 )
@@ -44,6 +49,7 @@ from ...domain.services.pe_validation import (
 from ...domain.services.pe_validation import (
     pe_image_layout_is_valid as _pe_image_layout_is_valid,
 )
+from ..validation import is_hex_digest
 
 logger = logging.getLogger(__name__)
 _ZIP_MEMBER_READ_ERRORS = (
@@ -54,17 +60,12 @@ _ZIP_MEMBER_READ_ERRORS = (
     zlib.error,
 )
 _SHA256_HEX_LENGTH = 64
-_HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
 _READ_FILE_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0)
 
 
 def _is_sha256_hash(value: object) -> bool:
     """Return True when a value is a SHA-256 hex digest."""
-    return (
-        isinstance(value, str)
-        and len(value) == _SHA256_HEX_LENGTH
-        and all(character in _HEX_DIGITS for character in value)
-    )
+    return is_hex_digest(value, (_SHA256_HEX_LENGTH,))
 
 
 class IndexEntry(TypedDict):
@@ -113,8 +114,6 @@ class FileSystemDLLRepository(IDLLRepository):
 
     INDEX_FILENAME = ".dll_index.json"
     _INDEX_MAX_BYTES = 10 * 1024 * 1024  # 10 MiB
-    _ZIP_MEMBER_SIZE_LIMIT = 512 * 1024 * 1024  # 512 MiB
-    _ZIP_MEMBER_COUNT_LIMIT = 4096
 
     def __init__(self, base_path: Path) -> None:
         """
@@ -686,27 +685,24 @@ class FileSystemDLLRepository(IDLLRepository):
     ) -> Iterator[zipfile.ZipInfo]:
         """Yield ZIP members whose basename matches ``expected_name``."""
         members = archive.infolist()
-        if len(members) > cls._ZIP_MEMBER_COUNT_LIMIT:
+        if len(members) > ZIP_MEMBER_COUNT_LIMIT:
             logger.warning(
                 "Refusing to inspect ZIP with %d members (limit %d)",
                 len(members),
-                cls._ZIP_MEMBER_COUNT_LIMIT,
+                ZIP_MEMBER_COUNT_LIMIT,
             )
             return
         for member in members:
             if member.is_dir():
                 continue
-            if member.file_size > cls._ZIP_MEMBER_SIZE_LIMIT:
+            if member.file_size > ZIP_MEMBER_SIZE_LIMIT:
                 logger.warning(
                     "Skipping ZIP member exceeding size limit: %s (%d bytes)",
                     member.filename,
                     member.file_size,
                 )
                 continue
-            member_name = (
-                member.filename.replace("\\", "/").rsplit("/", 1)[-1].lower()
-            )
-            if member_name == expected_name:
+            if zip_member_basename(member.filename) == expected_name:
                 yield member
 
     @classmethod

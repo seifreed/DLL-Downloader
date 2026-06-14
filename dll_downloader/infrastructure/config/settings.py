@@ -8,6 +8,10 @@ from math import isfinite
 from pathlib import Path
 from urllib.parse import ParseResult, urlparse
 
+from ...domain.validation import validate_is_bool
+from ..net import is_private_address
+from ..validation import validate_non_negative_number
+
 _VALID_LOG_LEVELS = frozenset(
     {"CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG", "NOTSET"}
 )
@@ -40,41 +44,20 @@ def _validate_positive_integer(value: object, field_name: str) -> None:
         raise ValueError(f"{field_name} must be positive")
 
 
-def _validate_non_negative_number(value: object, field_name: str) -> None:
-    value = _validate_number(value, field_name)
-    if not isfinite(value):
-        raise ValueError(f"{field_name} must be finite")
-    if value < 0:
-        raise ValueError(f"{field_name} cannot be negative")
-
-
-def _validate_bool(value: object, field_name: str) -> None:
-    if not isinstance(value, bool):
-        raise ValueError(f"{field_name} must be a boolean")
-
-
-def _validate_string(value: object, field_name: str) -> None:
+def _validate_string(value: object, field_name: str) -> str:
     if not isinstance(value, str):
         raise ValueError(f"{field_name} must be a string")
     if not value.strip():
         raise ValueError(f"{field_name} must be a non-empty string")
+    return value
 
 
 def _validate_https_url(value: object, field_name: str) -> None:
-    _validate_string(value, field_name)
-    # _validate_string guarantees value is a non-empty string.
-    assert isinstance(value, str)
-    parsed = urlparse(value)
+    validated = _validate_string(value, field_name)
+    parsed = urlparse(validated)
     if parsed.scheme.lower() != "https":
         raise ValueError(f"{field_name} must use HTTPS")
-    _validate_not_private_url(value, field_name)
-
-
-def _normalize_ip(addr: ipaddress.IPv4Address | ipaddress.IPv6Address) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
-    """Convert IPv4-mapped IPv6 addresses to their IPv4 equivalent."""
-    if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped is not None:
-        return addr.ipv4_mapped
-    return addr
+    _validate_not_private_url(validated, field_name)
 
 
 def _validated_url_hostname(parsed: ParseResult, field_name: str) -> str:
@@ -104,8 +87,7 @@ def _validate_not_private_url(value: str, field_name: str) -> None:
     except ValueError:
         pass  # hostname is not an IP literal; proceed to DNS resolution
     else:
-        addr = _normalize_ip(addr)
-        if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved or addr.is_multicast:
+        if is_private_address(addr):
             raise ValueError(
                 f"{field_name} must not point to a private, loopback, reserved, or multicast address"
             )
@@ -118,10 +100,9 @@ def _validate_not_private_url(value: str, field_name: str) -> None:
             ip_str = sockaddr[0]
             try:
                 resolved_addr = ipaddress.ip_address(ip_str)
-                resolved_addr = _normalize_ip(resolved_addr)
             except ValueError:
                 continue
-            if resolved_addr.is_private or resolved_addr.is_loopback or resolved_addr.is_link_local or resolved_addr.is_reserved or resolved_addr.is_multicast:
+            if is_private_address(resolved_addr):
                 raise ValueError(
                     f"{field_name} must not resolve to a private, loopback, reserved, or multicast address"
                 )
@@ -188,18 +169,18 @@ class Settings:
         _validate_https_url(self.download_base_url, "download_base_url")
         _validate_optional_string(self.user_agent, "user_agent")
         _validate_user_agent_pool(self.user_agent_pool)
-        _validate_bool(self.verify_ssl, "verify_ssl")
-        _validate_bool(self.scan_before_save, "scan_before_save")
+        validate_is_bool(self.verify_ssl, "verify_ssl")
+        validate_is_bool(self.scan_before_save, "scan_before_save")
         _validate_log_level(self.log_level)
 
         _validate_positive_integer(self.http_timeout, "http_timeout")
         _validate_positive_number(self.virustotal_timeout, "virustotal_timeout")
         _validate_positive_integer(self.http_max_retries, "http_max_retries")
-        _validate_non_negative_number(
+        validate_non_negative_number(
             self.http_retry_backoff_seconds,
             "http_retry_backoff_seconds",
         )
-        _validate_non_negative_number(
+        validate_non_negative_number(
             self.http_retry_jitter_seconds,
             "http_retry_jitter_seconds",
         )

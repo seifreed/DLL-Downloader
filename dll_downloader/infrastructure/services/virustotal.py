@@ -7,11 +7,9 @@ for malware analysis and threat detection.
 
 import contextlib
 import errno
-import ipaddress
 import json
 import logging
 import os
-import socket
 import stat
 from collections.abc import Mapping
 from dataclasses import replace
@@ -31,43 +29,19 @@ from ..http_session import (
     HTTPSessionProtocol,
     HTTPSessionResource,
 )
+from ..net import hostname_resolves_to_private_ip, strip_url_credentials
+from ..validation import is_finite_number, is_hex_digest, validate_positive_timeout
 
 logger = logging.getLogger(__name__)
 _API_KEY_MISSING = "VirusTotal API key not configured"
 _VT_UPLOAD_MAX_BYTES = 32 * 1024 * 1024  # 32 MiB
 _VT_RESPONSE_MAX_BYTES = 64 * 1024 * 1024  # 64 MiB
 _READ_FILE_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0)
-_POSITIVE_INFINITY = float("inf")
-_NEGATIVE_INFINITY = float("-inf")
-
-
-def _host_port_netloc(hostname: str, port: int | None) -> str:
-    host = f"[{hostname}]" if ":" in hostname else hostname
-    if port is None:
-        return host
-    return f"{host}:{port}"
 
 
 def _is_valid_hash(value: str) -> bool:
     """Return True when value is a hex hash with valid length for VirusTotal lookups."""
-    if not value:
-        return False
-    if len(value) not in (32, 40, 64):  # MD5, SHA-1, SHA-256
-        return False
-    return all(c in "0123456789abcdefABCDEF" for c in value)
-
-
-def _is_finite_number(value: float) -> bool:
-    return value == value and value not in (_POSITIVE_INFINITY, _NEGATIVE_INFINITY)
-
-
-def _validate_positive_timeout(value: object) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ValueError("timeout must be a positive number")
-    timeout = float(value)
-    if not _is_finite_number(timeout) or timeout <= 0:
-        raise ValueError("timeout must be a positive number")
-    return timeout
+    return is_hex_digest(value, (32, 40, 64))  # MD5, SHA-1, SHA-256
 
 
 def _validate_detection_thresholds(
@@ -128,7 +102,7 @@ def _safe_int(value: object, *, strict: bool = False) -> int:  # noqa: C901
             return 0
         return value
     if isinstance(value, float):
-        if not _is_finite_number(value):
+        if not is_finite_number(value):
             raise VirusTotalError(f"VT API returned non-finite float: {value!r}")
         if not value.is_integer():
             if strict:
@@ -156,7 +130,7 @@ def _safe_int(value: object, *, strict: bool = False) -> int:  # noqa: C901
                 "VT API returned unparseable integer value: %r, defaulting to 0", value
             )
             return 0
-        if not _is_finite_number(parsed):
+        if not is_finite_number(parsed):
             if strict:
                 raise VirusTotalError(f"VT API returned non-finite count: {value!r}")
             logger.warning(
@@ -358,7 +332,7 @@ class VirusTotalScanner(ISecurityScanner):
         self._api_key = api_key.strip() if api_key else None
         self._malicious_threshold = malicious_threshold
         self._suspicious_threshold = suspicious_threshold
-        self._timeout = _validate_positive_timeout(timeout)
+        self._timeout = validate_positive_timeout(timeout)
         session_headers: dict[str, str] = {}
         if self._api_key:
             session_headers = {"x-apikey": self._api_key, "Accept": "application/json"}
@@ -387,52 +361,6 @@ class VirusTotalScanner(ISecurityScanner):
     def _hostname_private_ip_is_allowed(hostname: str) -> bool:
         """Return True for explicit local-test/private endpoint overrides."""
         return hostname.lower() in VirusTotalScanner._VT_PRIVATE_IP_ALLOWED_DOMAINS
-
-    @staticmethod
-    def _hostname_resolves_to_private_ip(hostname: str) -> bool:
-        """Return True when *hostname* resolves to a private or reserved IP.
-
-        Fails closed on DNS resolution errors to prevent DNS-rebinding attacks.
-        """
-        try:
-            addr = ipaddress.ip_address(hostname)
-            if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped is not None:
-                addr = addr.ipv4_mapped
-            return (
-                addr.is_private
-                or addr.is_loopback
-                or addr.is_link_local
-                or addr.is_reserved
-                or addr.is_multicast
-            )
-        except ValueError:
-            pass
-        try:
-            resolved = socket.getaddrinfo(
-                hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM
-            )
-            for _family, _type, _proto, _canonname, sockaddr in resolved:
-                ip_str = sockaddr[0]
-                try:
-                    resolved_addr = ipaddress.ip_address(ip_str)
-                    if (
-                        isinstance(resolved_addr, ipaddress.IPv6Address)
-                        and resolved_addr.ipv4_mapped is not None
-                    ):
-                        resolved_addr = resolved_addr.ipv4_mapped
-                except ValueError:
-                    continue
-                if (
-                    resolved_addr.is_private
-                    or resolved_addr.is_loopback
-                    or resolved_addr.is_link_local
-                    or resolved_addr.is_reserved
-                    or resolved_addr.is_multicast
-                ):
-                    return True
-        except (socket.gaierror, socket.herror, OSError):
-            return True
-        return False
 
     def _safe_get(
         self, url: str, **kwargs: object
@@ -525,7 +453,7 @@ class VirusTotalScanner(ISecurityScanner):
             raise VirusTotalError(
                 f"{prefix} to disallowed or private-address hostname rejected: {hostname}"
             )
-        if self._hostname_resolves_to_private_ip(
+        if hostname_resolves_to_private_ip(
             hostname
         ) and not self._hostname_private_ip_is_allowed(hostname):
             prefix = "Redirect" if redirect else "Request"
@@ -549,17 +477,10 @@ class VirusTotalScanner(ISecurityScanner):
 
     @staticmethod
     def _strip_url_credentials(location: str) -> str:
-        redirect_parsed = urlparse(location)
         try:
-            port = redirect_parsed.port
+            return strip_url_credentials(location)
         except ValueError as exc:
-            raise VirusTotalError(f"Redirect URL has invalid port: {location}") from exc
-        if not redirect_parsed.username and not redirect_parsed.password:
-            return location
-        hostname = redirect_parsed.hostname or ""
-        return redirect_parsed._replace(
-            netloc=_host_port_netloc(hostname, port),
-        ).geturl()
+            raise VirusTotalError(str(exc)) from exc
 
     def __enter__(self) -> "VirusTotalScanner":
         return self

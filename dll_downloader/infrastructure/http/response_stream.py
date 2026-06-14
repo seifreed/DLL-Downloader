@@ -12,22 +12,6 @@ from .transport import HTTP_STREAM_ERROR_TYPES, HTTPClientError, header_value
 
 logger = logging.getLogger(__name__)
 
-_POSITIVE_INFINITY = float("inf")
-_NEGATIVE_INFINITY = float("-inf")
-
-
-def _is_finite_number(value: float) -> bool:
-    return value == value and value not in (_POSITIVE_INFINITY, _NEGATIVE_INFINITY)
-
-
-def validate_positive_timeout(value: object) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ValueError("timeout must be a positive number")
-    timeout = float(value)
-    if not _is_finite_number(timeout) or timeout <= 0:
-        raise ValueError("timeout must be a positive number")
-    return timeout
-
 
 def validate_positive_size(value: object) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:

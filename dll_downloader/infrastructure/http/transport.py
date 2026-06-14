@@ -2,7 +2,6 @@
 Transport primitives for HTTP adapters.
 """
 
-import ipaddress
 import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -16,6 +15,7 @@ from ..http_session import (
     HTTPSessionProtocol,
     HTTPSessionResource,
 )
+from ..net import hostname_resolves_to_private_ip, strip_url_credentials
 from .request_headers import RequestHeaderBuilder
 from .retry_policy import RetryPolicy
 
@@ -23,77 +23,7 @@ _MAX_REDIRECT_HOPS = 10
 _MAX_LOCATION_HEADER_LENGTH = 8192
 
 
-def _normalize_ip(
-    addr: "ipaddress.IPv4Address | ipaddress.IPv6Address",
-) -> "ipaddress.IPv4Address | ipaddress.IPv6Address":
-    """Convert IPv4-mapped IPv6 addresses to their IPv4 equivalent.
-
-    ``::ffff:127.0.0.1`` is NOT private under ``IPv6Address.is_private``,
-    but its embedded IPv4 address IS private.  Normalise before checking.
-    """
-    if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped is not None:
-        return addr.ipv4_mapped
-    return addr
-
-
-def _hostname_resolves_to_private_ip(hostname: str) -> bool:
-    """Return True when *hostname* resolves to a private, loopback, or reserved IP.
-
-    Loopback addresses are included so that SSRF protection is consistent
-    with configuration-time validation in settings.py, which also blocks
-    loopback URLs.
-
-    Returns True on DNS resolution failure (fail-closed) to prevent
-    DNS-rebinding attacks where an attacker returns NXDOMAIN during the
-    SSRF check but resolves to a private IP during the actual request.
-    """
-    import socket
-
-    try:
-        addr = ipaddress.ip_address(hostname)
-        addr = _normalize_ip(addr)
-        return (
-            addr.is_private
-            or addr.is_loopback
-            or addr.is_link_local
-            or addr.is_reserved
-            or addr.is_multicast
-        )
-    except ValueError:
-        pass
-
-    try:
-        resolved = socket.getaddrinfo(
-            hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM
-        )
-        for _family, _type, _proto, _canonname, sockaddr in resolved:
-            ip_str = sockaddr[0]
-            try:
-                resolved_addr = ipaddress.ip_address(ip_str)
-                resolved_addr = _normalize_ip(resolved_addr)
-            except ValueError:
-                continue
-            if (
-                resolved_addr.is_private
-                or resolved_addr.is_loopback
-                or resolved_addr.is_link_local
-                or resolved_addr.is_reserved
-                or resolved_addr.is_multicast
-            ):
-                return True
-    except (socket.gaierror, socket.herror, OSError):
-        return True
-    return False
-
-
 logger = logging.getLogger(__name__)
-
-
-def _host_port_netloc(hostname: str, port: int | None) -> str:
-    host = f"[{hostname}]" if ":" in hostname else hostname
-    if port is None:
-        return host
-    return f"{host}:{port}"
 
 
 def header_value(headers: Mapping[str, str], name: str) -> str | None:
@@ -270,7 +200,7 @@ class RequestsTransport:
             )
             if (
                 target_hostname
-                and _hostname_resolves_to_private_ip(target_hostname)
+                and hostname_resolves_to_private_ip(target_hostname)
                 and not is_allowlisted
             ):
                 raise HTTPClientError(
@@ -404,7 +334,7 @@ class RequestsTransport:
         )
         if (
             target_hostname
-            and _hostname_resolves_to_private_ip(target_hostname)
+            and hostname_resolves_to_private_ip(target_hostname)
             and not is_allowlisted
         ):
             raise HTTPClientError(
@@ -544,17 +474,7 @@ class RequestsTransport:
 
     @staticmethod
     def _strip_url_credentials(location: str) -> str:
-        parsed_location = urlparse(location)
         try:
-            port = parsed_location.port
+            return strip_url_credentials(location)
         except ValueError as exc:
-            raise HTTPClientError(
-                f"Redirect URL has invalid port: {location}",
-                url=location,
-            ) from exc
-        if not parsed_location.username and not parsed_location.password:
-            return location
-        hostname = parsed_location.hostname or ""
-        return parsed_location._replace(
-            netloc=_host_port_netloc(hostname, port),
-        ).geturl()
+            raise HTTPClientError(str(exc), url=location) from exc
