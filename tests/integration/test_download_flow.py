@@ -472,9 +472,13 @@ class TestDownloadFlowBasicOperations:
         assert response.success is True
         assert _require_dll_file(response.dll_file).architecture == Architecture.X86
 
-        # Verify file is in x86 directory
-        expected_path = tmp_path / "x86" / "user32.dll"
+        # Verify the archive is stored honestly in the x86 directory: the
+        # unextracted payload is a ZIP, so it is saved with a .zip extension
+        # while the logical DLL name is preserved.
+        expected_path = tmp_path / "x86" / "user32.zip"
         assert expected_path.exists()
+        assert (tmp_path / "x86" / "user32.dll").exists() is False
+        assert _require_dll_file(response.dll_file).name == "user32.dll"
 
 
 class TestDownloadFlowCaching:

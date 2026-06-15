@@ -761,7 +761,8 @@ class TestFileSystemDLLRepositorySave:
         saved = repository.save(dll, zip_payload)
 
         saved_path = Path(_require_str(saved.file_path))
-        assert saved_path == tmp_path / "x64" / "zipped.dll"
+        assert saved_path == tmp_path / "x64" / "zipped.zip"
+        assert saved.name == "zipped.dll"
         assert saved_path.read_bytes() == zip_payload
 
     def test_save_accepts_zip_member_with_backslash_path(
@@ -781,7 +782,8 @@ class TestFileSystemDLLRepositorySave:
         saved = repository.save(dll, zip_payload)
 
         saved_path = Path(_require_str(saved.file_path))
-        assert saved_path == tmp_path / "x64" / "zipped.dll"
+        assert saved_path == tmp_path / "x64" / "zipped.zip"
+        assert saved.name == "zipped.dll"
         assert saved_path.read_bytes() == zip_payload
 
     def test_save_accepts_duplicate_zip_member_when_requested_architecture_exists(
@@ -801,7 +803,8 @@ class TestFileSystemDLLRepositorySave:
         )
 
         saved_path = Path(_require_str(saved.file_path))
-        assert saved_path == tmp_path / "x64" / "zipped.dll"
+        assert saved_path == tmp_path / "x64" / "zipped.zip"
+        assert saved.name == "zipped.dll"
         assert saved_path.read_bytes() == zip_payload
 
     def test_save_uses_case_insensitive_storage_name(

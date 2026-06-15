@@ -260,6 +260,27 @@ class FileSystemDLLRepository(IDLLRepository):
         )
         return self._base_path / arch_value / name.lower()
 
+    def _stored_file_path(
+        self, name: str, architecture: Architecture, content: bytes
+    ) -> Path:
+        """Get the on-disk path, honest about the payload type.
+
+        Raw PE DLL bytes are stored under ``<name>.dll``; an unextracted ZIP
+        archive (validated to contain the requested DLL) is stored under
+        ``<name>.zip`` so the file extension always matches its real content.
+        """
+        path = self._get_file_path(name, architecture)
+        if self._detect_pe_dll_architecture(content) is None:
+            return path.with_suffix(".zip")
+        return path
+
+    def _canonical_stored_paths(
+        self, name: str, architecture: Architecture
+    ) -> list[Path]:
+        """Return the legitimate on-disk paths for a logical DLL (.dll and .zip)."""
+        dll_path = self._get_file_path(name, architecture)
+        return [dll_path, dll_path.with_suffix(".zip")]
+
     def _path_is_within_repository(self, file_path: Path) -> bool:
         """Return True when a filesystem path is owned by this repository.
 
@@ -486,8 +507,10 @@ class FileSystemDLLRepository(IDLLRepository):
                 dll_file, content
             )
             dll_file = replace(dll_file, architecture=storage_architecture)
-            # Determine file path
-            file_path = self._get_file_path(dll_file.name, dll_file.architecture)
+            # Determine file path (honest extension: .dll for PE, .zip for archives)
+            file_path = self._stored_file_path(
+                dll_file.name, dll_file.architecture, content
+            )
             self._validate_payload_content(dll_file, content)
 
             # Acquire lock before path validation and writes to prevent TOCTOU.
@@ -574,10 +597,12 @@ class FileSystemDLLRepository(IDLLRepository):
             # with corrupt index entries may have valid on-disk files; the index
             # corruption should not suppress legitimate fallback candidates.
             for arch in self._iter_architectures(architecture):
-                file_path = self._get_file_path(name, arch)
-                fallback_path = self._validated_fallback_payload_path(file_path, arch)
-                if fallback_path is not None:
-                    return self._create_dll_from_file(fallback_path, name, arch)
+                for file_path in self._canonical_stored_paths(name, arch):
+                    fallback_path = self._validated_fallback_payload_path(
+                        file_path, arch, dll_name=name
+                    )
+                    if fallback_path is not None:
+                        return self._create_dll_from_file(fallback_path, name, arch)
 
             return None
 
@@ -585,8 +610,13 @@ class FileSystemDLLRepository(IDLLRepository):
         self,
         file_path: Path,
         architecture: Architecture,
+        dll_name: str | None = None,
     ) -> Path | None:
-        """Return a disk fallback payload only when its path is repository-owned."""
+        """Return a disk fallback payload only when its path is repository-owned.
+
+        ``dll_name`` is the logical DLL name used to locate the member inside a
+        ZIP payload; it defaults to the on-disk filename for direct .dll scans.
+        """
         if self._is_symlink(file_path):
             logger.warning("Skipping fallback DLL payload with symlink: %s", file_path)
             return None
@@ -603,7 +633,8 @@ class FileSystemDLLRepository(IDLLRepository):
             return None
         if not file_path.is_file():
             return None
-        if not self._fallback_payload_is_valid(file_path, file_path.name, architecture):
+        payload_name = dll_name or file_path.name
+        if not self._fallback_payload_is_valid(file_path, payload_name, architecture):
             logger.warning(
                 "Skipping fallback payload that is not a valid DLL payload: %s",
                 file_path,
@@ -1078,7 +1109,13 @@ class FileSystemDLLRepository(IDLLRepository):
                 provided_path,
             )
             return None
-        if not self._path_locations_match(provided_path, file_path):
+        canonical_paths = self._canonical_stored_paths(
+            dll_file.name, dll_file.architecture
+        )
+        if not any(
+            self._path_locations_match(provided_path, candidate)
+            for candidate in canonical_paths
+        ):
             logger.warning(
                 "Refusing to delete DLL with mismatched path: %s",
                 provided_path,
@@ -1343,9 +1380,12 @@ class FileSystemDLLRepository(IDLLRepository):
             return None
         canonical_name = expected_name or dll_file.name
         canonical_architecture = expected_architecture or dll_file.architecture
-        if not self._path_locations_match(
-            file_path,
-            self._get_file_path(canonical_name, canonical_architecture),
+        canonical_paths = self._canonical_stored_paths(
+            canonical_name, canonical_architecture
+        )
+        if not any(
+            self._path_locations_match(file_path, candidate)
+            for candidate in canonical_paths
         ):
             logger.warning(
                 "Skipping DLL index entry with mismatched path: %s", file_path
