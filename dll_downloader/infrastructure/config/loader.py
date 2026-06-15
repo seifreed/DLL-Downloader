@@ -278,7 +278,8 @@ class SettingsLoader:
                 return int(value)
             except ValueError:
                 raise ValueError(
-                    f"Environment variable for {attr_name} must be an integer, got: {value!r}"
+                    f"Environment variable for {attr_name} must be an integer, "
+                    f"got: {value!r}"
                 ) from None
         if attr_name in {
             "virustotal_timeout",
@@ -289,7 +290,8 @@ class SettingsLoader:
                 return float(value)
             except ValueError:
                 raise ValueError(
-                    f"Environment variable for {attr_name} must be a float, got: {value!r}"
+                    f"Environment variable for {attr_name} must be a float, "
+                    f"got: {value!r}"
                 ) from None
         if attr_name == "user_agent_pool":
             return tuple(item.strip() for item in value.split(",") if item.strip())

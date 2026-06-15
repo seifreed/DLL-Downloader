@@ -90,7 +90,8 @@ def _validate_not_private_url(value: str, field_name: str) -> None:
     else:
         if is_private_address(addr):
             raise ValueError(
-                f"{field_name} must not point to a private, loopback, reserved, or multicast address"
+                f"{field_name} must not point to a private, loopback, "
+                "reserved, or multicast address"
             )
         return
     # Not an IP literal; resolve hostname to check for DNS rebinding.
@@ -107,7 +108,8 @@ def _validate_not_private_url(value: str, field_name: str) -> None:
                 continue
             if is_private_address(resolved_addr):
                 raise ValueError(
-                    f"{field_name} must not resolve to a private, loopback, reserved, or multicast address"
+                    f"{field_name} must not resolve to a private, loopback, "
+                    "reserved, or multicast address"
                 )
     except (socket.gaierror, socket.herror, OSError) as exc:
         raise ValueError(

@@ -119,7 +119,9 @@ def test_resolver_uses_injected_http_contract() -> None:
     base_url = "http://example.com"
     client = StubTextHTTPClient(
         {
-            f"{base_url}/search/?q=msvcp140.dll": '<a href="/msvcp140.dll.html">msvcp140</a>',
+            f"{base_url}/search/?q=msvcp140.dll": (
+                '<a href="/msvcp140.dll.html">msvcp140</a>'
+            ),
             f"{base_url}/msvcp140.dll.html": (
                 '<a href="/download/bbb/msvcp140.dll.html">Download 64-bit</a>'
             ),
@@ -306,16 +308,20 @@ def test_extract_download_link_uses_section_context_for_architecture() -> None:
         http_client=StubTextHTTPClient({}),
         base_url="http://example.com",
     )
-    html = """
+    html = (
+        """
     <section>
       <div class="right-pane"><p>Version</p><p>64</p></div>
-      <div class="download-link"><a href="/download/x64/file.dll.html">Download</a></div>
+      <div class="download-link">"""
+        """<a href="/download/x64/file.dll.html">Download</a></div>
     </section>
     <section>
       <div class="right-pane"><p>Version</p><p>32</p></div>
-      <div class="download-link"><a href="/download/x86/file.dll.html">Download</a></div>
+      <div class="download-link">"""
+        """<a href="/download/x86/file.dll.html">Download</a></div>
     </section>
     """
+    )
 
     assert resolver._extract_download_link(html, Architecture.X64) == (
         "/download/x64/file.dll.html"
@@ -331,16 +337,20 @@ def test_extract_download_link_uses_case_insensitive_section_context() -> None:
         http_client=StubTextHTTPClient({}),
         base_url="http://example.com",
     )
-    html = """
+    html = (
+        """
     <SECTION>
       <p>Architecture: 64-bit</p>
-      <div class="download-link"><a href="/download/aaa/file.dll.html">Download</a></div>
+      <div class="download-link">"""
+        """<a href="/download/aaa/file.dll.html">Download</a></div>
     </SECTION>
     <SECTION>
       <p>Architecture: 32-bit</p>
-      <div class="download-link"><a href="/download/bbb/file.dll.html">Download</a></div>
+      <div class="download-link">"""
+        """<a href="/download/bbb/file.dll.html">Download</a></div>
     </SECTION>
     """
+    )
 
     assert resolver._extract_download_link(html, Architecture.X64) == (
         "/download/aaa/file.dll.html"
@@ -398,17 +408,21 @@ def test_extract_download_link_does_not_use_compatibility_text_as_architecture()
         http_client=StubTextHTTPClient({}),
         base_url="http://example.com",
     )
-    html = """
+    html = (
+        """
     <section>
       <p>Architecture: 64-bit</p>
       <p>Works with 32-bit and 64-bit applications.</p>
-      <div class="download-link"><a href="/download/x64/file.dll.html">Download</a></div>
+      <div class="download-link">"""
+        """<a href="/download/x64/file.dll.html">Download</a></div>
     </section>
     <section>
       <p>Architecture: 32-bit</p>
-      <div class="download-link"><a href="/download/x86/file.dll.html">Download</a></div>
+      <div class="download-link">"""
+        """<a href="/download/x86/file.dll.html">Download</a></div>
     </section>
     """
+    )
 
     assert resolver._extract_download_link(html, Architecture.X86) == (
         "/download/x86/file.dll.html"
@@ -525,12 +539,15 @@ def test_extract_download_link_does_not_fallback_to_x64_for_x86_request() -> Non
         http_client=StubTextHTTPClient({}),
         base_url="http://example.com",
     )
-    html = """
+    html = (
+        """
     <section>
       <div class="right-pane"><p>Version</p><p>64</p></div>
-      <div class="download-link"><a href="/download/x64/file.dll.html">Download</a></div>
+      <div class="download-link">"""
+        """<a href="/download/x64/file.dll.html">Download</a></div>
     </section>
     """
+    )
 
     assert resolver._extract_download_link(html, Architecture.X86) is None
 

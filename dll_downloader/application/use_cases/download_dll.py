@@ -520,7 +520,8 @@ class DownloadDLLUseCase:
         content: bytes,
         request: DownloadDLLRequest,
     ) -> bytes:
-        """Validate downloaded content and optionally extract a DLL from a ZIP payload."""
+        """Validate downloaded content and optionally extract a DLL from a ZIP
+        payload."""
         try:
             is_zip_archive = zipfile.is_zipfile(BytesIO(content))
         except (ValueError, OSError):
@@ -586,7 +587,8 @@ class DownloadDLLUseCase:
                     ratio = member.file_size / member.compress_size
                     if ratio >= _ZIP_COMPRESSION_RATIO_LIMIT:
                         raise ArchiveExtractionError(
-                            "ZIP member has suspicious compression ratio, possible ZIP bomb"
+                            "ZIP member has suspicious compression ratio, "
+                            "possible ZIP bomb"
                         )
                 elif member.file_size > 0:
                     # compress_size == 0 with file_size > 0 is suspicious:
@@ -677,7 +679,8 @@ class DownloadDLLUseCase:
             raise DownloadExecutionError(_NOT_DLL_MESSAGE)
         if inspection.is_unsupported_machine:
             raise DownloadExecutionError(
-                f"Downloaded DLL uses unsupported PE machine type 0x{inspection.unsupported_machine:04x}"
+                "Downloaded DLL uses unsupported PE machine type "
+                f"0x{inspection.unsupported_machine:04x}"
             )
         if not inspection.is_valid_dll or inspection.architecture is None:
             raise DownloadExecutionError(_INVALID_PE_MESSAGE)

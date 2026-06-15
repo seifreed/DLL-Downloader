@@ -2,7 +2,8 @@
 Domain Service Interfaces
 
 Abstract interfaces for domain services that don't naturally fit into entities.
-These define contracts for cross-cutting concerns like security scanning and HTTP operations.
+These define contracts for cross-cutting concerns like security scanning and
+HTTP operations.
 """
 
 from .download_resolver import IDownloadURLResolver

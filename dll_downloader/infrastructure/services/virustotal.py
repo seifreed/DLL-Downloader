@@ -223,7 +223,8 @@ def _response_chunks(response: HTTPResponseProtocol) -> list[bytes] | None:
         total_bytes += len(chunk)
         if total_bytes > _VT_RESPONSE_MAX_BYTES:
             raise VirusTotalError(
-                f"VirusTotal response exceeds size limit ({_VT_RESPONSE_MAX_BYTES} bytes)"
+                "VirusTotal response exceeds size limit "
+                f"({_VT_RESPONSE_MAX_BYTES} bytes)"
             )
         chunks.append(chunk)
     return chunks
@@ -378,7 +379,8 @@ class VirusTotalScanner(ISecurityScanner):
                 )
             if len(location) > self._MAX_LOCATION_HEADER_LENGTH:
                 raise VirusTotalError(
-                    f"Redirect Location header exceeds {self._MAX_LOCATION_HEADER_LENGTH} bytes"
+                    "Redirect Location header exceeds "
+                    f"{self._MAX_LOCATION_HEADER_LENGTH} bytes"
                 )
             current_url = self._resolve_redirect_url(current_url, location)
         raise VirusTotalError(f"Too many redirects (> {self._MAX_REDIRECT_HOPS})")
@@ -401,7 +403,8 @@ class VirusTotalScanner(ISecurityScanner):
                 )
             if len(location) > self._MAX_LOCATION_HEADER_LENGTH:
                 raise VirusTotalError(
-                    f"Redirect Location header exceeds {self._MAX_LOCATION_HEADER_LENGTH} bytes"
+                    "Redirect Location header exceeds "
+                    f"{self._MAX_LOCATION_HEADER_LENGTH} bytes"
                 )
             location = location.strip()
             current_url = self._resolve_redirect_url(current_url, location)
@@ -445,7 +448,8 @@ class VirusTotalScanner(ISecurityScanner):
         if not self._hostname_is_allowed(hostname):
             prefix = "Redirect" if redirect else "Request"
             raise VirusTotalError(
-                f"{prefix} to disallowed or private-address hostname rejected: {hostname}"
+                f"{prefix} to disallowed or private-address hostname "
+                f"rejected: {hostname}"
             )
         if hostname_resolves_to_private_ip(
             hostname
@@ -614,7 +618,8 @@ class VirusTotalScanner(ISecurityScanner):
             file_size = st.st_size
             if file_size > _VT_UPLOAD_MAX_BYTES:
                 raise VirusTotalError(
-                    f"File exceeds {_VT_UPLOAD_MAX_BYTES // (1024 * 1024)} MiB upload limit"
+                    f"File exceeds {_VT_UPLOAD_MAX_BYTES // (1024 * 1024)} MiB "
+                    "upload limit"
                 )
             # Clear O_NONBLOCK for regular files so read() works normally.
             os.set_blocking(fd, True)

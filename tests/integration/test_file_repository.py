@@ -1710,9 +1710,7 @@ def test_pe_image_layout_rejects_invalid_boundaries() -> None:
     )
 
 
-def test_content_matches_dll_payload_rejects_invalid_and_accepts_unknown_architecture() -> (
-    None
-):
+def test_content_matches_dll_payload_rejects_invalid_accepts_unknown_arch() -> None:
     assert not FileSystemDLLRepository._content_matches_dll_payload(
         "sample.dll",
         Architecture.X64,

@@ -1855,7 +1855,8 @@ def test_download_dll_use_case_fails_when_payload_is_not_zip() -> None:
 
     assert response.success is False
     assert response.error_message == (
-        "Download failed: Downloaded content is not a valid DLL (invalid PE image layout)"
+        "Download failed: Downloaded content is not a valid DLL "
+        "(invalid PE image layout)"
     )
 
 
@@ -1884,7 +1885,8 @@ def test_download_dll_use_case_fails_when_pk_content_is_not_valid_zip() -> None:
 
     assert response.success is False
     assert response.error_message == (
-        "Download failed: Downloaded content is not a valid DLL (invalid PE image layout)"
+        "Download failed: Downloaded content is not a valid DLL "
+        "(invalid PE image layout)"
     )
 
 
@@ -2036,9 +2038,7 @@ def test_download_dll_use_case_fails_when_extracted_content_is_not_pe() -> None:
 
 
 @pytest.mark.unit
-def test_download_dll_use_case_fails_when_extract_is_enabled_but_payload_is_not_zip() -> (
-    None
-):
+def test_download_dll_use_case_fails_when_extract_enabled_but_not_zip() -> None:
     repository = InMemoryRepository()
     http_client = StubHTTPClient()
     pe_content = b"MZ\x90\x00direct dll bytes"
@@ -2063,7 +2063,8 @@ def test_download_dll_use_case_fails_when_extract_is_enabled_but_payload_is_not_
 
     assert response.success is False
     assert response.error_message == (
-        "Download failed: Downloaded content is not a valid DLL (invalid PE image layout)"
+        "Download failed: Downloaded content is not a valid DLL "
+        "(invalid PE image layout)"
     )
 
 

@@ -204,7 +204,8 @@ class RequestsTransport:
                 and not is_allowlisted
             ):
                 raise HTTPClientError(
-                    f"Request to {target_hostname} rejected: resolves to private/reserved address",
+                    f"Request to {target_hostname} rejected: "
+                    "resolves to private/reserved address",
                     url=current_url,
                 )
             if (
@@ -338,7 +339,8 @@ class RequestsTransport:
             and not is_allowlisted
         ):
             raise HTTPClientError(
-                f"Request to {target_hostname} rejected: resolves to private/reserved address",
+                f"Request to {target_hostname} rejected: "
+                "resolves to private/reserved address",
                 url=url,
             )
 

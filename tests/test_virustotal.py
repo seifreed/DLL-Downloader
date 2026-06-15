@@ -276,9 +276,7 @@ def test_virustotal_scanner_parse_response_clean_file() -> None:
 
 
 @pytest.mark.unit
-def test_virustotal_scanner_parse_response_with_non_mapping_stats_defaults_unknown() -> (
-    None
-):
+def test_vt_scanner_parse_response_non_mapping_stats_defaults_unknown() -> None:
     scanner = VirusTotalScanner(api_key="test_key")
     result = scanner._parse_response(
         "z" * 64,
@@ -586,9 +584,7 @@ def test_virustotal_scanner_extract_engine_detections_ignores_invalid_shapes() -
 
 
 @pytest.mark.unit
-def test_virustotal_scanner_extract_engine_detections_returns_empty_for_non_mapping_results() -> (
-    None
-):
+def test_vt_scanner_extract_engine_detections_empty_for_non_mapping() -> None:
     scanner = VirusTotalScanner(api_key="test_key")
     assert (
         scanner._extract_engine_detections(

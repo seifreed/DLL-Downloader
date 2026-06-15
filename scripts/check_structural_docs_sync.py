@@ -116,7 +116,8 @@ def main() -> int:
 
     print("Structural doc sync failed:")
     print(
-        "- Structural code changed without ADR/architecture/public API documentation updates"
+        "- Structural code changed without ADR/architecture/public API "
+        "documentation updates"
     )
     print(f"- Comparison base: {base}")
     for path in structural_changes:

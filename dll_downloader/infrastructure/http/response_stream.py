@@ -87,7 +87,8 @@ def read_bounded_response(
     content = b"".join(chunks)
     if declared_size is not None and len(content) != declared_size:
         raise HTTPClientError(
-            f"Incomplete download: received {len(content)} bytes, expected {declared_size}",
+            f"Incomplete download: received {len(content)} bytes, "
+            f"expected {declared_size}",
             status_code=response.status_code,
             url=url,
         )

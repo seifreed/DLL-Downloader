@@ -87,9 +87,6 @@ select = [
     "SIM",  # flake8-simplify
     "PIE",  # flake8-pie (unnecessary pass, duplicate fields, etc.)
 ]
-ignore = [
-    "E501",  # line too long (handled by ruff format)
-]
 
 [tool.ruff.lint.isort]
 known-first-party = ["dll_downloader"]

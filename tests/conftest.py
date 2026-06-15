@@ -168,7 +168,10 @@ def sample_html_file(tmp_download_dir: Path) -> Path:
         Path to the created HTML file
     """
     html_path = tmp_download_dir / "error_page.html"
-    content = b"<!DOCTYPE html><html><head><title>Error</title></head><body>Not Found</body></html>"
+    content = (
+        b"<!DOCTYPE html><html><head><title>Error</title></head>"
+        b"<body>Not Found</body></html>"
+    )
     html_path.write_bytes(content)
     return html_path
 

@@ -1353,7 +1353,8 @@ def test_process_downloads_empty_list() -> None:
 @pytest.mark.unit
 def test_process_downloads_handles_exception(capsys: CaptureFixture[str]) -> None:
     """
-    Verify process_downloads handles unexpected exceptions gracefully as failed downloads.
+    Verify process_downloads handles unexpected exceptions gracefully as failed
+    downloads.
     """
 
     class FailingUseCase:
@@ -1379,7 +1380,8 @@ def test_process_downloads_handles_exception(capsys: CaptureFixture[str]) -> Non
 @pytest.mark.unit
 def test_process_downloads_exception_without_debug(capsys: CaptureFixture[str]) -> None:
     """
-    Verify process_downloads handles unexpected exceptions as failed downloads without debug.
+    Verify process_downloads handles unexpected exceptions as failed downloads
+    without debug.
     """
 
     class FailingUseCase:
