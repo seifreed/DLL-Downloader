@@ -114,6 +114,28 @@ def test_scan_result_detection_count_variants() -> None:
 
 
 @pytest.mark.unit
+def test_scan_result_is_hashable_and_equal_results_share_hash() -> None:
+    first = ScanResult(
+        file_hash="abc",
+        status=SecurityStatus.MALICIOUS,
+        detection_ratio="2/70",
+        detections={"B": "Mal", "A": "Mal"},
+    )
+    second = ScanResult(
+        file_hash="abc",
+        status=SecurityStatus.MALICIOUS,
+        detection_ratio="2/70",
+        detections={"A": "Mal", "B": "Mal"},
+    )
+    other = ScanResult(file_hash="zzz", status=SecurityStatus.CLEAN)
+
+    # Hashing must work (detections order-independent) and place results in a set.
+    assert hash(first) == hash(second)
+    assert len({first, second}) == 1
+    assert len({first, other}) == 2
+
+
+@pytest.mark.unit
 def test_scan_result_detections_are_snapshot_immutable() -> None:
     source = {"Engine": "Malware"}
     result = ScanResult(
