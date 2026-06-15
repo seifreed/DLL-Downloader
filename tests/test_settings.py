@@ -1782,3 +1782,21 @@ def test_settings_loader_vt_toml_closes_fd_when_set_blocking_fails(
 
     with _set_blocking_raises():
         assert _VTTomlSettingsSource.load(str(tmp_path)) is None
+
+
+@pytest.mark.unit
+def test_vt_toml_with_strict_permissions_is_read(tmp_path: Path) -> None:
+    vt_file = tmp_path / ".vt.toml"
+    vt_file.write_text("apikey = 'vt-strict-key'")
+    os.chmod(vt_file, 0o600)
+
+    assert _VTTomlSettingsSource.load(str(tmp_path)) == "vt-strict-key"
+
+
+@pytest.mark.unit
+def test_vt_toml_with_permissive_permissions_is_read(tmp_path: Path) -> None:
+    vt_file = tmp_path / ".vt.toml"
+    vt_file.write_text("apikey = 'vt-loose-key'")
+    os.chmod(vt_file, 0o644)
+
+    assert _VTTomlSettingsSource.load(str(tmp_path)) == "vt-loose-key"
