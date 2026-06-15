@@ -39,6 +39,7 @@ from dll_downloader.domain.entities.dll_file import (
     normalize_dll_name,
 )
 from dll_downloader.domain.errors import (
+    DomainPortError,
     DownloadResolutionError,
     HTTPServiceError,
     RepositoryOperationError,
@@ -2821,6 +2822,50 @@ def test_download_batch_use_case_reports_non_string_names_as_failure_items() -> 
     assert response.items[0].dll_name == "123"
     assert response.items[0].response.success is False
     assert response.items[0].response.error_message == "DLL name must be a string"
+
+
+@pytest.mark.unit
+def test_download_batch_use_case_skips_duplicate_names() -> None:
+    repository = InMemoryRepository()
+    http_client = StubHTTPClient()
+    single_use_case = DownloadDLLUseCase(
+        repository=repository,
+        http_client=http_client,
+        download_base_url="https://dll.website/download",
+    )
+    batch_use_case = DownloadBatchUseCase(single_use_case)
+
+    response = batch_use_case.execute(
+        DownloadBatchRequest(
+            # "kernel32" and "kernel32.dll" normalize to the same name.
+            dll_names=("kernel32", "kernel32.dll"),
+            architecture=Architecture.X64,
+            scan_before_save=False,
+        )
+    )
+
+    # The duplicate is skipped: only one item is produced.
+    assert len(response.items) == 1
+    assert response.items[0].dll_name == "kernel32.dll"
+
+
+@pytest.mark.unit
+def test_download_batch_use_case_propagates_domain_port_errors() -> None:
+    class _PortErrorUseCase:
+        def execute(self, request: DownloadDLLRequest) -> DownloadDLLResponse:
+            raise DomainPortError("downstream port unavailable")
+
+    batch_use_case = DownloadBatchUseCase(_PortErrorUseCase())
+
+    # DomainPortError must propagate, not be swallowed as a per-item failure.
+    with pytest.raises(DomainPortError):
+        batch_use_case.execute(
+            DownloadBatchRequest(
+                dll_names=("kernel32.dll",),
+                architecture=Architecture.X64,
+                scan_before_save=False,
+            )
+        )
 
 
 # ---------------------------------------------------------------------------
