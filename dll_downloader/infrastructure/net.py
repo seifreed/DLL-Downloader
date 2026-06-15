@@ -7,9 +7,19 @@ policy cannot drift between call sites.
 
 import ipaddress
 import socket
+from collections.abc import Callable
+from typing import Any
 from urllib.parse import urlparse
 
 IpAddress = ipaddress.IPv4Address | ipaddress.IPv6Address
+
+# A resolver returns getaddrinfo-style 5-tuples; only sockaddr[0] (the address)
+# is consumed. Injectable so SSRF resolution can be exercised deterministically.
+Resolver = Callable[[str], list[Any]]
+
+
+def _default_resolver(hostname: str) -> list[Any]:
+    return socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
 
 
 def normalize_ip(addr: IpAddress) -> IpAddress:
@@ -60,7 +70,9 @@ def strip_url_credentials(location: str) -> str:
     return parsed._replace(netloc=host_port_netloc(hostname, port)).geturl()
 
 
-def hostname_resolves_to_private_ip(hostname: str) -> bool:
+def hostname_resolves_to_private_ip(
+    hostname: str, resolver: Resolver | None = None
+) -> bool:
     """Return True when *hostname* is, or resolves to, a non-public IP.
 
     Loopback addresses are included so SSRF protection is consistent with
@@ -69,16 +81,18 @@ def hostname_resolves_to_private_ip(hostname: str) -> bool:
     Returns True on DNS resolution failure (fail-closed) to prevent
     DNS-rebinding attacks where an attacker returns NXDOMAIN during the SSRF
     check but resolves to a private IP during the actual request.
+
+    *resolver* defaults to the system DNS resolver; it can be injected to
+    exercise resolution outcomes deterministically.
     """
+    resolve = resolver or _default_resolver
     try:
         return is_private_address(ipaddress.ip_address(hostname))
     except ValueError:
         pass
 
     try:
-        resolved = socket.getaddrinfo(
-            hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM
-        )
+        resolved = resolve(hostname)
     except (socket.gaierror, socket.herror, OSError):
         return True
 

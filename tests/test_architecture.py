@@ -104,6 +104,7 @@ TEST_INTERNAL_IMPORT_ALLOWLIST = {
     "tests/test_dll_files_resolver.py",
     "tests/test_download_presenter.py",
     "tests/test_http_client.py",
+    "tests/test_net.py",
     "tests/test_settings.py",
     "tests/test_use_cases.py",
     "tests/test_virustotal.py",
