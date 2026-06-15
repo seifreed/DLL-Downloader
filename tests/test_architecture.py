@@ -103,6 +103,7 @@ TEST_INTERNAL_IMPORT_ALLOWLIST = {
     "tests/test_cli_runner.py",
     "tests/test_dll_files_resolver.py",
     "tests/test_download_presenter.py",
+    "tests/test_html_link_extractor.py",
     "tests/test_http_client.py",
     "tests/test_net.py",
     "tests/test_settings.py",
