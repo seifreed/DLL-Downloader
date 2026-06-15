@@ -17,6 +17,7 @@ from .html_link_extractor import extract_links, extract_links_with_positions
 _SECTION_START = "<section"
 _SECTION_END = "</section>"
 _SUPPORTED_DOWNLOAD_ARCHITECTURES = {Architecture.X86, Architecture.X64}
+_OFFICIAL_ZIP_HOST = "download.zip.dll-files.com"
 DownloadLinkCandidate = tuple[str, str, str]
 
 
@@ -244,37 +245,35 @@ class DllFilesResolver:
         return port is None or port == 443
 
     def _resolve_official_zip_link(self, href: str) -> str | None:
+        """Validate an official-host zip link and return its canonical URL.
+
+        This is the single SSRF gate for official download links: scheme,
+        userinfo, host, path suffix and port are all validated here, so no
+        caller re-checks them (which would leave unreachable defensive code).
+        """
         parsed = urlparse(href)
+        if parsed.scheme not in {"", "https"}:
+            return None
         if parsed.username is not None:
             return None
-        if parsed.scheme == "https":
-            if not self._has_safe_official_port(parsed):
-                return None
-            return href
-        if parsed.scheme == "" and parsed.netloc:
-            return self._resolve_schemeless_official_zip_link(parsed)
-        return None
-
-    def _resolve_schemeless_official_zip_link(self, parsed: ParseResult) -> str | None:
-        if "@" in parsed.netloc:
+        if parsed.hostname != _OFFICIAL_ZIP_HOST:
+            return None
+        if not parsed.path.lower().endswith(".zip"):
             return None
         if not self._has_safe_official_port(parsed):
             return None
-        parsed_base = urlparse(self.base_url)
-        allowed_hosts = {"download.zip.dll-files.com"}
-        if parsed_base.hostname:
-            allowed_hosts.add(parsed_base.hostname)
-        if parsed.hostname not in allowed_hosts:
-            return None
+        if parsed.scheme == "https":
+            return href
+        # Scheme-relative "//host/path": a validated official host implies a
+        # netloc, so reconstruct an explicit https URL.
         query = f"?{parsed.query}" if parsed.query else ""
         return f"https://{parsed.netloc}{parsed.path}{query}"
 
     def _extract_direct_link(self, html: str) -> str | None:
         for href, _ in self._iter_links(html):
-            if self._is_official_zip_link(href):
-                resolved = self._resolve_official_zip_link(href)
-                if resolved is not None:
-                    return resolved
+            resolved = self._resolve_official_zip_link(href)
+            if resolved is not None:
+                return resolved
         for href, _ in self._iter_links(html):
             if self._is_base_zip_link(href):
                 return urljoin(self.base_url, href)
@@ -304,15 +303,6 @@ class DllFilesResolver:
         if base_port is not None:
             return href_effective_port == base_port
         return href_port is None or href_port == _default_port(href_scheme)
-
-    @staticmethod
-    def _is_official_zip_link(href: str) -> bool:
-        parsed_href = urlparse(href)
-        return (
-            parsed_href.scheme in {"", "https"}
-            and parsed_href.hostname == "download.zip.dll-files.com"
-            and parsed_href.path.lower().endswith(".zip")
-        )
 
     def _is_base_zip_link(self, href: str) -> bool:
         parsed_href = urlparse(href)

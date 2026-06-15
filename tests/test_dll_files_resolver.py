@@ -143,6 +143,33 @@ def test_resolver_uses_injected_http_contract() -> None:
 
 
 @pytest.mark.unit
+def test_resolver_skips_official_host_link_without_zip_suffix() -> None:
+    base_url = "http://example.com"
+    client = StubTextHTTPClient(
+        {
+            f"{base_url}/search/?q=msvcp140.dll": (
+                '<a href="/msvcp140.dll.html">msvcp140</a>'
+            ),
+            f"{base_url}/msvcp140.dll.html": (
+                '<a href="/download/bbb/msvcp140.dll.html">Download 64-bit</a>'
+            ),
+            f"{base_url}/download/bbb/msvcp140.dll.html": (
+                # Official host but not a .zip: the SSRF gate must reject it...
+                '<a href="https://download.zip.dll-files.com/aaa/readme.html">info</a>'
+                # ...and then resolve the genuine zip link.
+                '<a href="https://download.zip.dll-files.com/aaa/msvcp140.zip?token=9">z</a>'
+            ),
+        }
+    )
+    resolver = DllFilesResolver(base_url=base_url, http_client=client)
+
+    url = resolver.resolve_download_url("msvcp140.dll", Architecture.X64)
+
+    assert url.endswith("token=9")
+    assert "readme.html" not in url
+
+
+@pytest.mark.unit
 def test_resolver_unknown_architecture_uses_first_link(resolver_server: str) -> None:
     resolver = DllFilesResolver(
         http_client=RequestsHTTPClient(
