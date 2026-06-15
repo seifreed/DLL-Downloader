@@ -41,7 +41,6 @@ class RequestsHTTPClient:
     """HTTP client implementation satisfying the domain HTTP protocol."""
 
     DEFAULT_MAX_RETRIES = 5
-    DEFAULT_USER_AGENT = RandomUserAgentProvider.DEFAULT_USER_AGENTS[0]
 
     def __init__(
         self,
