@@ -3119,3 +3119,221 @@ def test_zip_member_at_compression_ratio_limit_rejected() -> None:
     request = DownloadDLLRequest(dll_name="test.dll", extract_archive=True)
     with pytest.raises(ArchiveExtractionError, match="suspicious compression ratio"):
         use_case._extract_valid_dll_from_zip(bytes(raw), request)
+
+
+# ============================================================================
+# DownloadDLLUseCase defensive branch coverage
+# ============================================================================
+
+
+def _make_use_case() -> DownloadDLLUseCase:
+    return DownloadDLLUseCase(
+        repository=InMemoryRepository(),
+        http_client=StubHTTPClient(),
+        download_base_url="https://dll.website/download",
+    )
+
+
+@pytest.mark.unit
+def test_resolve_actual_architecture_falls_back_on_invalid_pe() -> None:
+    result = DownloadDLLUseCase._resolve_actual_architecture(
+        b"not a pe file", Architecture.UNKNOWN
+    )
+
+    assert result == Architecture.UNKNOWN
+
+
+@pytest.mark.unit
+def test_scan_failure_with_unexpected_error_is_normalized() -> None:
+    class GenericFailingScanner(StubSecurityScanner):
+        def scan_dll(self, dll_file: DLLFile) -> DLLFile:
+            raise RuntimeError("boom")
+
+    http_client = StubHTTPClient()
+    http_client.add_response(
+        "https://dll.website/download/x64/test.dll",
+        _build_pe_payload(Architecture.X64, b"raw dll content"),
+    )
+    use_case = DownloadDLLUseCase(
+        repository=InMemoryRepository(),
+        http_client=http_client,
+        download_base_url="https://dll.website/download",
+        scanner=GenericFailingScanner(),
+    )
+
+    response = use_case.execute(
+        DownloadDLLRequest(
+            dll_name="test.dll",
+            architecture=Architecture.X64,
+            scan_before_save=True,
+        )
+    )
+
+    assert response.success is False
+    assert "Security scan failed unexpectedly" in (response.error_message or "")
+
+
+@pytest.mark.unit
+def test_prepare_content_treats_is_zipfile_error_as_non_archive() -> None:
+    original_is_zipfile = zipfile.is_zipfile
+
+    def _raise(_file: object) -> bool:
+        raise ValueError("cannot inspect")
+
+    use_case = _make_use_case()
+    pe_bytes = _build_pe_payload(Architecture.X64)
+    request = DownloadDLLRequest(
+        dll_name="test.dll",
+        architecture=Architecture.X64,
+        extract_archive=False,
+    )
+
+    zipfile.is_zipfile = cast(Any, _raise)
+    try:
+        result = use_case._prepare_content(pe_bytes, request)
+    finally:
+        zipfile.is_zipfile = original_is_zipfile
+
+    assert result == pe_bytes
+
+
+@pytest.mark.unit
+def test_validate_zip_member_sizes_skips_directories() -> None:
+    directory = zipfile.ZipInfo("nested/")
+    assert directory.is_dir()
+
+    DownloadDLLUseCase._validate_zip_member_sizes([directory])
+
+
+@pytest.mark.unit
+def test_validate_zip_member_sizes_rejects_oversized_member() -> None:
+    from dll_downloader.application.errors import ArchiveExtractionError
+    from dll_downloader.domain.services.archive_safety import ZIP_MEMBER_SIZE_LIMIT
+
+    member = zipfile.ZipInfo("big.dll")
+    member.file_size = ZIP_MEMBER_SIZE_LIMIT + 1
+    member.compress_size = 1024
+
+    with pytest.raises(ArchiveExtractionError, match="exceeds size limit"):
+        DownloadDLLUseCase._validate_zip_member_sizes([member])
+
+
+@pytest.mark.unit
+def test_validate_zip_member_sizes_rejects_oversized_compressed_member() -> None:
+    from dll_downloader.application.errors import ArchiveExtractionError
+    from dll_downloader.application.use_cases.download_dll import (
+        _ZIP_COMPRESSED_SIZE_LIMIT,
+    )
+
+    member = zipfile.ZipInfo("big.dll")
+    member.file_size = 1024
+    member.compress_size = _ZIP_COMPRESSED_SIZE_LIMIT + 1
+
+    with pytest.raises(
+        ArchiveExtractionError, match="compressed size exceeds safe limit"
+    ):
+        DownloadDLLUseCase._validate_zip_member_sizes([member])
+
+
+@pytest.mark.unit
+def test_validate_zip_member_sizes_rejects_oversized_total() -> None:
+    from dll_downloader.application.errors import ArchiveExtractionError
+    from dll_downloader.application.use_cases.download_dll import (
+        _ZIP_COMPRESSED_SIZE_LIMIT,
+    )
+
+    def _member(name: str) -> zipfile.ZipInfo:
+        member = zipfile.ZipInfo(name)
+        member.file_size = 300 * 1024 * 1024
+        member.compress_size = _ZIP_COMPRESSED_SIZE_LIMIT
+        return member
+
+    members = [_member("a.dll"), _member("b.dll")]
+
+    with pytest.raises(
+        ArchiveExtractionError, match="total decompressed size exceeds limit"
+    ):
+        DownloadDLLUseCase._validate_zip_member_sizes(members)
+
+
+@pytest.mark.unit
+def test_read_requested_zip_member_rejects_oversized_extraction() -> None:
+    from dll_downloader.application.errors import ArchiveExtractionError
+    from dll_downloader.domain.services.archive_safety import ZIP_MEMBER_SIZE_LIMIT
+
+    class _OversizedContent:
+        def __len__(self) -> int:
+            return ZIP_MEMBER_SIZE_LIMIT + 1
+
+        def __bool__(self) -> bool:
+            return True
+
+    class _FakeArchive:
+        def read(self, member: object) -> object:
+            return _OversizedContent()
+
+    use_case = _make_use_case()
+    member = zipfile.ZipInfo("test.dll")
+    member.file_size = 10
+    request = DownloadDLLRequest(dll_name="test.dll")
+
+    with pytest.raises(
+        ArchiveExtractionError, match="Extracted DLL exceeds size limit"
+    ):
+        use_case._read_requested_zip_member(
+            cast(Any, _FakeArchive()), [member], request
+        )
+
+
+@pytest.mark.unit
+def test_read_requested_zip_member_rejects_size_mismatch() -> None:
+    from dll_downloader.application.errors import ArchiveExtractionError
+
+    class _FakeArchive:
+        def read(self, member: object) -> bytes:
+            return b"abc"
+
+    use_case = _make_use_case()
+    member = zipfile.ZipInfo("test.dll")
+    member.file_size = 99
+    request = DownloadDLLRequest(dll_name="test.dll")
+
+    with pytest.raises(ArchiveExtractionError, match="does not match ZIP metadata"):
+        use_case._read_requested_zip_member(
+            cast(Any, _FakeArchive()), [member], request
+        )
+
+
+@pytest.mark.unit
+def test_raise_zip_extraction_failure_default_message() -> None:
+    from dll_downloader.application.errors import ArchiveExtractionError
+
+    request = DownloadDLLRequest(dll_name="test.dll")
+
+    with pytest.raises(
+        ArchiveExtractionError, match="does not contain a valid requested DLL"
+    ):
+        DownloadDLLUseCase._raise_zip_extraction_failure(request, [], None, False)
+
+
+@pytest.mark.unit
+def test_read_regular_file_no_follow_returns_none_on_read_error(
+    tmp_path: Path,
+) -> None:
+    from dll_downloader.application.use_cases.download_dll import (
+        _read_regular_file_no_follow,
+    )
+
+    target = tmp_path / "data.bin"
+    target.write_bytes(b"payload")
+
+    original_set_blocking = os.set_blocking
+
+    def _raise(fd: int, blocking: bool) -> None:
+        raise OSError("set_blocking failed")
+
+    os.set_blocking = cast(Any, _raise)
+    try:
+        assert _read_regular_file_no_follow(target) is None
+    finally:
+        os.set_blocking = original_set_blocking
