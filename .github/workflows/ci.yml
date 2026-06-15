@@ -15,6 +15,7 @@ jobs:
   quality:
     name: Quality / py3.13
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
 
     steps:
       - name: Checkout
@@ -74,6 +75,7 @@ jobs:
   sbom:
     name: SBOM quality / 10.0-A
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     env:
       SBOMQS_VERSION: "2.0.8"
       SBOMQS_SHA256: "c8853906556245fe80f6ecea6015c057736701a1f763a1274ba5326b29fe1a5b"
@@ -123,6 +125,10 @@ jobs:
     name: >-
       ${{ matrix.target.platform }} / py${{ matrix.python-version }}
     runs-on: ${{ matrix.target.runs-on }}
+    # Bounds execution time once a runner is assigned. Note: this does NOT
+    # cover time spent queued waiting for a runner (GitHub fails jobs that
+    # stay queued ~24h), which is the current macOS-runner-availability limit.
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
