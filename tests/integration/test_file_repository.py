@@ -1676,14 +1676,16 @@ def test_pe_image_layout_rejects_invalid_boundaries() -> None:
     )
 
 
-def test_content_is_pe_dll_rejects_invalid_content_and_accepts_unknown_architecture() -> None:
-    assert not FileSystemDLLRepository._content_is_pe_dll(
-        b"not a PE DLL",
+def test_content_matches_dll_payload_rejects_invalid_and_accepts_unknown_architecture() -> None:
+    assert not FileSystemDLLRepository._content_matches_dll_payload(
+        "sample.dll",
         Architecture.X64,
+        b"not a PE DLL",
     )
-    assert FileSystemDLLRepository._content_is_pe_dll(
-        _build_pe_payload(Architecture.X64),
+    assert FileSystemDLLRepository._content_matches_dll_payload(
+        "sample.dll",
         Architecture.UNKNOWN,
+        _build_pe_payload(Architecture.X64),
     )
 
 

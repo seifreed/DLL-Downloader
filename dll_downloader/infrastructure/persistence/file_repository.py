@@ -769,20 +769,6 @@ class FileSystemDLLRepository(IDLLRepository):
         """Return the PE optional-header magic number for the architecture."""
         return _expected_optional_magic(architecture)
 
-    @classmethod
-    def _content_is_pe_dll(
-        cls,
-        content: bytes,
-        expected_architecture: Architecture,
-    ) -> bool:
-        architecture = cls._detect_pe_dll_architecture(content)
-        if architecture is None:
-            return False
-        return (
-            expected_architecture == Architecture.UNKNOWN
-            or architecture == expected_architecture
-        )
-
     @staticmethod
     def _iter_architectures(
         architecture: Architecture | None

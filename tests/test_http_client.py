@@ -24,6 +24,7 @@ from dll_downloader.infrastructure.http.http_client import (
     RequestsHTTPClient,
 )
 from dll_downloader.infrastructure.http.request_headers import RequestHeaderBuilder
+from dll_downloader.infrastructure.http.response_stream import decode_text
 from dll_downloader.infrastructure.http.retry_policy import RetryPolicy
 from dll_downloader.infrastructure.http.transport import RequestsTransport
 from dll_downloader.infrastructure.http.user_agents import (
@@ -2214,7 +2215,7 @@ def test_retry_policy_retryable_status_codes_are_snapshot_immutable() -> None:
 
     retryable_status_codes.clear()
 
-    assert policy.should_retry_status(500, 1) is True
+    assert 500 in policy.retryable_status_codes
 
 
 @pytest.mark.unit
@@ -2299,19 +2300,19 @@ def test_decode_text_recognizes_charset_aliases() -> None:
     # windows-1252 can encode 'é' (U+00E9)
     content = "café".encode("cp1252")
     headers = {"content-type": "text/html; charset=windows-1252"}
-    decoded = RequestsHTTPClient._decode_text(content, headers)
+    decoded = decode_text(content, headers)
     assert decoded == "café"
 
     # utf8 alias
     content = "café".encode()
     headers = {"content-type": "text/html; charset=utf8"}
-    decoded = RequestsHTTPClient._decode_text(content, headers)
+    decoded = decode_text(content, headers)
     assert decoded == "café"
 
     # shift-jis alias - use a character that shift_jis can encode
     content = "abc".encode("shift_jis")
     headers = {"content-type": "text/html; charset=shift-jis"}
-    decoded = RequestsHTTPClient._decode_text(content, headers)
+    decoded = decode_text(content, headers)
     assert decoded == "abc"
 
 

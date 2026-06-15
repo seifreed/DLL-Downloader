@@ -65,12 +65,6 @@ class RetryPolicy:
         validate_non_negative_number(self.backoff_seconds, "backoff_seconds")
         validate_non_negative_number(self.jitter_seconds, "jitter_seconds")
 
-    def should_retry_status(self, status_code: int, attempt: int) -> bool:
-        """Return whether a response status should be retried."""
-        return (
-            status_code in self.retryable_status_codes and attempt < self.max_attempts
-        )
-
     def should_retry_exception(
         self,
         exc: requests.RequestException,

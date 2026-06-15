@@ -149,10 +149,6 @@ class RequestsHTTPClient:
         response = self.get(url, headers=headers)
         return decode_text(response.content, response.headers)
 
-    @staticmethod
-    def _decode_text(content: bytes, headers: Mapping[str, str]) -> str:
-        return decode_text(content, headers)
-
     def download(self, url: str, headers: Mapping[str, str] | None = None) -> bytes:
         response = self._transport.execute(
             "DOWNLOAD", url, headers=headers, stream=True
