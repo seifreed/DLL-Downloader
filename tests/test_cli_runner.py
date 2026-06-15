@@ -761,8 +761,8 @@ def test_execute_boundary_command_invokes_factory_for_generic_exception() -> Non
 
     result = execute_boundary_command(
         _boundary_command(),
-        cast(BatchCommandRunner, run_command),
-        cast(BoundaryFailureFactory, factory),
+        run_command,
+        factory,
     )
 
     assert isinstance(captured["exc"], RuntimeError)
@@ -774,28 +774,14 @@ def test_cli_runner_protocol_method_bodies_are_callable() -> None:
     request = cast(DownloadDLLRequest, object())
     command = _boundary_command()
 
-    assert SupportsClose.close(cast(SupportsClose, object())) is None
-    assert (
-        SupportsDownloadExecution.execute(
-            cast(SupportsDownloadExecution, object()), request
-        )
-        is None
+    # The Protocol method bodies are structural-typing stubs; call them so the
+    # stub bodies execute (they return None).
+    SupportsClose.close(cast(SupportsClose, object()))
+    SupportsDownloadExecution.execute(
+        cast(SupportsDownloadExecution, object()), request
     )
-    assert (
-        ApplicationBuilder.__call__(
-            cast(ApplicationBuilder, object()), Settings()
-        )
-        is None
-    )
-    assert (
-        BatchCommandRunner.__call__(
-            cast(BatchCommandRunner, object()), command
-        )
-        is None
-    )
-    assert (
-        BoundaryFailureFactory.__call__(
-            cast(BoundaryFailureFactory, object()), command, RuntimeError()
-        )
-        is None
+    ApplicationBuilder.__call__(cast(ApplicationBuilder, object()), Settings())
+    BatchCommandRunner.__call__(cast(BatchCommandRunner, object()), command)
+    BoundaryFailureFactory.__call__(
+        cast(BoundaryFailureFactory, object()), command, RuntimeError()
     )

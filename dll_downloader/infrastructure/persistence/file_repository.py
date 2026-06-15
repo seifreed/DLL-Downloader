@@ -1491,8 +1491,6 @@ class FileSystemDLLRepository(IDLLRepository):
 
         if not isinstance(name, str):
             raise ValueError("Index entry 'name' must be a string")
-        if not isinstance(architecture, str):
-            raise ValueError("Index entry 'architecture' must be a string")
         if not isinstance(security_status, str):
             raise ValueError("Index entry 'security_status' must be a string")
         if file_hash is not None and not _is_sha256_hash(file_hash):

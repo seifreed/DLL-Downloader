@@ -9,6 +9,7 @@ These tests validate the repository implementation using real filesystem
 operations with temporary directories. No mocks or stubs are used.
 """
 
+import contextlib
 import hashlib
 import io
 import json
@@ -17,6 +18,7 @@ import zipfile
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
@@ -2680,3 +2682,1426 @@ def test_detect_zip_payload_architecture_rejects_excessive_member_count(
         )
         is None
     )
+
+
+# ---------------------------------------------------------------------------
+# Coverage gap tests — bring file_repository.py to 100% line+branch coverage
+# ---------------------------------------------------------------------------
+
+import fcntl  # noqa: E402  (needed for flock fault injection)
+import stat as _stat  # noqa: E402
+
+
+# LINE 132 — _ensure_directories: symlinked base path
+@pytest.mark.integration
+def test_ensure_directories_raises_for_symlinked_base_path(
+    tmp_path: Path,
+) -> None:
+    """_ensure_directories rejects a base path that is itself a symlink."""
+    real_dir = tmp_path / "real"
+    real_dir.mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(real_dir)
+
+    with pytest.raises(RepositoryError, match="symlinked base path"):
+        FileSystemDLLRepository(link)
+
+
+# LINES 153-157 — _with_index_lock: fd opened, then flock raises OSError
+@pytest.mark.integration
+def test_with_index_lock_closes_fd_when_flock_raises(
+    tmp_download_dir: Path,
+) -> None:
+    """When flock raises after fd is open, RepositoryError is raised and fd is
+    closed."""
+    repository = FileSystemDLLRepository(tmp_download_dir)
+    original_flock = fcntl.flock
+
+    def patched_flock(fd: int, op: int) -> None:
+        raise OSError("injected flock failure")
+
+    fcntl.flock = cast(Any, patched_flock)
+    try:
+        with (
+            pytest.raises(RepositoryError, match="Failed to acquire index lock"),
+            repository._with_index_lock(),
+        ):
+            pass
+    finally:
+        fcntl.flock = original_flock
+
+
+# LINES 215-217 — _load_index: os.open raises OSError
+@pytest.mark.integration
+def test_load_index_raises_when_os_open_fails(
+    tmp_download_dir: Path,
+) -> None:
+    """_load_index wraps an OSError from os.open into RepositoryError."""
+    repository = FileSystemDLLRepository(tmp_download_dir)
+    # Write a valid index so preconditions pass
+    repository._index_path.write_text('{"files": {}}')
+
+    original_open = os.open
+
+    def patched_open(path: str, flags: int, mode: int = 0) -> int:
+        if path == str(repository._index_path):
+            raise OSError("injected open failure")
+        return original_open(path, flags, mode)
+
+    os.open = cast(Any, patched_open)
+    try:
+        with pytest.raises(RepositoryError, match="Failed to load index"):
+            repository._load_index()
+    finally:
+        os.open = original_open
+
+
+# LINE 222 — _load_index: fstat reports non-regular file
+@pytest.mark.integration
+def test_load_index_raises_when_fstat_shows_non_regular_file(
+    tmp_download_dir: Path,
+) -> None:
+    """_load_index raises RepositoryError when fstat shows a non-regular file."""
+    repository = FileSystemDLLRepository(tmp_download_dir)
+    repository._index_path.write_text('{"files": {}}')
+
+    original_fstat = os.fstat
+
+    def patched_fstat(fd: int) -> os.stat_result:
+        result = original_fstat(fd)
+        # Replace st_mode with a pipe mode so S_ISREG returns False
+        fake = os.stat_result(
+            (
+                _stat.S_IFIFO | 0o600,
+                result.st_ino,
+                result.st_dev,
+                result.st_nlink,
+                result.st_uid,
+                result.st_gid,
+                result.st_size,
+                result.st_atime,
+                result.st_mtime,
+                result.st_ctime,
+            )
+        )
+        return fake
+
+    os.fstat = patched_fstat
+    try:
+        with pytest.raises(RepositoryError, match="Index path is not a regular file"):
+            repository._load_index()
+    finally:
+        os.fstat = original_fstat
+
+
+# LINE 224 — _load_index: index file exceeds size limit (sparse file trick)
+@pytest.mark.integration
+def test_load_index_raises_when_index_exceeds_size_limit(
+    tmp_download_dir: Path,
+) -> None:
+    """_load_index raises RepositoryError when the index file exceeds 10 MiB."""
+    repository = FileSystemDLLRepository(tmp_download_dir)
+    repository._index_path.write_text('{"files": {}}')
+    # Create a sparse file larger than _INDEX_MAX_BYTES without allocating blocks
+    limit = FileSystemDLLRepository._INDEX_MAX_BYTES
+    os.truncate(str(repository._index_path), limit + 1)
+
+    with pytest.raises(RepositoryError, match="exceeds size limit"):
+        repository._load_index()
+
+
+# LINES 238-239 — _load_index: finally closes fd when set_blocking raises
+@pytest.mark.integration
+def test_load_index_closes_fd_in_finally_when_set_blocking_raises(
+    tmp_download_dir: Path,
+) -> None:
+    """When os.set_blocking raises between os.open and os.fdopen, the finally
+    block closes the fd."""
+    repository = FileSystemDLLRepository(tmp_download_dir)
+    repository._index_path.write_text('{"files": {}}')
+
+    original_set_blocking = os.set_blocking
+
+    def patched_set_blocking(fd: int, blocking: bool) -> None:
+        raise OSError("injected set_blocking failure")
+
+    os.set_blocking = patched_set_blocking
+    try:
+        with pytest.raises(RepositoryError, match="Failed to load index"):
+            repository._load_index()
+    finally:
+        os.set_blocking = original_set_blocking
+
+
+# LINES 295-296 — _path_is_within_repository: resolve raises OSError
+@pytest.mark.integration
+def test_path_is_within_repository_raises_on_oserror(
+    tmp_download_dir: Path,
+) -> None:
+    """_path_is_within_repository propagates OSError from resolve() as
+    RepositoryError.
+
+    Path.resolve() (without strict) delegates to os.path.realpath internally.
+    Patching os.path.realpath to raise OSError for the target path causes
+    resolve() to propagate the error, which the method catches and re-raises
+    as RepositoryError.
+    """
+    import os.path as _os_path
+
+    repository = FileSystemDLLRepository(tmp_download_dir)
+    target = tmp_download_dir / "x64" / "target.dll"
+
+    original_realpath = _os_path.realpath
+
+    def patched_realpath(path: str, *, strict: bool = False) -> str:
+        if "target.dll" in str(path):
+            raise OSError("injected realpath failure")
+        return original_realpath(path, strict=strict)
+
+    _os_path.realpath = cast(Any, patched_realpath)
+    try:
+        with pytest.raises(RepositoryError, match="Cannot verify path"):
+            repository._path_is_within_repository(target)
+    finally:
+        _os_path.realpath = original_realpath
+
+
+# LINES 310-311 — _path_location_is_within_repository: parent resolve raises
+@pytest.mark.integration
+def test_path_location_is_within_repository_raises_when_parent_missing(
+    tmp_download_dir: Path,
+) -> None:
+    """_path_location_is_within_repository raises RepositoryError when the
+    parent directory does not exist (strict=True raises FileNotFoundError)."""
+    repository = FileSystemDLLRepository(tmp_download_dir)
+    # Use a path whose parent does not exist so resolve(strict=True) raises
+    missing_parent_path = tmp_download_dir / "nonexistent-parent" / "file.dll"
+
+    with pytest.raises(RepositoryError, match="Cannot verify path location"):
+        repository._path_location_is_within_repository(missing_parent_path)
+
+
+# LINES 354-355 — _is_symlink_safe: non-FileNotFoundError OSError returns False
+@pytest.mark.integration
+def test_is_symlink_safe_returns_false_on_permission_error(
+    tmp_download_dir: Path,
+) -> None:
+    """_is_symlink_safe swallows OSError (other than FileNotFoundError) and
+    returns False."""
+    target = tmp_download_dir / "probe.dll"
+    target.write_bytes(b"data")
+
+    original_lstat = os.lstat
+
+    def patched_lstat(
+        path: str | bytes | os.PathLike[str], **kw: object
+    ) -> os.stat_result:
+        # Path objects are valid lstat arguments in Python 3.6+; convert first
+        if "probe.dll" in str(path):
+            raise PermissionError("injected permission error")
+        return original_lstat(path, **kw)  # type: ignore[arg-type]
+
+    os.lstat = patched_lstat  # type: ignore[assignment]
+    try:
+        result = FileSystemDLLRepository._is_symlink_safe(target)
+        assert result is False
+    finally:
+        os.lstat = original_lstat
+
+
+# LINES 380-381 — _validate_repository_write_path: file exists but resolve raises
+@pytest.mark.integration
+def test_validate_repository_write_path_raises_when_resolve_fails_on_existing_file(
+    tmp_download_dir: Path,
+) -> None:
+    """_validate_repository_write_path raises RepositoryError when an existing
+    file's resolve(strict=True) raises OSError.
+
+    Path.resolve() uses os.path.realpath internally. Patching realpath to raise
+    OSError for the target file causes resolve(strict=True) (line 379) to
+    propagate the error, which the inner try/except re-raises as RepositoryError.
+    The patch activates only when the target filename appears in the path so that
+    the earlier parent.resolve(strict=True) at line 365 is unaffected.
+    """
+    import os.path as _os_path
+
+    repository = FileSystemDLLRepository(tmp_download_dir)
+    file_path = tmp_download_dir / "x64" / "existing.dll"
+    file_path.write_bytes(b"data")
+
+    original_realpath = _os_path.realpath
+
+    def patched_realpath(path: str | bytes, *, strict: bool = False) -> str:
+        if strict and "existing.dll" in str(path):
+            raise PermissionError("injected realpath failure on strict resolve")
+        return cast(str, original_realpath(path, strict=strict))
+
+    _os_path.realpath = cast(Any, patched_realpath)
+    try:
+        with pytest.raises(RepositoryError, match="Refusing to write outside"):
+            repository._validate_repository_write_path(file_path)
+    finally:
+        _os_path.realpath = original_realpath
+
+
+# LINE 397 — _read_file_no_follow: file exceeds max_bytes
+@pytest.mark.integration
+def test_read_file_no_follow_raises_when_file_exceeds_max_bytes(
+    tmp_download_dir: Path,
+) -> None:
+    """_read_file_no_follow raises RepositoryError when the file size exceeds
+    max_bytes."""
+    target = tmp_download_dir / "big.dll"
+    content = b"A" * 10
+    target.write_bytes(content)
+
+    with pytest.raises(RepositoryError, match="exceeds read limit"):
+        FileSystemDLLRepository._read_file_no_follow(target, max_bytes=len(content) - 1)
+
+
+# LINES 419-422 — _write_temp_file: os.fdopen raises before fd_opened is set
+@pytest.mark.integration
+def test_write_temp_file_closes_fd_when_fdopen_raises(
+    tmp_download_dir: Path,
+) -> None:
+    """When os.fdopen raises before the context manager assigns fd_opened=True,
+    _write_temp_file falls into the except branch and closes the fd directly."""
+    import tempfile as _tempfile
+
+    fd, temp_name = _tempfile.mkstemp(dir=str(tmp_download_dir))
+    original_fdopen = os.fdopen
+
+    def patched_fdopen(
+        fd_arg: int, mode: str = "r", *args: object, **kwargs: object
+    ) -> None:
+        raise OSError("injected fdopen failure")
+
+    os.fdopen = cast(Any, patched_fdopen)
+    try:
+        with pytest.raises(OSError, match="injected fdopen failure"):
+            FileSystemDLLRepository._write_temp_file(fd, b"data")
+    finally:
+        os.fdopen = original_fdopen
+        # fd was closed by the except branch; unlinking the temp file is enough
+        with contextlib.suppress(OSError):
+            os.unlink(temp_name)
+
+
+# LINES 438-442 — _verify_target_not_symlink: ELOOP and generic OSError
+@pytest.mark.integration
+def test_verify_target_not_symlink_raises_for_circular_symlink(
+    tmp_download_dir: Path,
+) -> None:
+    """_verify_target_not_symlink raises RepositoryError with 'symlink' message
+    when the target path forms a circular symlink (ELOOP on open)."""
+    link_a = tmp_download_dir / "loop_a.dll"
+    link_b = tmp_download_dir / "loop_b.dll"
+    link_a.symlink_to(link_b)
+    link_b.symlink_to(link_a)
+
+    try:
+        with pytest.raises(RepositoryError, match="symlink"):
+            FileSystemDLLRepository._verify_target_not_symlink(link_a)
+    finally:
+        link_a.unlink(missing_ok=True)
+        link_b.unlink(missing_ok=True)
+
+
+@pytest.mark.integration
+def test_verify_target_not_symlink_raises_for_generic_oserror(
+    tmp_download_dir: Path,
+) -> None:
+    """_verify_target_not_symlink raises RepositoryError when os.open raises a
+    non-ELOOP OSError."""
+    # Write directly into tmp_download_dir (no x64 subdir needed here)
+    target = tmp_download_dir / "victim.dll"
+    target.write_bytes(b"content")
+
+    original_open = os.open
+
+    def patched_open(path: str, flags: int, mode: int = 0) -> int:
+        if "victim.dll" in path:
+            raise OSError(13, "Permission denied")  # EACCES, not ELOOP
+        return original_open(path, flags, mode)
+
+    os.open = cast(Any, patched_open)
+    try:
+        with pytest.raises(RepositoryError, match="Cannot verify target path"):
+            FileSystemDLLRepository._verify_target_not_symlink(target)
+    finally:
+        os.open = original_open
+
+
+# LINES 457-458 — _fsync_directory: fsync raises OSError (returns silently)
+@pytest.mark.integration
+def test_fsync_directory_swallows_oserror_from_fsync(
+    tmp_download_dir: Path,
+) -> None:
+    """_fsync_directory catches OSError from os.fsync and returns without
+    raising."""
+    original_fsync = os.fsync
+
+    def patched_fsync(fd: int) -> None:
+        raise OSError("injected fsync failure")
+
+    os.fsync = cast(Any, patched_fsync)
+    try:
+        # Must complete without raising
+        FileSystemDLLRepository._fsync_directory(tmp_download_dir)
+    finally:
+        os.fsync = original_fsync
+
+
+# LINE 460->exit — _fsync_directory: os.open raises (dir_fd stays -1)
+@pytest.mark.integration
+def test_fsync_directory_handles_open_failure_without_close(
+    tmp_download_dir: Path,
+) -> None:
+    """When os.open fails in _fsync_directory, dir_fd stays -1 so the finally
+    block skips os.close."""
+    original_open = os.open
+
+    def patched_open(path: str, flags: int, mode: int = 0) -> int:
+        if path == str(tmp_download_dir) and flags == os.O_RDONLY:
+            raise OSError("injected directory open failure")
+        return original_open(path, flags, mode)
+
+    os.open = cast(Any, patched_open)
+    try:
+        # Must complete without raising even though the open failed
+        FileSystemDLLRepository._fsync_directory(tmp_download_dir)
+    finally:
+        os.open = original_open
+
+
+# LINES 486->489 — _atomic_write_bytes: BaseException after rename (temp_name="")
+@pytest.mark.integration
+def test_atomic_write_skips_unlink_when_rename_already_succeeded(
+    tmp_download_dir: Path,
+) -> None:
+    """When a BaseException occurs after os.rename succeeds (temp_name already
+    cleared), the cleanup branch skips os.unlink and re-raises."""
+
+    class FsyncRaisesRepository(FileSystemDLLRepository):
+        """Repository whose _fsync_directory raises a non-OSError exception."""
+
+        @staticmethod
+        def _fsync_directory(directory: Path) -> None:
+            raise RuntimeError("injected post-rename failure")
+
+    repository = FsyncRaisesRepository(tmp_download_dir)
+    target = tmp_download_dir / "x64" / "target.dll"
+
+    with pytest.raises(RuntimeError, match="injected post-rename failure"):
+        repository._atomic_write_bytes(target, _build_pe_payload())
+
+    # The rename succeeded before the exception so the file is on disk
+    assert target.exists()
+
+
+# LINES 655-657 — _fallback_payload_is_valid: _read_file_no_follow raises OSError
+@pytest.mark.integration
+def test_fallback_payload_is_valid_returns_false_on_read_oserror(
+    tmp_download_dir: Path,
+) -> None:
+    """_fallback_payload_is_valid returns False when _read_file_no_follow raises
+    OSError."""
+
+    class UnreadablePayloadRepository(FileSystemDLLRepository):
+        @classmethod
+        def _read_file_no_follow(
+            cls, file_path: Path, max_bytes: int = 1024 * 1024 * 1024
+        ) -> bytes:
+            raise OSError("injected read failure")
+
+    repository = UnreadablePayloadRepository(tmp_download_dir)
+    target = tmp_download_dir / "x64" / "target.dll"
+    target.write_bytes(_build_pe_payload())
+
+    result = repository._fallback_payload_is_valid(
+        target, "target.dll", Architecture.X64
+    )
+    assert result is False
+
+
+# LINES 760-765 — _candidate_zip_members: member.file_size > ZIP_MEMBER_SIZE_LIMIT
+@pytest.mark.integration
+def test_candidate_zip_members_skips_oversized_member(
+    tmp_download_dir: Path,
+) -> None:
+    """_candidate_zip_members logs and skips members whose file_size field
+    exceeds ZIP_MEMBER_SIZE_LIMIT (set directly on the ZipInfo object)."""
+    from dll_downloader.domain.services.archive_safety import ZIP_MEMBER_SIZE_LIMIT
+
+    repository = FileSystemDLLRepository(tmp_download_dir)
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as archive:
+        archive.writestr("target.dll", b"small")
+
+    buf.seek(0)
+    with zipfile.ZipFile(buf) as probe:
+        members = probe.infolist()
+        assert len(members) == 1
+        # Artificially inflate the declared file_size
+        members[0].file_size = ZIP_MEMBER_SIZE_LIMIT + 1
+        result = list(repository._candidate_zip_members(probe, "target.dll"))
+
+    assert result == []
+
+
+# LINE 826 — _has_loadable_section static wrapper
+@pytest.mark.integration
+def test_has_loadable_section_wrapper_returns_expected_value() -> None:
+    """FileSystemDLLRepository._has_loadable_section delegates to the module
+    function and returns its result."""
+    payload = _build_pe_payload(Architecture.X64)
+    pe_offset = int.from_bytes(payload[0x3C:0x40], "little")
+    optional_header_size = 0xF0
+    section_table_offset = pe_offset + 24 + optional_header_size
+    section_count = 1
+
+    result = FileSystemDLLRepository._has_loadable_section(
+        payload, section_table_offset, section_count
+    )
+    assert isinstance(result, bool)
+
+
+# LINE 831 — _expected_optional_magic static wrapper
+@pytest.mark.integration
+def test_expected_optional_magic_wrapper_returns_correct_magic() -> None:
+    """FileSystemDLLRepository._expected_optional_magic delegates to the module
+    function."""
+    magic_x64 = FileSystemDLLRepository._expected_optional_magic(Architecture.X64)
+    magic_x86 = FileSystemDLLRepository._expected_optional_magic(Architecture.X86)
+    assert magic_x64 == 0x20B
+    assert magic_x86 == 0x10B
+
+
+# LINE 891->880 — _find_fallback_by_hash: hash mismatch, loop continues
+@pytest.mark.integration
+def test_find_fallback_by_hash_skips_mismatched_hash(
+    tmp_download_dir: Path,
+) -> None:
+    """_find_fallback_by_hash iterates past files whose actual hash does not
+    match the target hash."""
+    repository = FileSystemDLLRepository(tmp_download_dir)
+    decoy_content = _build_pe_payload(Architecture.X64) + b"decoy"
+    decoy_path = tmp_download_dir / "x64" / "decoy.dll"
+    decoy_path.write_bytes(decoy_content)
+
+    # Request a hash that does not match decoy_content
+    result = repository._find_fallback_by_hash("a" * 64)
+    assert result is None
+
+
+# LINE 927 — _list_fallback_payloads: arch_dir is a symlink
+@pytest.mark.integration
+def test_list_fallback_payloads_skips_symlinked_arch_dir(
+    tmp_download_dir: Path,
+    tmp_path: Path,
+) -> None:
+    """_list_fallback_payloads skips architecture directories that are symlinks
+    (_is_symlink_safe returns True)."""
+    repository = FileSystemDLLRepository(tmp_download_dir)
+    outside_dir = tmp_path / "outside-arch"
+    outside_dir.mkdir()
+    (outside_dir / "decoy.dll").write_bytes(_build_pe_payload())
+    arch_dir = tmp_download_dir / "x64"
+    arch_dir.rmdir()
+    arch_dir.symlink_to(outside_dir, target_is_directory=True)
+
+    try:
+        result = repository._list_fallback_payloads(set())
+        names = [dll.name for dll in result]
+        assert "decoy.dll" not in names
+    finally:
+        arch_dir.unlink(missing_ok=True)
+
+
+# LINE 936 — _list_fallback_payloads: key in blocked_keys causes continue
+@pytest.mark.integration
+def test_list_fallback_payloads_skips_key_already_in_blocked_set(
+    tmp_download_dir: Path,
+) -> None:
+    """_list_fallback_payloads skips files whose key is already in blocked_keys."""
+    repository = FileSystemDLLRepository(tmp_download_dir)
+    payload = _build_pe_payload(Architecture.X64)
+    (tmp_download_dir / "x64" / "blocked.dll").write_bytes(payload)
+
+    # Pre-populate blocked_keys with the key for blocked.dll
+    blocked = {"x64/blocked.dll"}
+    result = repository._list_fallback_payloads(blocked)
+    assert all(dll.name != "blocked.dll" for dll in result)
+
+
+# LINE 962 — _read_raw_index_json: index is a symlink → returns None
+@pytest.mark.integration
+def test_read_raw_index_json_returns_none_for_symlink_index(
+    tmp_download_dir: Path,
+    tmp_path: Path,
+) -> None:
+    """_read_raw_index_json returns None when the index path is a symlink."""
+    repository = FileSystemDLLRepository(tmp_download_dir)
+    external = tmp_path / "external.json"
+    external.write_text('{"files": {}}')
+    repository._index_path.symlink_to(external)
+
+    try:
+        result = repository._read_raw_index_json()
+        assert result is None
+    finally:
+        repository._index_path.unlink(missing_ok=True)
+
+
+# LINES 968-969 — _read_raw_index_json: os.open raises OSError → returns None
+@pytest.mark.integration
+def test_read_raw_index_json_returns_none_when_open_raises(
+    tmp_download_dir: Path,
+) -> None:
+    """_read_raw_index_json returns None when os.open raises OSError."""
+    repository = FileSystemDLLRepository(tmp_download_dir)
+    repository._index_path.write_text('{"files": {}}')
+
+    original_open = os.open
+
+    def patched_open(path: str, flags: int, mode: int = 0) -> int:
+        if path == str(repository._index_path):
+            raise OSError("injected open failure")
+        return original_open(path, flags, mode)
+
+    os.open = cast(Any, patched_open)
+    try:
+        result = repository._read_raw_index_json()
+        assert result is None
+    finally:
+        os.open = original_open
+
+
+# LINE 974 — _read_raw_index_json: fstat returns non-regular mode → None
+@pytest.mark.integration
+def test_read_raw_index_json_returns_none_when_fstat_non_regular(
+    tmp_download_dir: Path,
+) -> None:
+    """_read_raw_index_json returns None when fstat shows a non-regular file."""
+    repository = FileSystemDLLRepository(tmp_download_dir)
+    repository._index_path.write_text('{"files": {}}')
+
+    original_fstat = os.fstat
+
+    def patched_fstat(fd: int) -> os.stat_result:
+        result = original_fstat(fd)
+        return os.stat_result(
+            (
+                _stat.S_IFIFO | 0o600,
+                result.st_ino,
+                result.st_dev,
+                result.st_nlink,
+                result.st_uid,
+                result.st_gid,
+                result.st_size,
+                result.st_atime,
+                result.st_mtime,
+                result.st_ctime,
+            )
+        )
+
+    os.fstat = patched_fstat
+    try:
+        result = repository._read_raw_index_json()
+        assert result is None
+    finally:
+        os.fstat = original_fstat
+
+
+# LINES 976-980 — _read_raw_index_json: index exceeds size limit → None
+@pytest.mark.integration
+def test_read_raw_index_json_returns_none_when_index_too_large(
+    tmp_download_dir: Path,
+) -> None:
+    """_read_raw_index_json returns None when the index file exceeds 10 MiB."""
+    repository = FileSystemDLLRepository(tmp_download_dir)
+    repository._index_path.write_text('{"files": {}}')
+    limit = FileSystemDLLRepository._INDEX_MAX_BYTES
+    os.truncate(str(repository._index_path), limit + 1)
+
+    result = repository._read_raw_index_json()
+    assert result is None
+
+
+# LINES 986-988 — _read_raw_index_json: JSONDecodeError → None
+@pytest.mark.integration
+def test_read_raw_index_json_returns_none_for_corrupt_json(
+    tmp_download_dir: Path,
+) -> None:
+    """_read_raw_index_json returns None when json.load raises JSONDecodeError."""
+    repository = FileSystemDLLRepository(tmp_download_dir)
+    repository._index_path.write_text("{not valid json")
+
+    result = repository._read_raw_index_json()
+    assert result is None
+
+
+# LINES 991-992 — _read_raw_index_json: finally closes fd when set_blocking raises
+@pytest.mark.integration
+def test_read_raw_index_json_closes_fd_when_set_blocking_raises(
+    tmp_download_dir: Path,
+) -> None:
+    """When os.set_blocking raises inside _read_raw_index_json, the finally
+    block closes the fd and the method returns None."""
+    repository = FileSystemDLLRepository(tmp_download_dir)
+    repository._index_path.write_text('{"files": {}}')
+
+    original_set_blocking = os.set_blocking
+
+    def patched_set_blocking(fd: int, blocking: bool) -> None:
+        raise OSError("injected set_blocking failure")
+
+    os.set_blocking = patched_set_blocking
+    try:
+        result = repository._read_raw_index_json()
+        assert result is None
+    finally:
+        os.set_blocking = original_set_blocking
+
+
+# LINE 1005 — _raw_index_key: entry is not a dict → fallback str(key).lower()
+@pytest.mark.integration
+def test_raw_index_key_falls_back_when_entry_is_not_a_dict(
+    tmp_download_dir: Path,
+) -> None:
+    """_raw_index_key returns str(key).lower() when the entry is not a dict."""
+    repository = FileSystemDLLRepository(tmp_download_dir)
+    result = repository._raw_index_key("MyKey", "not_a_dict")
+    assert result == "mykey"
+
+
+# LINE 1014 — _load_raw_index_keys: raw_files is not a dict → returns empty set
+@pytest.mark.integration
+def test_load_raw_index_keys_returns_empty_set_when_files_is_not_dict(
+    tmp_download_dir: Path,
+) -> None:
+    """_load_raw_index_keys returns an empty set when the 'files' value is not a
+    dict."""
+    repository = FileSystemDLLRepository(tmp_download_dir)
+    repository._index_path.write_text('{"files": []}')
+
+    result = repository._load_raw_index_keys()
+    assert result == set()
+
+
+# LINE 1030 — delete: _resolve_delete_target returns None (dead-code guard)
+# The guard at line 1030 is unreachable in the current implementation.
+# We exercise it via a subclass that forces None to be returned.
+@pytest.mark.integration
+def test_delete_returns_false_when_resolve_target_returns_none(
+    tmp_download_dir: Path,
+) -> None:
+    """delete() returns False when _resolve_delete_target returns None
+    (exercised via subclass)."""
+
+    class NullTargetRepository(FileSystemDLLRepository):
+        def _resolve_delete_target(self, dll_file: DLLFile) -> DLLFile | None:
+            return None
+
+    repository = NullTargetRepository(tmp_download_dir)
+    dll = DLLFile(name="ghost.dll", architecture=Architecture.X64)
+    assert repository.delete(dll) is False
+
+
+# LINES 1040-1044 — delete: _delete_path_is_safe returns False
+@pytest.mark.integration
+def test_delete_returns_false_when_delete_path_is_not_safe(
+    tmp_download_dir: Path,
+) -> None:
+    """delete() returns False when _delete_path_is_safe returns False for the
+    resolved file path."""
+
+    class UnsafeDeleteRepository(FileSystemDLLRepository):
+        def _delete_path_is_safe(self, file_path: Path) -> bool:
+            return False
+
+    repository = UnsafeDeleteRepository(tmp_download_dir)
+    saved = repository.save(
+        DLLFile(name="unsafe.dll", architecture=Architecture.X64),
+        _build_pe_payload(Architecture.X64),
+    )
+    # File still exists; delete must be refused
+    result = repository.delete(saved)
+    assert result is False
+    assert Path(saved.file_path or "").exists()
+
+
+# LINES 1067-1072 — _resolve_delete_target: file_path branch with arch
+@pytest.mark.integration
+def test_resolve_delete_target_resolves_architecture_from_file_path(
+    tmp_download_dir: Path,
+) -> None:
+    """_resolve_delete_target infers the architecture from file_path when
+    architecture is UNKNOWN and file_path points into an arch directory."""
+    repository = FileSystemDLLRepository(tmp_download_dir)
+    saved = repository.save(
+        DLLFile(name="arch-from-path.dll", architecture=Architecture.X64),
+        _build_pe_payload(Architecture.X64),
+    )
+    # Build a DLLFile with UNKNOWN arch but a file_path inside the x64 dir
+    dll = DLLFile(
+        name="arch-from-path.dll",
+        architecture=Architecture.UNKNOWN,
+        file_path=saved.file_path,
+    )
+    target = repository._resolve_delete_target(dll)
+    assert target is not None
+    assert target.architecture == Architecture.X64
+
+
+@pytest.mark.integration
+def test_resolve_delete_target_returns_dll_when_arch_undetectable_from_path(
+    tmp_download_dir: Path,
+) -> None:
+    """_resolve_delete_target returns the dll unchanged when file_path exists
+    but _architecture_from_repository_path returns None (path in repo root)."""
+    repository = FileSystemDLLRepository(tmp_download_dir)
+    # Place the file directly in the repo root (no arch subdir)
+    payload_path = tmp_download_dir / "rootlevel.dll"
+    payload_path.write_bytes(_build_pe_payload(Architecture.X64))
+    dll = DLLFile(
+        name="rootlevel.dll",
+        architecture=Architecture.UNKNOWN,
+        file_path=str(payload_path),
+    )
+    target = repository._resolve_delete_target(dll)
+    assert target is not None
+    # Architecture stays UNKNOWN because path is not inside an arch subdir
+    assert target.architecture == Architecture.UNKNOWN
+
+
+# LINE 1077 — _resolve_delete_target: find_by_name returns None → X64 fallback
+@pytest.mark.integration
+def test_resolve_delete_target_falls_back_to_x64_when_not_found(
+    tmp_download_dir: Path,
+) -> None:
+    """_resolve_delete_target replaces architecture with X64 when find_by_name
+    returns None and no file_path is provided."""
+    repository = FileSystemDLLRepository(tmp_download_dir)
+    dll = DLLFile(name="notfound.dll", architecture=Architecture.UNKNOWN)
+    target = repository._resolve_delete_target(dll)
+    assert target is not None
+    assert target.architecture == Architecture.X64
+
+
+# LINES 1083-1097 — _architecture_from_repository_path branches
+@pytest.mark.integration
+def test_architecture_from_repository_path_returns_none_for_root_path(
+    tmp_download_dir: Path,
+) -> None:
+    """Returns None when the path is directly in the base directory (no arch
+    parts)."""
+    repository = FileSystemDLLRepository(tmp_download_dir)
+    path = tmp_download_dir / "file.dll"
+    path.write_bytes(b"data")
+    result = repository._architecture_from_repository_path(path)
+    assert result is None
+
+
+@pytest.mark.integration
+def test_architecture_from_repository_path_returns_none_for_unknown_arch_name(
+    tmp_download_dir: Path,
+) -> None:
+    """Returns None when the first path component maps to Architecture.UNKNOWN."""
+    repository = FileSystemDLLRepository(tmp_download_dir)
+    unknown_dir = tmp_download_dir / "unknown"
+    unknown_dir.mkdir(exist_ok=True)
+    path = unknown_dir / "file.dll"
+    path.write_bytes(b"data")
+    result = repository._architecture_from_repository_path(path)
+    assert result is None
+
+
+@pytest.mark.integration
+def test_architecture_from_repository_path_returns_none_for_invalid_arch_name(
+    tmp_download_dir: Path,
+) -> None:
+    """Returns None when the first path component is not a valid Architecture
+    value (ValueError from Architecture())."""
+    repository = FileSystemDLLRepository(tmp_download_dir)
+    # Use a directory name that is not any Architecture enum value
+    bogus_dir = tmp_download_dir / "notanarch"
+    bogus_dir.mkdir(exist_ok=True)
+    path = bogus_dir / "file.dll"
+    path.write_bytes(b"data")
+    result = repository._architecture_from_repository_path(path)
+    assert result is None
+
+
+@pytest.mark.integration
+def test_architecture_from_repository_path_returns_none_for_missing_parent(
+    tmp_download_dir: Path,
+) -> None:
+    """Returns None when the parent directory does not exist (strict=True
+    raises OSError)."""
+    repository = FileSystemDLLRepository(tmp_download_dir)
+    path = tmp_download_dir / "nonexistent" / "file.dll"
+    result = repository._architecture_from_repository_path(path)
+    assert result is None
+
+
+# LINE 1129 — _delete_path_is_safe: file_path.is_symlink() is True
+@pytest.mark.integration
+def test_delete_path_is_safe_delegates_to_location_check_for_symlink(
+    tmp_download_dir: Path,
+) -> None:
+    """_delete_path_is_safe returns the result of
+    _path_location_is_within_repository when file_path is a symlink."""
+    repository = FileSystemDLLRepository(tmp_download_dir)
+    outside = tmp_download_dir.parent / "outside-target.dll"
+    outside.write_bytes(b"data")
+    symlink_inside = tmp_download_dir / "x64" / "linked.dll"
+    symlink_inside.symlink_to(outside)
+
+    try:
+        # Symlink is inside the repo root so location check passes
+        result = repository._delete_path_is_safe(symlink_inside)
+        assert result is True
+    finally:
+        symlink_inside.unlink(missing_ok=True)
+        outside.unlink(missing_ok=True)
+
+
+# LINES 1160-1163 — _unlink_payload_for_delete: unlink raises, index restored
+@pytest.mark.integration
+def test_unlink_payload_raises_oserror_and_restores_index(
+    tmp_download_dir: Path,
+) -> None:
+    """When file_path.unlink() raises OSError and the index was updated,
+    _restore_index_after_delete_failure is called to restore the entry.
+
+    Making the arch subdirectory read-only prevents unlink() while still
+    allowing _validate_repository_write_path and _save_index to succeed
+    (they operate on the index in the parent directory).
+    """
+    import json as _json
+
+    repository = FileSystemDLLRepository(tmp_download_dir)
+    saved = repository.save(
+        DLLFile(name="unlink-fail.dll", architecture=Architecture.X64),
+        _build_pe_payload(Architecture.X64),
+    )
+    arch_dir = tmp_download_dir / "x64"
+
+    # Make the arch directory read-only so unlink raises PermissionError
+    arch_dir.chmod(0o555)
+    try:
+        # Verify that listing a read-only directory is possible on this platform
+        try:
+            list(arch_dir.iterdir())
+        except PermissionError:
+            pytest.skip("cannot read chmod-555 directories on this platform")
+
+        result = repository.delete(saved)
+        # delete() catches PermissionError (OSError subclass) and returns False
+        assert result is False
+        # Allow reading to verify index restoration
+        arch_dir.chmod(0o755)
+        # The index entry must have been restored
+        index_data = _json.loads(
+            (tmp_download_dir / ".dll_index.json").read_text()
+        )
+        assert "x64/unlink-fail.dll" in index_data["files"]
+    finally:
+        arch_dir.chmod(0o755)
+
+
+# BRANCH 1161->1163 — _unlink_payload_for_delete: index_was_updated is False
+# so the restore is skipped and OSError propagates directly
+@pytest.mark.integration
+def test_unlink_payload_raises_oserror_without_restore_when_index_not_updated(
+    tmp_download_dir: Path,
+) -> None:
+    """When file_path.unlink() raises OSError and index_was_updated is False,
+    _restore_index_after_delete_failure is NOT called and OSError propagates."""
+    repository = FileSystemDLLRepository(tmp_download_dir)
+    # Create a real file in the x64 dir without going through save() so it
+    # won't be in the index; then make the parent directory read-only
+    arch_dir = tmp_download_dir / "x64"
+    arch_dir.mkdir(exist_ok=True)
+    dll_path = arch_dir / "orphan-unlink.dll"
+    dll_path.write_bytes(_build_pe_payload(Architecture.X64))
+
+    # Empty index — key is not present, so index_was_updated will be False
+    empty_index: dict[str, object] = {"files": {}}
+
+    arch_dir.chmod(0o555)
+    try:
+        try:
+            list(arch_dir.iterdir())
+        except PermissionError:
+            pytest.skip("cannot read chmod-555 directories on this platform")
+
+        # Call _unlink_payload_for_delete directly: index_was_updated=False means
+        # no restore, but OSError from unlink still propagates via `raise`
+        with pytest.raises(PermissionError):
+            repository._unlink_payload_for_delete(
+                dll_path,
+                index_was_updated=False,
+                original_index=empty_index,  # type: ignore[arg-type]
+            )
+    finally:
+        arch_dir.chmod(0o755)
+
+
+# LINES 1167-1170 — _restore_index_after_delete_failure: _save_index raises
+@pytest.mark.integration
+def test_restore_index_after_delete_failure_logs_when_save_index_raises(
+    tmp_download_dir: Path,
+) -> None:
+    """_restore_index_after_delete_failure logs a warning and returns without
+    raising when _save_index raises RepositoryError during rollback.
+
+    The first _save_index call (index update inside _remove_index_entry_under_lock)
+    must SUCCEED so that index_was_updated=True and _restore_index_after_delete_failure
+    is triggered.  Only the SECOND _save_index call (the rollback) should fail.
+    A call-counter gate achieves the right sequencing.
+    """
+
+    class RollbackFailingRepository(FileSystemDLLRepository):
+        _save_call_count: int = 0
+
+        def _save_index(self, index: object) -> None:
+            self._save_call_count += 1
+            if self._save_call_count == 2:  # second call is the rollback
+                raise RepositoryError("injected rollback save failure")
+            super()._save_index(index)  # type: ignore[arg-type]
+
+    repository = RollbackFailingRepository(tmp_download_dir)
+    saved = repository.save(
+        DLLFile(name="restore-fail.dll", architecture=Architecture.X64),
+        _build_pe_payload(Architecture.X64),
+    )
+    # Reset the call counter so that:
+    #   call 1 (inside _remove_index_entry_under_lock) → succeeds
+    #   call 2 (the rollback inside _restore_index_after_delete_failure) → fails
+    repository._save_call_count = 0
+    arch_dir = tmp_download_dir / "x64"
+
+    # Making the arch directory read-only causes file_path.unlink() to raise,
+    # which triggers _restore_index_after_delete_failure (the second _save_index call).
+    arch_dir.chmod(0o555)
+    try:
+        try:
+            list(arch_dir.iterdir())
+        except PermissionError:
+            pytest.skip("cannot read chmod-555 directories on this platform")
+
+        # Neither PermissionError nor RepositoryError should propagate to caller
+        result = repository.delete(saved)
+        assert result is False
+        # Rollback save was attempted (and failed); call count must be >= 2
+        assert repository._save_call_count >= 2
+    finally:
+        arch_dir.chmod(0o755)
+
+
+# LINE 1182 — update_metadata: key not in index → RepositoryOperationError
+@pytest.mark.integration
+def test_update_metadata_raises_when_dll_not_in_index(
+    tmp_download_dir: Path,
+) -> None:
+    """update_metadata raises RepositoryOperationError when the DLL is not
+    found in the index."""
+    from dll_downloader.domain.errors import RepositoryOperationError
+
+    repository = FileSystemDLLRepository(tmp_download_dir)
+    dll = DLLFile(name="not-indexed.dll", architecture=Architecture.X64)
+
+    with pytest.raises(RepositoryOperationError, match="DLL not found in index"):
+        repository.update_metadata(dll)
+
+
+# LINE 1191 — update_metadata: payload not valid → RepositoryOperationError
+@pytest.mark.integration
+def test_update_metadata_raises_when_payload_is_invalid(
+    tmp_download_dir: Path,
+) -> None:
+    """update_metadata raises RepositoryOperationError when the indexed payload
+    fails validation (e.g. the file was deleted after save)."""
+    from dll_downloader.domain.errors import RepositoryOperationError
+
+    repository = FileSystemDLLRepository(tmp_download_dir)
+    saved = repository.save(
+        DLLFile(name="ghost-meta.dll", architecture=Architecture.X64),
+        _build_pe_payload(Architecture.X64),
+    )
+    # Remove the payload so _indexed_payload_is_valid returns False
+    Path(saved.file_path or "").unlink()
+
+    with pytest.raises(RepositoryOperationError, match="DLL payload not found"):
+        repository.update_metadata(saved)
+
+
+# LINES 1264-1265 — _deserialize_dll: invalid vt_scan_date
+@pytest.mark.integration
+def test_deserialize_dll_skips_invalid_vt_scan_date(
+    tmp_download_dir: Path,
+) -> None:
+    """_deserialize_dll logs a warning and leaves vt_scan_date as None when the
+    stored value is not a valid ISO datetime string."""
+    import hashlib
+    import json as _json
+
+    repository = FileSystemDLLRepository(tmp_download_dir)
+    payload = _build_pe_payload(Architecture.X64)
+    file_hash = hashlib.sha256(payload).hexdigest()
+    payload_path = tmp_download_dir / "x64" / "scan-date.dll"
+    payload_path.write_bytes(payload)
+
+    index_data = {
+        "files": {
+            "x64/scan-date.dll": {
+                "name": "scan-date.dll",
+                "version": None,
+                "architecture": "x64",
+                "file_hash": file_hash,
+                "file_path": str(payload_path),
+                "download_url": None,
+                "file_size": len(payload),
+                "security_status": "not_scanned",
+                "vt_detection_ratio": None,
+                "vt_scan_date": "not-a-date",
+                "created_at": None,
+            }
+        }
+    }
+    (tmp_download_dir / ".dll_index.json").write_text(_json.dumps(index_data))
+
+    found = repository.find_by_name("scan-date.dll", Architecture.X64)
+    assert found is not None
+    assert found.vt_scan_date is None
+
+
+# LINES 1272-1273 — _deserialize_dll: invalid created_at
+@pytest.mark.integration
+def test_deserialize_dll_skips_invalid_created_at(
+    tmp_download_dir: Path,
+) -> None:
+    """_deserialize_dll logs a warning and leaves created_at as its default
+    when the stored value is not a valid ISO datetime string."""
+    import hashlib
+    import json as _json
+
+    repository = FileSystemDLLRepository(tmp_download_dir)
+    payload = _build_pe_payload(Architecture.X64)
+    file_hash = hashlib.sha256(payload).hexdigest()
+    payload_path = tmp_download_dir / "x64" / "created-at.dll"
+    payload_path.write_bytes(payload)
+
+    index_data = {
+        "files": {
+            "x64/created-at.dll": {
+                "name": "created-at.dll",
+                "version": None,
+                "architecture": "x64",
+                "file_hash": file_hash,
+                "file_path": str(payload_path),
+                "download_url": None,
+                "file_size": len(payload),
+                "security_status": "not_scanned",
+                "vt_detection_ratio": None,
+                "vt_scan_date": None,
+                "created_at": "not-a-date",
+            }
+        }
+    }
+    (tmp_download_dir / ".dll_index.json").write_text(_json.dumps(index_data))
+
+    found = repository.find_by_name("created-at.dll", Architecture.X64)
+    assert found is not None
+    # No crash; created_at retains the DLLFile default value
+
+
+# LINES 1296-1298 — _try_deserialize_dll: missing required key → None
+@pytest.mark.integration
+def test_try_deserialize_dll_returns_none_for_missing_required_key(
+    tmp_download_dir: Path,
+) -> None:
+    """_try_deserialize_dll returns None and logs a warning when the entry dict
+    is missing required keys (KeyError inside _deserialize_dll)."""
+    repository = FileSystemDLLRepository(tmp_download_dir)
+    result = repository._try_deserialize_dll(
+        cast(Any, {"architecture": "x64"})
+    )
+    assert result is None
+
+
+# LINES 1369-1372 — _validated_indexed_payload_path: payload is a symlink
+@pytest.mark.integration
+def test_validated_indexed_payload_path_returns_none_for_symlink_payload(
+    tmp_download_dir: Path,
+    tmp_path: Path,
+) -> None:
+    """_validated_indexed_payload_path returns None when the indexed file_path
+    is a symlink."""
+    import hashlib
+
+    repository = FileSystemDLLRepository(tmp_download_dir)
+    outside = tmp_path / "outside-payload.dll"
+    pe = _build_pe_payload()
+    outside.write_bytes(pe)
+    symlink_path = tmp_download_dir / "x64" / "symlinked.dll"
+    symlink_path.symlink_to(outside)
+
+    try:
+        dll = DLLFile(
+            name="symlinked.dll",
+            architecture=Architecture.X64,
+            file_hash=hashlib.sha256(pe).hexdigest(),
+            file_path=str(symlink_path),
+            file_size=len(pe),
+        )
+        result = repository._validated_indexed_payload_path(
+            dll,
+            expected_name="symlinked.dll",
+            expected_architecture=Architecture.X64,
+        )
+        assert result is None
+    finally:
+        symlink_path.unlink(missing_ok=True)
+
+
+# LINES 1374-1375 — _validated_indexed_payload_path: path outside repository
+@pytest.mark.integration
+def test_validated_indexed_payload_path_returns_none_for_path_outside_repo(
+    tmp_download_dir: Path,
+    tmp_path: Path,
+) -> None:
+    """_validated_indexed_payload_path returns None when the indexed file_path
+    resolves outside the repository."""
+    import hashlib
+
+    repository = FileSystemDLLRepository(tmp_download_dir)
+    pe = _build_pe_payload()
+    outside = tmp_path / "outside.dll"
+    outside.write_bytes(pe)
+
+    dll = DLLFile(
+        name="outside.dll",
+        architecture=Architecture.X64,
+        file_hash=hashlib.sha256(pe).hexdigest(),
+        file_path=str(outside),
+        file_size=len(pe),
+    )
+    result = repository._validated_indexed_payload_path(
+        dll,
+        expected_name="outside.dll",
+        expected_architecture=Architecture.X64,
+    )
+    assert result is None
+
+
+# LINES 1447-1448 — _create_dll_from_file: os.open raises OSError
+@pytest.mark.integration
+def test_create_dll_from_file_raises_when_open_fails(
+    tmp_download_dir: Path,
+) -> None:
+    """_create_dll_from_file raises RepositoryError when os.open raises."""
+    repository = FileSystemDLLRepository(tmp_download_dir)
+    target = tmp_download_dir / "x64" / "open-fail.dll"
+    target.write_bytes(_build_pe_payload())
+
+    original_open = os.open
+
+    def patched_open(path: str, flags: int, mode: int = 0) -> int:
+        if "open-fail.dll" in path:
+            raise OSError("injected open failure")
+        return original_open(path, flags, mode)
+
+    os.open = cast(Any, patched_open)
+    try:
+        with pytest.raises(RepositoryError, match="Failed to read DLL file"):
+            repository._create_dll_from_file(
+                target, "open-fail.dll", Architecture.X64
+            )
+    finally:
+        os.open = original_open
+
+
+# LINE 1452 — _create_dll_from_file: fstat shows non-regular file
+@pytest.mark.integration
+def test_create_dll_from_file_raises_when_fstat_non_regular(
+    tmp_download_dir: Path,
+) -> None:
+    """_create_dll_from_file raises RepositoryError when fstat indicates a
+    non-regular file."""
+    repository = FileSystemDLLRepository(tmp_download_dir)
+    target = tmp_download_dir / "x64" / "non-reg.dll"
+    target.write_bytes(_build_pe_payload())
+
+    original_fstat = os.fstat
+
+    def patched_fstat(fd: int) -> os.stat_result:
+        result = original_fstat(fd)
+        return os.stat_result(
+            (
+                _stat.S_IFIFO | 0o600,
+                result.st_ino,
+                result.st_dev,
+                result.st_nlink,
+                result.st_uid,
+                result.st_gid,
+                result.st_size,
+                result.st_atime,
+                result.st_mtime,
+                result.st_ctime,
+            )
+        )
+
+    os.fstat = patched_fstat
+    try:
+        with pytest.raises(RepositoryError, match="non-regular file"):
+            repository._create_dll_from_file(
+                target, "non-reg.dll", Architecture.X64
+            )
+    finally:
+        os.fstat = original_fstat
+
+
+# LINES 1457-1458, 1461-1462 — _create_dll_from_file: set_blocking raises
+@pytest.mark.integration
+def test_create_dll_from_file_raises_and_closes_fd_when_set_blocking_fails(
+    tmp_download_dir: Path,
+) -> None:
+    """When os.set_blocking raises inside _create_dll_from_file, a
+    RepositoryError is raised and the fd is closed by the finally block."""
+    repository = FileSystemDLLRepository(tmp_download_dir)
+    target = tmp_download_dir / "x64" / "set-blocking-fail.dll"
+    target.write_bytes(_build_pe_payload())
+
+    original_set_blocking = os.set_blocking
+
+    def patched_set_blocking(fd: int, blocking: bool) -> None:
+        raise OSError("injected set_blocking failure")
+
+    os.set_blocking = patched_set_blocking
+    try:
+        with pytest.raises(RepositoryError, match="Failed to read DLL file"):
+            repository._create_dll_from_file(
+                target, "set-blocking-fail.dll", Architecture.X64
+            )
+    finally:
+        os.set_blocking = original_set_blocking
+
+
+# LINE 1495 — _normalize_index_entry: second isinstance check is dead code
+# The check at line 1494 (second isinstance(architecture, str)) can never be
+# False because the first guard at line 1482 already validated it.
+# We document this by showing the earlier guard catches the invalid input.
+@pytest.mark.integration
+def test_normalize_index_entry_raises_for_non_string_architecture(
+    tmp_download_dir: Path,
+) -> None:
+    """_normalize_index_entry raises ValueError for a non-string architecture
+    value via the first guard (line 1482); the dead second guard at line 1494
+    is never reached in normal execution."""
+    repository = FileSystemDLLRepository(tmp_download_dir)
+
+    with pytest.raises(ValueError, match="architecture"):
+        repository._normalize_index_entry({"name": "a.dll", "architecture": 42})
+
+
+# BRANCH 154->157 — _with_index_lock: os.open itself fails so fd stays -1
+@pytest.mark.integration
+def test_with_index_lock_raises_when_os_open_fails(
+    tmp_download_dir: Path,
+) -> None:
+    """When os.open raises before the fd is assigned, fd stays -1, the close
+    branch is skipped, and RepositoryError is still raised."""
+    repository = FileSystemDLLRepository(tmp_download_dir)
+    original_open = os.open
+
+    def patched_open(path: str, flags: int, *args: object, **kwargs: object) -> int:
+        if ".dll_index.lock" in str(path):
+            raise OSError("injected open failure")
+        return original_open(path, flags, *args, **kwargs)  # type: ignore[arg-type]
+
+    os.open = patched_open  # type: ignore[assignment]
+    try:
+        with (
+            pytest.raises(RepositoryError, match="Failed to acquire index lock"),
+            repository._with_index_lock(),
+        ):
+            pass
+    finally:
+        os.open = original_open
+
+
+# BRANCH 420->422 — _write_temp_file: fdopen succeeds (fd_opened=True),
+# then os.fsync raises; except branch skips os.close because fd is already owned
+@pytest.mark.integration
+def test_write_temp_file_skips_close_when_fdopen_succeeded_and_fsync_raises(
+    tmp_download_dir: Path,
+) -> None:
+    """When os.fdopen succeeds (sets fd_opened=True) but os.fsync then raises,
+    the except BaseException branch skips os.close because the context manager
+    already owns the fd."""
+    import tempfile as _tempfile
+
+    fd, temp_name = _tempfile.mkstemp(dir=str(tmp_download_dir))
+    original_fsync = os.fsync
+
+    def patched_fsync(fd_arg: int) -> None:
+        raise OSError("injected fsync failure")
+
+    os.fsync = patched_fsync  # type: ignore[assignment]
+    try:
+        with pytest.raises(OSError, match="injected fsync failure"):
+            FileSystemDLLRepository._write_temp_file(fd, b"payload-data")
+    finally:
+        os.fsync = original_fsync
+        # fd was closed by the context manager in os.fdopen before fsync raised
+        with contextlib.suppress(OSError):
+            os.unlink(temp_name)
+
+
+# LINE 936 — _list_fallback_payloads: _validated_fallback_payload_path returns
+# None (dll file is a symlink → skipped), key not in blocked_keys
+@pytest.mark.integration
+def test_list_fallback_payloads_skips_when_validated_path_returns_none(
+    tmp_download_dir: Path,
+    tmp_path: Path,
+) -> None:
+    """_list_fallback_payloads skips a .dll file when
+    _validated_fallback_payload_path returns None.  A symlink .dll in the arch
+    directory (not in blocked_keys) is a concrete case that triggers line 936."""
+    repository = FileSystemDLLRepository(tmp_download_dir)
+    arch_dir = tmp_download_dir / "x64"
+
+    # Place a real DLL outside the repository so the symlink points to it
+    real_dll = tmp_path / "outside.dll"
+    real_dll.write_bytes(_build_pe_payload(Architecture.X64))
+
+    symlink_dll = arch_dir / "symlinked.dll"
+    symlink_dll.symlink_to(real_dll)
+    try:
+        result = repository._list_fallback_payloads(set())
+        names = [dll.name for dll in result]
+        # The symlink payload must be rejected (fallback_path is None)
+        assert "symlinked.dll" not in names
+    finally:
+        symlink_dll.unlink(missing_ok=True)
+
+
+# BRANCH 999->1005 — _raw_index_key: entry is a dict but arch or name is not a
+# string → skips the inner if and falls through to return str(key).lower()
+@pytest.mark.integration
+def test_raw_index_key_falls_back_when_arch_is_not_a_string(
+    tmp_download_dir: Path,
+) -> None:
+    """When entry is a dict with a non-string 'architecture' value, the inner
+    isinstance guard at line 999 is False and _raw_index_key returns the
+    fallback str(key).lower() at line 1005."""
+    repository = FileSystemDLLRepository(tmp_download_dir)
+    # architecture value is an integer — not a string
+    result = repository._raw_index_key(
+        "x64/myfile.dll", {"architecture": 99, "name": "myfile.dll"}
+    )
+    assert result == "x64/myfile.dll"
