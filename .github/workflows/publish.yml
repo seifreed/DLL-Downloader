@@ -43,6 +43,12 @@ jobs:
       - name: Run MyPy
         run: mypy dll_downloader tests
 
+      - name: Run Bandit security scan
+        run: bandit -c pyproject.toml -r dll_downloader
+
+      - name: Audit dependencies for known vulnerabilities
+        run: pip-audit
+
       - name: Run tests with coverage
         run: pytest --cov=dll_downloader --cov-report=xml --cov-report=term-missing
 
