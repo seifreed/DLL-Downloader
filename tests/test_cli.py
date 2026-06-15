@@ -1904,3 +1904,98 @@ def test_main_loads_settings_when_none(tmp_path: Path) -> None:
 
     with _temporary_cwd(tmp_path), _temporary_argv(["dll-downloader.py", "test.dll"]):
         assert main(None) == 0
+
+
+# ============================================================================
+# CLI boundary, logging, and entry-point branch coverage
+# ============================================================================
+
+
+class _RaisingSettings:
+    """Settings-like double whose log_level access raises a chosen exception."""
+
+    scan_before_save = False
+    virustotal_api_key: str | None = None
+
+    def __init__(self, exc: BaseException) -> None:
+        self._exc = exc
+
+    @property
+    def log_level(self) -> str:
+        raise self._exc
+
+
+@contextmanager
+def _fdopen_raises() -> Iterator[None]:
+    original_fdopen = os.fdopen
+
+    def _boom(*args: Any, **kwargs: Any) -> Any:
+        raise OSError("simulated fdopen failure")
+
+    os.fdopen = cast(Any, _boom)
+    try:
+        yield
+    finally:
+        os.fdopen = original_fdopen
+
+
+@pytest.mark.unit
+def test_read_dll_list_from_file_rejects_symlink(tmp_path: Path) -> None:
+    target = tmp_path / "real-list.txt"
+    target.write_text("kernel32.dll\n")
+    link = tmp_path / "list.txt"
+    link.symlink_to(target)
+
+    with pytest.raises(ValueError, match="Refusing to read DLL list from symlink"):
+        read_dll_list_from_file(str(link))
+
+
+@pytest.mark.unit
+def test_read_dll_list_from_file_rejects_too_many_lines(tmp_path: Path) -> None:
+    file_path = tmp_path / "many.txt"
+    file_path.write_text("a.dll\n" * 10_001)
+
+    with pytest.raises(ValueError, match="exceeds maximum line count"):
+        read_dll_list_from_file(str(file_path))
+
+
+@pytest.mark.unit
+def test_read_dll_list_from_file_closes_fd_when_fdopen_fails(tmp_path: Path) -> None:
+    file_path = tmp_path / "list.txt"
+    file_path.write_text("kernel32.dll\n")
+
+    with _fdopen_raises(), pytest.raises(ValueError, match="Failed to read file"):
+        read_dll_list_from_file(str(file_path))
+
+
+@pytest.mark.unit
+def test_main_returns_error_for_unsupported_log_level(
+    capsys: CaptureFixture[str],
+) -> None:
+    with _temporary_argv(["dll-downloader.py", "test.dll"]):
+        assert main(Settings(log_level="BOGUS")) == 1
+
+    assert "log level" in capsys.readouterr().err.lower()
+
+
+@pytest.mark.unit
+def test_main_translates_keyboard_interrupt_to_130() -> None:
+    with _temporary_argv(["dll-downloader.py", "test.dll"]):
+        assert main(cast(Settings, _RaisingSettings(KeyboardInterrupt()))) == 130
+
+
+@pytest.mark.unit
+def test_main_translates_broken_pipe_to_zero() -> None:
+    with _temporary_argv(["dll-downloader.py", "test.dll"]):
+        assert main(cast(Settings, _RaisingSettings(BrokenPipeError()))) == 0
+
+
+@pytest.mark.unit
+def test_cli_module_runs_as_script() -> None:
+    with (
+        _temporary_argv(["dll-downloader.py"]),
+        pytest.raises(SystemExit) as exc_info,
+    ):
+        runpy.run_module("dll_downloader.interfaces.cli", run_name="__main__")
+
+    assert exc_info.value.code == 1
