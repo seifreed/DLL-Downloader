@@ -5,8 +5,7 @@ on:
   pull_request:
   workflow_dispatch:
 
-# Cancel superseded runs for the same ref so queued jobs (notably the
-# concurrency-limited macOS runners) do not pile up indefinitely.
+# Cancel superseded runs for the same ref so queued jobs do not pile up.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -125,12 +124,13 @@ jobs:
     # Windows is intentionally excluded: the persistence and use-case layers
     # rely on POSIX-only primitives (fcntl advisory locks and O_NOFOLLOW for
     # symlink-safe opens) that are not available on Windows.
+    #
+    # macOS is excluded too: GitHub-hosted macOS runners are not assigned to
+    # this repository, so those matrix jobs only queued indefinitely. Re-add
+    # macos-15 / macos-15-intel when runner availability is restored.
     name: >-
       ${{ matrix.target.platform }} / py${{ matrix.python-version }}
     runs-on: ${{ matrix.target.runs-on }}
-    # Bounds execution time once a runner is assigned. Note: this does NOT
-    # cover time spent queued waiting for a runner (GitHub fails jobs that
-    # stay queued ~24h), which is the current macOS-runner-availability limit.
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -143,12 +143,6 @@ jobs:
           - platform: linux-arm64
             arch: arm64
             runs-on: ubuntu-24.04-arm
-          - platform: macos-intel
-            arch: x64
-            runs-on: macos-15-intel
-          - platform: macos-arm64
-            arch: arm64
-            runs-on: macos-15
 
     steps:
       - name: Checkout
