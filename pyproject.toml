@@ -97,9 +97,6 @@ known-first-party = ["dll_downloader"]
 [tool.ruff.lint.mccabe]
 max-complexity = 10
 
-[tool.ruff.lint.per-file-ignores]
-"tests/*" = ["S101"]  # Allow assert in tests
-
 # Pylint configuration
 [tool.pylint.main]
 ignore = ["venv", ".venv", "downloads", "tests"]
@@ -127,12 +124,6 @@ exclude = [
     "__pycache__",
     "downloads",
 ]
-
-[[tool.mypy.overrides]]
-module = [
-    "bs4.*",
-]
-ignore_missing_imports = true
 
 # Pytest configuration
 [tool.pytest.ini_options]
@@ -168,7 +159,6 @@ omit = [
 
 [tool.coverage.report]
 exclude_lines = [
-    "pragma: no cover",
     "if TYPE_CHECKING:",
     "raise NotImplementedError",
     "def __repr__",
