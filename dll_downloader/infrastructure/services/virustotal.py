@@ -77,7 +77,71 @@ class HashNotFoundError(VirusTotalError):
     """Exception raised when a hash has no VirusTotal results."""
 
 
-def _safe_int(value: object, *, strict: bool = False) -> int:  # noqa: C901
+def _reject_negative(value: int, *, strict: bool, log_repr: object) -> int:
+    """Return ``value`` when non-negative, else fail closed or default to 0.
+
+    In *strict* mode a negative count raises :class:`VirusTotalError`; otherwise
+    it is logged and coerced to 0. ``log_repr`` is the original value used in
+    the warning message so logs reflect what the API actually returned.
+    """
+    if value < 0:
+        if strict:
+            raise VirusTotalError(f"VT API returned negative count: {value}")
+        logger.warning("VT API returned negative count: %r, defaulting to 0", log_repr)
+        return 0
+    return value
+
+
+def _coerce_finite_float(value: float, *, strict: bool, log_repr: object) -> int:
+    """Coerce a finite float to int, enforcing integrality and sign.
+
+    Non-integer floats fail closed in *strict* mode and default to 0 otherwise.
+    The resulting int is then validated for sign via :func:`_reject_negative`.
+    """
+    if not value.is_integer():
+        if strict:
+            raise VirusTotalError(f"VT API returned non-integer count: {log_repr!r}")
+        logger.warning(
+            "VT API returned non-integer count: %r, defaulting to 0", log_repr
+        )
+        return 0
+    return _reject_negative(int(value), strict=strict, log_repr=log_repr)
+
+
+def _coerce_int(value: int, *, strict: bool) -> int:
+    """Coerce a plain int, rejecting negative counts per the *strict* policy."""
+    return _reject_negative(value, strict=strict, log_repr=value)
+
+
+def _coerce_float(value: float, *, strict: bool) -> int:
+    """Coerce a float, rejecting non-finite values before integrality checks."""
+    if not is_finite_number(value):
+        raise VirusTotalError(f"VT API returned non-finite float: {value!r}")
+    return _coerce_finite_float(value, strict=strict, log_repr=value)
+
+
+def _coerce_str(value: str, *, strict: bool) -> int:
+    """Coerce a possibly float-like string, failing closed in *strict* mode."""
+    try:
+        parsed = float(value)
+    except ValueError as exc:
+        if strict:
+            raise VirusTotalError(
+                f"VT API returned unparseable integer value: {value!r}"
+            ) from exc
+        logger.warning(
+            "VT API returned unparseable integer value: %r, defaulting to 0", value
+        )
+        return 0
+    if not is_finite_number(parsed):
+        if strict:
+            raise VirusTotalError(f"VT API returned non-finite count: {value!r}")
+        logger.warning("VT API returned non-finite count: %r, defaulting to 0", value)
+        return 0
+    return _coerce_finite_float(parsed, strict=strict, log_repr=value)
+
+
+def _safe_int(value: object, *, strict: bool = False) -> int:
     """Safely coerce API values to int, handling float-like strings.
 
     When *strict* is True (used for security-critical fields like
@@ -93,71 +157,13 @@ def _safe_int(value: object, *, strict: bool = False) -> int:  # noqa: C901
     if isinstance(value, bool):
         raise VirusTotalError(f"VT API returned boolean for integer field: {value!r}")
     if isinstance(value, int):
-        if value < 0:
-            if strict:
-                raise VirusTotalError(f"VT API returned negative count: {value}")
-            logger.warning("VT API returned negative count: %r, defaulting to 0", value)
-            return 0
-        return value
+        return _coerce_int(value, strict=strict)
     if isinstance(value, float):
-        if not is_finite_number(value):
-            raise VirusTotalError(f"VT API returned non-finite float: {value!r}")
-        if not value.is_integer():
-            if strict:
-                raise VirusTotalError(f"VT API returned non-integer count: {value!r}")
-            logger.warning(
-                "VT API returned non-integer count: %r, defaulting to 0", value
-            )
-            return 0
-        result = int(value)
-        if result < 0:
-            if strict:
-                raise VirusTotalError(f"VT API returned negative count: {result}")
-            logger.warning("VT API returned negative count: %r, defaulting to 0", value)
-            return 0
-        return result
+        return _coerce_float(value, strict=strict)
     if isinstance(value, str):
-        try:
-            parsed = float(value)
-        except ValueError as exc:
-            if strict:
-                raise VirusTotalError(
-                    f"VT API returned unparseable integer value: {value!r}"
-                ) from exc
-            logger.warning(
-                "VT API returned unparseable integer value: %r, defaulting to 0", value
-            )
-            return 0
-        if not is_finite_number(parsed):
-            if strict:
-                raise VirusTotalError(f"VT API returned non-finite count: {value!r}")
-            logger.warning(
-                "VT API returned non-finite count: %r, defaulting to 0", value
-            )
-            return 0
-        if not parsed.is_integer():
-            if strict:
-                raise VirusTotalError(f"VT API returned non-integer count: {value!r}")
-            logger.warning(
-                "VT API returned non-integer count: %r, defaulting to 0", value
-            )
-            return 0
-        result = int(parsed)
-        if result < 0:
-            if strict:
-                raise VirusTotalError(f"VT API returned negative count: {result}")
-            logger.warning(
-                "VT API returned negative count: %r, defaulting to 0",
-                value,
-            )
-            return 0
-        return result
+        return _coerce_str(value, strict=strict)
     if value is None:
         raise VirusTotalError("VT API returned null for integer field")
-    if isinstance(value, (dict, list)):
-        raise VirusTotalError(
-            f"VT API returned unexpected type for integer field: {value!r}"
-        )
     raise VirusTotalError(
         f"VT API returned unexpected type for integer field: {value!r}"
     )
@@ -361,7 +367,7 @@ class VirusTotalScanner(ISecurityScanner):
         """Return True for explicit local-test/private endpoint overrides."""
         return hostname.lower() in VirusTotalScanner._VT_PRIVATE_IP_ALLOWED_DOMAINS
 
-    def _safe_get(self, url: str, **kwargs: object) -> HTTPResponseProtocol:  # noqa: C901
+    def _safe_get(self, url: str, **kwargs: object) -> HTTPResponseProtocol:
         """Issue a GET request with SSRF and redirect validation."""
         kwargs["allow_redirects"] = False
         kwargs.setdefault("timeout", self._timeout)
@@ -385,7 +391,7 @@ class VirusTotalScanner(ISecurityScanner):
             current_url = self._resolve_redirect_url(current_url, location)
         raise VirusTotalError(f"Too many redirects (> {self._MAX_REDIRECT_HOPS})")
 
-    def _safe_post(self, url: str, **kwargs: object) -> HTTPResponseProtocol:  # noqa: C901
+    def _safe_post(self, url: str, **kwargs: object) -> HTTPResponseProtocol:
         """Issue a POST request with SSRF validation (no redirects for POST)."""
         kwargs["allow_redirects"] = False
         kwargs.setdefault("timeout", self._timeout)

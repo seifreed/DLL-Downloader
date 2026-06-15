@@ -7,7 +7,7 @@ Resolves DLL names into direct download URLs by scraping search and download pag
 import re
 from dataclasses import dataclass, field
 from html import unescape
-from urllib.parse import quote, urljoin, urlparse
+from urllib.parse import ParseResult, quote, urljoin, urlparse
 
 from ...domain.entities.dll_file import Architecture, normalize_dll_name
 from ...domain.errors import DownloadResolutionError, HTTPServiceError
@@ -235,37 +235,46 @@ class DllFilesResolver:
             return False
         return self._is_base_url_link(href)
 
-    def _extract_direct_link(self, html: str) -> str | None:  # noqa: C901
+    @staticmethod
+    def _has_safe_official_port(parsed: ParseResult) -> bool:
+        try:
+            port = parsed.port
+        except ValueError:
+            return False
+        return port is None or port == 443
+
+    def _resolve_official_zip_link(self, href: str) -> str | None:
+        parsed = urlparse(href)
+        if parsed.username is not None:
+            return None
+        if parsed.scheme == "https":
+            if not self._has_safe_official_port(parsed):
+                return None
+            return href
+        if parsed.scheme == "" and parsed.netloc:
+            return self._resolve_schemeless_official_zip_link(parsed)
+        return None
+
+    def _resolve_schemeless_official_zip_link(self, parsed: ParseResult) -> str | None:
+        if "@" in parsed.netloc:
+            return None
+        if not self._has_safe_official_port(parsed):
+            return None
+        parsed_base = urlparse(self.base_url)
+        allowed_hosts = {"download.zip.dll-files.com"}
+        if parsed_base.hostname:
+            allowed_hosts.add(parsed_base.hostname)
+        if parsed.hostname not in allowed_hosts:
+            return None
+        query = f"?{parsed.query}" if parsed.query else ""
+        return f"https://{parsed.netloc}{parsed.path}{query}"
+
+    def _extract_direct_link(self, html: str) -> str | None:
         for href, _ in self._iter_links(html):
             if self._is_official_zip_link(href):
-                parsed = urlparse(href)
-                if parsed.username is not None:
-                    continue
-                if parsed.scheme == "https":
-                    try:
-                        port = parsed.port
-                    except ValueError:
-                        continue
-                    if port is not None and port != 443:
-                        continue
-                    return href
-                if parsed.scheme == "" and parsed.netloc:
-                    if "@" in parsed.netloc:
-                        continue
-                    try:
-                        port = parsed.port
-                    except ValueError:
-                        continue
-                    if port is not None and port != 443:
-                        continue
-                    parsed_base = urlparse(self.base_url)
-                    allowed_hosts = {"download.zip.dll-files.com"}
-                    if parsed_base.hostname:
-                        allowed_hosts.add(parsed_base.hostname)
-                    if parsed.hostname not in allowed_hosts:
-                        continue
-                    query = f"?{parsed.query}" if parsed.query else ""
-                    return f"https://{parsed.netloc}{parsed.path}{query}"
+                resolved = self._resolve_official_zip_link(href)
+                if resolved is not None:
+                    return resolved
         for href, _ in self._iter_links(html):
             if self._is_base_zip_link(href):
                 return urljoin(self.base_url, href)

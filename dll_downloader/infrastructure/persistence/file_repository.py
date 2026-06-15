@@ -163,18 +163,51 @@ class FileSystemDLLRepository(IDLLRepository):
             with contextlib.suppress(OSError):
                 os.close(fd)
 
-    def _load_index(self) -> IndexData:  # noqa: C901
-        """Load the DLL index from disk."""
+    def _normalize_raw_files(
+        self, raw_files: dict[str, object]
+    ) -> dict[str, IndexEntry]:
+        """Normalize raw index entries, skipping individually invalid ones."""
+        normalized_files: dict[str, IndexEntry] = {}
+        for key, value in raw_files.items():
+            try:
+                normalized_files[str(key)] = self._normalize_index_entry(value)
+            except ValueError as entry_error:
+                logger.warning(
+                    "Skipping invalid DLL index entry: %s",
+                    entry_error,
+                )
+        return normalized_files
+
+    def _parse_index_data(self, raw_data: object) -> IndexData:
+        """Validate and normalize parsed JSON index data."""
+        if not isinstance(raw_data, dict):
+            raise ValueError("Index file must contain a JSON object")
+        raw_files = raw_data.get("files", {})
+        if not isinstance(raw_files, dict):
+            raise ValueError("Index 'files' entry must be an object")
+        return {"files": self._normalize_raw_files(raw_files)}
+
+    def _index_load_preconditions_met(self) -> bool:
+        """Return True when the index file is safe and present to load.
+
+        Raises RepositoryError when the index is reachable through a symlink.
+        """
         if self._is_symlink(self._index_path):
             raise RepositoryError(
                 f"Refusing to load DLL index through symlink: {self._index_path}"
             )
         if not self._index_path.exists():
-            return {"files": {}}
+            return False
         if not self._index_path.is_file():
             logger.warning(
                 "Refusing to load non-regular DLL index: %s", self._index_path
             )
+            return False
+        return True
+
+    def _load_index(self) -> IndexData:
+        """Load the DLL index from disk."""
+        if not self._index_load_preconditions_met():
             return {"files": {}}
 
         try:
@@ -193,21 +226,7 @@ class FileSystemDLLRepository(IDLLRepository):
             with os.fdopen(fd, encoding="utf-8") as f:
                 fd = -1
                 raw_data = json.load(f)
-                if not isinstance(raw_data, dict):
-                    raise ValueError("Index file must contain a JSON object")
-                raw_files = raw_data.get("files", {})
-                if not isinstance(raw_files, dict):
-                    raise ValueError("Index 'files' entry must be an object")
-                normalized_files: dict[str, IndexEntry] = {}
-                for key, value in raw_files.items():
-                    try:
-                        normalized_files[str(key)] = self._normalize_index_entry(value)
-                    except ValueError as entry_error:
-                        logger.warning(
-                            "Skipping invalid DLL index entry: %s",
-                            entry_error,
-                        )
-                return {"files": normalized_files}
+            return self._parse_index_data(raw_data)
         except (OSError, json.JSONDecodeError) as e:
             logger.error("Failed to load index: %s", e)
             raise RepositoryError(f"Failed to load index: {e}") from e
@@ -902,59 +921,67 @@ class FileSystemDLLRepository(IDLLRepository):
             )
             return []
 
-    def _load_raw_index_keys(self) -> set[str]:  # noqa: C901
-        """Return raw index keys so corrupt metadata still blocks disk fallback."""
+    def _read_raw_index_json(self) -> object | None:
+        """Best-effort read of the raw on-disk index JSON.
+
+        Returns None when the index is missing, reached through a symlink,
+        non-regular, oversized, or otherwise unreadable. Never raises.
+        """
         if self._is_symlink(self._index_path):
-            return set()
+            return None
         if not self._index_path.exists() or not self._index_path.is_file():
-            return set()
+            return None
 
         try:
             fd = os.open(str(self._index_path), _READ_FILE_FLAGS)
         except OSError:
-            return set()
+            return None
 
         try:
             st = os.fstat(fd)
             if not stat.S_ISREG(st.st_mode):
-                return set()
+                return None
             if st.st_size > self._INDEX_MAX_BYTES:
                 logger.warning(
                     "Skipping raw index keys: file exceeds size limit (%d bytes)",
                     st.st_size,
                 )
-                return set()
+                return None
             os.set_blocking(fd, True)
             with os.fdopen(fd, encoding="utf-8") as f:
                 fd = -1
-                raw_data = json.load(f)
+                raw_data: object = json.load(f)
+            return raw_data
         except (OSError, json.JSONDecodeError) as exc:
             logger.warning("Failed to load raw index keys: %s", exc)
-            return set()
+            return None
         finally:
             if fd >= 0:
                 with contextlib.suppress(OSError):
                     os.close(fd)
+
+    def _raw_index_key(self, key: str, entry: object) -> str:
+        """Derive the normalized lookup key for one raw index entry."""
+        if isinstance(entry, dict):
+            arch = entry.get("architecture", "")
+            name = entry.get("name", "")
+            if isinstance(arch, str) and isinstance(name, str):
+                try:
+                    normalized_arch = Architecture(arch).value
+                except ValueError:
+                    normalized_arch = arch.lower()
+                return f"{normalized_arch}/{str(name).lower()}"
+        return str(key).lower()
+
+    def _load_raw_index_keys(self) -> set[str]:
+        """Return raw index keys so corrupt metadata still blocks disk fallback."""
+        raw_data = self._read_raw_index_json()
         if not isinstance(raw_data, dict):
             return set()
         raw_files = raw_data.get("files", {})
         if not isinstance(raw_files, dict):
             return set()
-        normalized_keys: set[str] = set()
-        for key in raw_files:
-            entry = raw_files.get(key)
-            if isinstance(entry, dict):
-                arch = entry.get("architecture", "")
-                name = entry.get("name", "")
-                if isinstance(arch, str) and isinstance(name, str):
-                    try:
-                        normalized_arch = Architecture(arch).value
-                    except ValueError:
-                        normalized_arch = arch.lower()
-                    normalized_keys.add(f"{normalized_arch}/{str(name).lower()}")
-                    continue
-            normalized_keys.add(str(key).lower())
-        return normalized_keys
+        return {self._raw_index_key(key, raw_files.get(key)) for key in raw_files}
 
     def delete(self, dll_file: DLLFile) -> bool:
         """

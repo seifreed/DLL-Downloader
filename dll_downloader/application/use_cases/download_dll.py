@@ -14,6 +14,7 @@ import zlib
 from dataclasses import dataclass, replace
 from io import BytesIO
 from pathlib import Path
+from typing import NoReturn
 from urllib.parse import quote
 
 from ...domain.entities.dll_file import (
@@ -560,7 +561,7 @@ class DownloadDLLUseCase:
         """Validate that a ZIP payload contains a real PE DLL before saving it as-is."""
         self._extract_valid_dll_from_zip(content, request)
 
-    def _extract_valid_dll_from_zip(  # noqa: C901
+    def _extract_valid_dll_from_zip(
         self,
         content: bytes,
         request: DownloadDLLRequest,
@@ -572,104 +573,133 @@ class DownloadDLLUseCase:
                 raise ArchiveExtractionError(
                     "ZIP archive has too many members, possible enumeration bomb"
                 )
-            total_decompressed_size = 0
-            for member in members:
-                if member.is_dir():
-                    continue
-                if member.file_size > ZIP_MEMBER_SIZE_LIMIT:
-                    raise ArchiveExtractionError("ZIP member exceeds size limit")
-                if member.compress_size > _ZIP_COMPRESSED_SIZE_LIMIT:
-                    raise ArchiveExtractionError(
-                        "ZIP member compressed size exceeds safe limit"
-                    )
-                # Check compression ratio for potential ZIP bombs
-                if member.compress_size > 0:
-                    ratio = member.file_size / member.compress_size
-                    if ratio >= _ZIP_COMPRESSION_RATIO_LIMIT:
-                        raise ArchiveExtractionError(
-                            "ZIP member has suspicious compression ratio, "
-                            "possible ZIP bomb"
-                        )
-                elif member.file_size > 0:
-                    # compress_size == 0 with file_size > 0 is suspicious:
-                    # either forged metadata or stored with zero-reported size
+            self._validate_zip_member_sizes(members)
+            requested_members = self._select_requested_zip_members(members, request)
+            return self._read_requested_zip_member(archive, requested_members, request)
+
+    @staticmethod
+    def _validate_zip_member_sizes(members: list[zipfile.ZipInfo]) -> None:
+        """Reject ZIP payloads with oversized members or ZIP-bomb characteristics."""
+        total_decompressed_size = 0
+        for member in members:
+            if member.is_dir():
+                continue
+            if member.file_size > ZIP_MEMBER_SIZE_LIMIT:
+                raise ArchiveExtractionError("ZIP member exceeds size limit")
+            if member.compress_size > _ZIP_COMPRESSED_SIZE_LIMIT:
+                raise ArchiveExtractionError(
+                    "ZIP member compressed size exceeds safe limit"
+                )
+            # Check compression ratio for potential ZIP bombs
+            if member.compress_size > 0:
+                ratio = member.file_size / member.compress_size
+                if ratio >= _ZIP_COMPRESSION_RATIO_LIMIT:
                     raise ArchiveExtractionError(
                         "ZIP member has suspicious compression ratio, possible ZIP bomb"
                     )
-                total_decompressed_size += member.file_size
-            if total_decompressed_size > ZIP_MEMBER_SIZE_LIMIT:
+            elif member.file_size > 0:
+                # compress_size == 0 with file_size > 0 is suspicious:
+                # either forged metadata or stored with zero-reported size
                 raise ArchiveExtractionError(
-                    "ZIP total decompressed size exceeds limit"
+                    "ZIP member has suspicious compression ratio, possible ZIP bomb"
                 )
-            matching_members = [
+            total_decompressed_size += member.file_size
+        if total_decompressed_size > ZIP_MEMBER_SIZE_LIMIT:
+            raise ArchiveExtractionError("ZIP total decompressed size exceeds limit")
+
+    @staticmethod
+    def _select_requested_zip_members(
+        members: list[zipfile.ZipInfo],
+        request: DownloadDLLRequest,
+    ) -> list[zipfile.ZipInfo]:
+        """Return the requested DLL members ordered by path depth (shallowest first)."""
+        matching_members = [
+            member
+            for member in members
+            if not member.is_dir() and member.filename.lower().endswith(".dll")
+        ]
+
+        if not matching_members:
+            raise ArchiveExtractionError("ZIP archive does not contain any DLL files")
+
+        expected_name = request.dll_name.lower()
+        # Prefer root-level members over nested ones to avoid path confusion.
+        # Sort so that members with fewer path segments come first.
+        requested_members = sorted(
+            [
                 member
-                for member in members
-                if not member.is_dir() and member.filename.lower().endswith(".dll")
-            ]
-
-            if not matching_members:
-                raise ArchiveExtractionError(
-                    "ZIP archive does not contain any DLL files"
-                )
-
-            expected_name = request.dll_name.lower()
-            # Prefer root-level members over nested ones to avoid path confusion.
-            # Sort so that members with fewer path segments come first.
-            requested_members = sorted(
-                [
-                    member
-                    for member in matching_members
-                    if zip_member_basename(member.filename) == expected_name
-                ],
-                key=lambda m: m.filename.replace("\\", "/").count("/"),
-            )
-            if not requested_members:
-                raise ArchiveExtractionError(
-                    f"ZIP archive does not contain requested DLL {request.dll_name}"
-                )
-
-            validation_errors: list[DownloadExecutionError] = []
-            read_error: Exception | None = None
-            empty_member_found = False
-            for member in requested_members:
-                try:
-                    extracted_content = archive.read(member)
-                except _ZIP_MEMBER_READ_ERRORS as exc:
-                    read_error = exc
-                    continue
-                if not extracted_content:
-                    empty_member_found = True
-                    continue
-                if len(extracted_content) > ZIP_MEMBER_SIZE_LIMIT:
-                    raise ArchiveExtractionError("Extracted DLL exceeds size limit")
-                if len(extracted_content) != member.file_size:
-                    raise ArchiveExtractionError(
-                        "Extracted size does not match ZIP metadata, possible ZIP bomb"
-                    )
-                try:
-                    self._validate_dll_architecture(
-                        extracted_content,
-                        request.architecture,
-                    )
-                except DownloadExecutionError as exc:
-                    validation_errors.append(exc)
-                    continue
-                return extracted_content
-
-            if validation_errors:
-                error_messages = "; ".join(str(e) for e in validation_errors)
-                raise ArchiveExtractionError(
-                    f"Could not extract valid DLL from ZIP: {error_messages}"
-                )
-            if read_error is not None:
-                raise ArchiveExtractionError(
-                    "Downloaded archive is not a valid ZIP file"
-                ) from read_error
-            if empty_member_found:
-                raise ArchiveExtractionError("Extracted DLL from ZIP archive is empty")
+                for member in matching_members
+                if zip_member_basename(member.filename) == expected_name
+            ],
+            key=lambda m: m.filename.replace("\\", "/").count("/"),
+        )
+        if not requested_members:
             raise ArchiveExtractionError(
-                f"ZIP archive does not contain a valid requested DLL {request.dll_name}"
+                f"ZIP archive does not contain requested DLL {request.dll_name}"
             )
+        return requested_members
+
+    def _read_requested_zip_member(
+        self,
+        archive: zipfile.ZipFile,
+        requested_members: list[zipfile.ZipInfo],
+        request: DownloadDLLRequest,
+    ) -> bytes:
+        """Read, size-check, and architecture-validate the requested DLL members."""
+        validation_errors: list[DownloadExecutionError] = []
+        read_error: Exception | None = None
+        empty_member_found = False
+        for member in requested_members:
+            try:
+                extracted_content = archive.read(member)
+            except _ZIP_MEMBER_READ_ERRORS as exc:
+                read_error = exc
+                continue
+            if not extracted_content:
+                empty_member_found = True
+                continue
+            if len(extracted_content) > ZIP_MEMBER_SIZE_LIMIT:
+                raise ArchiveExtractionError("Extracted DLL exceeds size limit")
+            if len(extracted_content) != member.file_size:
+                raise ArchiveExtractionError(
+                    "Extracted size does not match ZIP metadata, possible ZIP bomb"
+                )
+            try:
+                self._validate_dll_architecture(
+                    extracted_content,
+                    request.architecture,
+                )
+            except DownloadExecutionError as exc:
+                validation_errors.append(exc)
+                continue
+            return extracted_content
+
+        self._raise_zip_extraction_failure(
+            request, validation_errors, read_error, empty_member_found
+        )
+
+    @staticmethod
+    def _raise_zip_extraction_failure(
+        request: DownloadDLLRequest,
+        validation_errors: list[DownloadExecutionError],
+        read_error: Exception | None,
+        empty_member_found: bool,
+    ) -> NoReturn:
+        """Raise the appropriate failure for an unextractable requested DLL."""
+        if validation_errors:
+            error_messages = "; ".join(str(e) for e in validation_errors)
+            raise ArchiveExtractionError(
+                f"Could not extract valid DLL from ZIP: {error_messages}"
+            )
+        if read_error is not None:
+            raise ArchiveExtractionError(
+                "Downloaded archive is not a valid ZIP file"
+            ) from read_error
+        if empty_member_found:
+            raise ArchiveExtractionError("Extracted DLL from ZIP archive is empty")
+        raise ArchiveExtractionError(
+            f"ZIP archive does not contain a valid requested DLL {request.dll_name}"
+        )
 
     @staticmethod
     def _detect_pe_architecture(content: bytes) -> Architecture:
