@@ -9,7 +9,11 @@ authors = [
     { name = "Marc Rivero Lopez", email = "mriverolopez@gmail.com" }
 ]
 dependencies = [
-    "requests",
+    "requests>=2.33.0",
+    # Security floors for requests' transitive deps (this tool performs
+    # SSRF-sensitive HTTP and URL handling): exclude known-vulnerable releases.
+    "urllib3>=2.7.0",
+    "idna>=3.15",
 ]
 keywords = ["dll", "windows", "download", "security", "virustotal"]
 classifiers = [
@@ -40,7 +44,7 @@ dev = [
     "black",
     "ruff",
     "mypy",
-    "pytest",
+    "pytest>=9.0.3",
     "pytest-cov",
     "build",
     "twine",
@@ -49,6 +53,7 @@ dev = [
     "pylint",
     "bandit",
     "pip-audit",
+    "pygments>=2.20.0",
 ]
 
 [build-system]
