@@ -58,13 +58,10 @@ def _path_to_uri(file_path: str | None) -> str | None:
     try:
         return p.as_uri()
     except ValueError:
-        # For paths that cannot be converted to URIs (e.g., relative paths
-        # on platforms without drive letters), produce a valid URI reference.
+        # Path.as_uri() rejects only relative paths (which never start with a
+        # slash on POSIX), so emit a relative URI reference for them.
         parts = file_path.replace("\\", "/").split("/")
         quoted = [quote(part, safe="-._~") for part in parts if part]
-        if file_path.startswith("/"):
-            # Absolute path: produce a proper file:/// URI
-            return "file:///" + "/".join(quoted)
         return "/".join(quoted)
 
 

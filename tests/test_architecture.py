@@ -108,6 +108,7 @@ TEST_INTERNAL_IMPORT_ALLOWLIST = {
     "tests/test_net.py",
     "tests/test_response_stream.py",
     "tests/test_settings.py",
+    "tests/test_structured_presenter.py",
     "tests/test_use_cases.py",
     "tests/test_virustotal.py",
     "tests/integration/test_download_flow.py",
