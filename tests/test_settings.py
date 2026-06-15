@@ -1678,3 +1678,105 @@ def test_settings_validate_accepts_public_ip_literal_download_base_url() -> None
     settings = Settings(download_base_url=f"https://{_PUBLIC_IP}")
 
     assert settings.validate() is True
+
+
+# ============================================================================
+# SettingsLoader source branch coverage
+# ============================================================================
+
+
+@contextmanager
+def _set_blocking_raises() -> Iterator[None]:
+    """Force os.set_blocking to fail, exercising fd-cleanup finally blocks."""
+    original_set_blocking = os.set_blocking
+
+    def _boom(fd: int, blocking: bool) -> None:
+        raise OSError("simulated set_blocking failure")
+
+    os.set_blocking = cast(Any, _boom)
+    try:
+        yield
+    finally:
+        os.set_blocking = original_set_blocking
+
+
+@pytest.mark.unit
+def test_settings_loader_from_json_rejects_symlink(tmp_path: Path) -> None:
+    target = tmp_path / "real-config.json"
+    target.write_text(json.dumps({"log_level": "DEBUG"}))
+    link = tmp_path / "config.json"
+    link.symlink_to(target)
+
+    with pytest.raises(
+        OSError, match="Refusing to read configuration from symlink"
+    ):
+        SettingsLoader.from_json(str(link))
+
+
+@pytest.mark.unit
+def test_settings_from_env_rejects_invalid_integer() -> None:
+    with (
+        _temporary_env({"DLL_HTTP_TIMEOUT": "not-an-int"}),
+        pytest.raises(ValueError, match="must be an integer"),
+    ):
+        SettingsLoader.from_env()
+
+
+@pytest.mark.unit
+def test_settings_from_env_rejects_invalid_float() -> None:
+    with (
+        _temporary_env({"DLL_VIRUSTOTAL_TIMEOUT": "not-a-float"}),
+        pytest.raises(ValueError, match="must be a float"),
+    ):
+        SettingsLoader.from_env()
+
+
+@pytest.mark.unit
+def test_settings_from_json_accepts_integral_float_for_int_field(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps({"http_timeout": 90.0}))
+
+    settings = SettingsLoader.from_json(str(config_path))
+
+    assert settings.http_timeout == 90
+    assert isinstance(settings.http_timeout, int)
+
+
+@pytest.mark.unit
+def test_settings_loader_skips_symlink_config_path(tmp_path: Path) -> None:
+    target = tmp_path / "real-config.json"
+    target.write_text(json.dumps({"log_level": "DEBUG"}))
+    (tmp_path / "config.json").symlink_to(target)
+
+    with (
+        _temporary_env({"HOME": str(tmp_path), "DLL_VIRUSTOTAL_API_KEY": None}),
+        _temporary_cwd(tmp_path),
+        _mock_dns_resolution(),
+    ):
+        settings = SettingsLoader.load(config_path=None)
+
+    assert settings.log_level == "INFO"
+
+
+@pytest.mark.unit
+def test_settings_loader_from_json_closes_fd_when_set_blocking_fails(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps({"log_level": "DEBUG"}))
+
+    with _set_blocking_raises(), pytest.raises(OSError):
+        SettingsLoader.from_json(str(config_path))
+
+
+@pytest.mark.unit
+def test_settings_loader_vt_toml_closes_fd_when_set_blocking_fails(
+    tmp_path: Path,
+) -> None:
+    vt_file = tmp_path / ".vt.toml"
+    vt_file.write_text("apikey = 'vt-test-key'")
+
+    with _set_blocking_raises():
+        assert _VTTomlSettingsSource.load(str(tmp_path)) is None
