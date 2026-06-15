@@ -1154,6 +1154,29 @@ def test_sanitize_boundary_message_redacts_relative_paths(message: str) -> None:
     assert "<path>" in sanitized
 
 
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("message", "leak"),
+    [
+        # Unquoted path with a whitespace prefix (group(1) is truthy).
+        ("Cannot open /etc/secret/dlls.txt for reading", "secret"),
+        # Unquoted path at the start of the message (group(1) matches ^, empty).
+        ("/var/secret/dlls.txt could not be read", "secret"),
+        # Unquoted Windows drive path.
+        (r"open C:\Users\alice\secret\x.txt failed", "alice"),
+        # Unquoted UNC path.
+        (r"open \\host\share\secret\x.txt failed", "host"),
+    ],
+)
+def test_sanitize_boundary_message_redacts_unquoted_paths(
+    message: str, leak: str
+) -> None:
+    sanitized = sanitize_boundary_message(ValueError(message))
+
+    assert leak not in sanitized
+    assert "<path>" in sanitized
+
+
 # ============================================================================
 # Download Request Tests
 # ============================================================================

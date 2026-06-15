@@ -2256,6 +2256,27 @@ def test_retry_policy_rejects_non_integer_attempt_count(max_attempts: int) -> No
 
 
 @pytest.mark.unit
+def test_retry_policy_rejects_excessive_attempt_count() -> None:
+    with pytest.raises(ValueError, match="max_attempts must not exceed 100"):
+        RetryPolicy(max_attempts=101)
+
+
+@pytest.mark.unit
+def test_retry_policy_does_not_retry_non_retryable_exception() -> None:
+    policy = RetryPolicy(max_attempts=5)
+
+    retried = policy.should_retry_exception(requests.TooManyRedirects(), attempt=1)
+    assert retried is False
+
+
+@pytest.mark.unit
+def test_retry_policy_retries_retryable_exception_within_attempts() -> None:
+    policy = RetryPolicy(max_attempts=5)
+
+    assert policy.should_retry_exception(requests.ConnectionError(), attempt=1) is True
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize("field_name", ["backoff_seconds", "jitter_seconds"])
 def test_retry_policy_rejects_boolean_delays(field_name: str) -> None:
     with pytest.raises(ValueError, match=f"{field_name} must be a number"):
