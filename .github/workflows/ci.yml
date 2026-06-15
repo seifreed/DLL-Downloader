@@ -5,6 +5,12 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Cancel superseded runs for the same ref so queued jobs (notably the
+# concurrency-limited macOS runners) do not pile up indefinitely.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   quality:
     name: Quality / py3.13
