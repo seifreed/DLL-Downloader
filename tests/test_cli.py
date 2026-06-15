@@ -22,6 +22,7 @@ import zipfile
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 from _pytest.capture import CaptureFixture
@@ -1240,6 +1241,38 @@ def test_process_downloads_single_dll(
     assert isinstance(failure_count, int)
     assert success_count + failure_count == 1
     assert use_case.requests[0].dll_name == "test.dll"
+
+
+@pytest.mark.integration
+def test_process_downloads_swallows_dependency_close_failures(
+    capsys: CaptureFixture[str],
+) -> None:
+    # A failing close() on the HTTP client or scanner must be logged and
+    # swallowed, never masking the download result.
+    class FailingCloseClient:
+        def close(self) -> None:
+            raise RuntimeError("http close boom")
+
+    class FailingCloseScanner:
+        def close(self) -> None:
+            raise RuntimeError("scanner close boom")
+
+    use_case = RecordingUseCase(
+        responses={"test.dll": DownloadDLLResponse(success=False, error_message="x")}
+    )
+
+    success_count, failure_count = process_downloads(
+        use_case=use_case,
+        dll_names=["test.dll"],
+        architecture=Architecture.X64,
+        scan_enabled=False,
+        force_download=True,
+        extract_archive=False,
+        http_client=cast(Any, FailingCloseClient()),
+        scanner=cast(Any, FailingCloseScanner()),
+    )
+
+    assert success_count + failure_count == 1
 
 
 @pytest.mark.integration
