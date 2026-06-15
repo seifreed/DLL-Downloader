@@ -155,13 +155,6 @@ omit = [
 ]
 
 [tool.coverage.report]
-exclude_lines = [
-    "if TYPE_CHECKING:",
-    "raise NotImplementedError",
-    "def __repr__",
-    "raise AssertionError",
-    "if __name__ == .__main__.:",
-]
 show_missing = true
 fail_under = 80
 
