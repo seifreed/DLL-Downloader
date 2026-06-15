@@ -1,0 +1,724 @@
+{
+  "$schema": "https://cyclonedx.org/schema/bom-1.6.schema.json",
+  "bomFormat": "CycloneDX",
+  "components": [
+    {
+      "authors": [
+        {
+          "email": "me@kennethreitz.com",
+          "name": "Kenneth Reitz"
+        }
+      ],
+      "bom-ref": "pkg:pypi/certifi@2025.6.15",
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/certifi/python-certifi"
+        },
+        {
+          "comment": "built distribution (wheel)",
+          "hashes": [
+            {
+              "alg": "SHA-256",
+              "content": "2e0c7ce7cb5d8f8634ca55d2ba7e6ec2689a2fd6537d8dec1296a477a4910057"
+            },
+            {
+              "alg": "SHA-512",
+              "content": "36cec79fc72c9c69686e56bcf350a11489764bde5809412aac4313982b44e20d858bd3823b9e9d525f46a19e5eb2b18caf8883bf0f78a82d61da25a47af4f700"
+            }
+          ],
+          "type": "distribution",
+          "url": "https://files.pythonhosted.org/packages/84/ae/320161bd181fc06471eed047ecce67b693fd7515b16d495d8932db763426/certifi-2025.6.15-py3-none-any.whl"
+        },
+        {
+          "comment": "source distribution (sdist)",
+          "hashes": [
+            {
+              "alg": "SHA-256",
+              "content": "d747aa5a8b9bbbb1bb8c22bb13e22bd1f18e9796defa16bab421f7f7a317323b"
+            },
+            {
+              "alg": "SHA-512",
+              "content": "438a587b09b75f2c7b33e7e70aa0d7db9bfd4f21456f13dc0a2ec75c1baa106e516a508959a2ae01885a625606b5c69a7e2c1f6c0c86b67ddffed77bb804c22c"
+            }
+          ],
+          "type": "source-distribution",
+          "url": "https://files.pythonhosted.org/packages/73/f7/f14b46d4bcd21092d7d3ccef689615220d8a08fb25e564b65d20738e672e/certifi-2025.6.15.tar.gz"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "2e0c7ce7cb5d8f8634ca55d2ba7e6ec2689a2fd6537d8dec1296a477a4910057"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "acknowledgement": "concluded",
+            "id": "MPL-2.0"
+          }
+        },
+        {
+          "license": {
+            "acknowledgement": "declared",
+            "id": "MPL-2.0"
+          }
+        }
+      ],
+      "name": "certifi",
+      "properties": [
+        {
+          "name": "bsi:component:filename",
+          "value": "certifi-2025.6.15-py3-none-any.whl"
+        },
+        {
+          "name": "bsi:component:executable",
+          "value": "non-executable"
+        },
+        {
+          "name": "bsi:component:archive",
+          "value": "archive"
+        },
+        {
+          "name": "bsi:component:structured",
+          "value": "structured"
+        },
+        {
+          "name": "bsi:component:effectiveLicence",
+          "value": "MPL-2.0"
+        }
+      ],
+      "purl": "pkg:pypi/certifi@2025.6.15",
+      "supplier": {
+        "contact": [
+          {
+            "email": "me@kennethreitz.com",
+            "name": "Kenneth Reitz"
+          }
+        ],
+        "name": "Kenneth Reitz",
+        "url": [
+          "https://github.com/certifi/python-certifi"
+        ]
+      },
+      "type": "library",
+      "version": "2025.6.15"
+    },
+    {
+      "authors": [
+        {
+          "email": "tahri.ahmed@proton.me",
+          "name": "charset-normalizer"
+        }
+      ],
+      "bom-ref": "pkg:pypi/charset-normalizer@3.4.2",
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/jawah/charset_normalizer"
+        },
+        {
+          "comment": "built distribution (wheel)",
+          "hashes": [
+            {
+              "alg": "SHA-256",
+              "content": "7c48ed483eb946e6c04ccbe02c6b4d1d48e51944b6db70f697e089c193404941"
+            },
+            {
+              "alg": "SHA-512",
+              "content": "d8ab38fcbc8394b4cc1922df47eabec99c611130bd468582ee15ef2a21cc33f46de19434f434a1ca64fe1dc414c76dcd27d75bc142fb076adcd5a851d31be081"
+            }
+          ],
+          "type": "distribution",
+          "url": "https://files.pythonhosted.org/packages/95/28/9901804da60055b406e1a1c5ba7aac1276fb77f1dde635aabfc7fd84b8ab/charset_normalizer-3.4.2-cp310-cp310-macosx_10_9_universal2.whl"
+        },
+        {
+          "comment": "source distribution (sdist)",
+          "hashes": [
+            {
+              "alg": "SHA-256",
+              "content": "5baececa9ecba31eff645232d59845c07aa030f0c81ee70184a90d35099a0e63"
+            },
+            {
+              "alg": "SHA-512",
+              "content": "702d9c23fe68d3538e4f45d5d9451beb02853ecf1ec6b36a7068ed8ade707bd0fd2a1764137381294590d0e5ffc2e296866f402dff33f65ec0458cf1102970fe"
+            }
+          ],
+          "type": "source-distribution",
+          "url": "https://files.pythonhosted.org/packages/e4/33/89c2ced2b67d1c2a61c19c6751aa8902d46ce3dacb23600a283619f5a12d/charset_normalizer-3.4.2.tar.gz"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "7c48ed483eb946e6c04ccbe02c6b4d1d48e51944b6db70f697e089c193404941"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "acknowledgement": "concluded",
+            "id": "MIT"
+          }
+        },
+        {
+          "license": {
+            "acknowledgement": "declared",
+            "id": "MIT"
+          }
+        }
+      ],
+      "name": "charset-normalizer",
+      "properties": [
+        {
+          "name": "bsi:component:filename",
+          "value": "charset_normalizer-3.4.2-cp310-cp310-macosx_10_9_universal2.whl"
+        },
+        {
+          "name": "bsi:component:executable",
+          "value": "non-executable"
+        },
+        {
+          "name": "bsi:component:archive",
+          "value": "archive"
+        },
+        {
+          "name": "bsi:component:structured",
+          "value": "structured"
+        },
+        {
+          "name": "bsi:component:effectiveLicence",
+          "value": "MIT"
+        }
+      ],
+      "purl": "pkg:pypi/charset-normalizer@3.4.2",
+      "supplier": {
+        "contact": [
+          {
+            "email": "tahri.ahmed@proton.me",
+            "name": "charset-normalizer"
+          }
+        ],
+        "name": "charset-normalizer",
+        "url": [
+          "https://github.com/jawah/charset_normalizer"
+        ]
+      },
+      "type": "library",
+      "version": "3.4.2"
+    },
+    {
+      "authors": [
+        {
+          "email": "kim+pypi@gumleaf.org",
+          "name": "idna"
+        }
+      ],
+      "bom-ref": "pkg:pypi/idna@3.18",
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/kjd/idna"
+        },
+        {
+          "comment": "built distribution (wheel)",
+          "hashes": [
+            {
+              "alg": "SHA-256",
+              "content": "7f952cbe720b688055e3f87de14f5c3e5fdaa8bc3928985c4077ca689de849a2"
+            },
+            {
+              "alg": "SHA-512",
+              "content": "fc927c0e267de81e431f36029df5d484c0424f02db991318caa1d98084e34266e80b60d0177097d6c0f63e992c64a8ff8a1ee2c17f3e2230307b297a5a73df3d"
+            }
+          ],
+          "type": "distribution",
+          "url": "https://files.pythonhosted.org/packages/1e/5e/d4e9f1a599fb8e573b7b87160658329fbf28d19eac2718f51fc3def3aa5a/idna-3.18-py3-none-any.whl"
+        },
+        {
+          "comment": "source distribution (sdist)",
+          "hashes": [
+            {
+              "alg": "SHA-256",
+              "content": "ffb385a7e039654cef1ab9ef32c6fafe283c0c0467bba1d9029738ce4a14a848"
+            },
+            {
+              "alg": "SHA-512",
+              "content": "5cdfa086a6a1d2c5fbb6fe56ceae5434a71e2215711d252be41f82cebfa48cef35cc8b2ff03e6af17ae309f230a04a008c41eae55852dd77942f97f65848c916"
+            }
+          ],
+          "type": "source-distribution",
+          "url": "https://files.pythonhosted.org/packages/cd/63/9496c57188a2ee585e0f1db071d75089a11e98aa86eb99d9d7618fc1edce/idna-3.18.tar.gz"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "7f952cbe720b688055e3f87de14f5c3e5fdaa8bc3928985c4077ca689de849a2"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "acknowledgement": "concluded",
+            "id": "BSD-3-Clause"
+          }
+        },
+        {
+          "license": {
+            "acknowledgement": "declared",
+            "id": "BSD-3-Clause"
+          }
+        }
+      ],
+      "name": "idna",
+      "properties": [
+        {
+          "name": "bsi:component:filename",
+          "value": "idna-3.18-py3-none-any.whl"
+        },
+        {
+          "name": "bsi:component:executable",
+          "value": "non-executable"
+        },
+        {
+          "name": "bsi:component:archive",
+          "value": "archive"
+        },
+        {
+          "name": "bsi:component:structured",
+          "value": "structured"
+        },
+        {
+          "name": "bsi:component:effectiveLicence",
+          "value": "BSD-3-Clause"
+        }
+      ],
+      "purl": "pkg:pypi/idna@3.18",
+      "supplier": {
+        "contact": [
+          {
+            "email": "kim+pypi@gumleaf.org",
+            "name": "idna"
+          }
+        ],
+        "name": "idna",
+        "url": [
+          "https://github.com/kjd/idna"
+        ]
+      },
+      "type": "library",
+      "version": "3.18"
+    },
+    {
+      "authors": [
+        {
+          "email": "me@kennethreitz.org",
+          "name": "requests"
+        }
+      ],
+      "bom-ref": "pkg:pypi/requests@2.34.2",
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/psf/requests"
+        },
+        {
+          "comment": "built distribution (wheel)",
+          "hashes": [
+            {
+              "alg": "SHA-256",
+              "content": "2a0d60c172f83ac6ab31e4554906c0f3b3588d37b5cb939b1c061f4907e278e0"
+            },
+            {
+              "alg": "SHA-512",
+              "content": "a5dc72000aaea1b10e1aed1330b373385a21af01afb3fbb68dde309f496059a20b227a5a93c18a14d9eadbbb6cfe217da94d1d032b8dbccc66a4411cc4fdc64c"
+            }
+          ],
+          "type": "distribution",
+          "url": "https://files.pythonhosted.org/packages/a0/f4/c67b0b3f1b9245e8d266f0f112c500d50e5b4e83cb6f3b71b6528104182a/requests-2.34.2-py3-none-any.whl"
+        },
+        {
+          "comment": "source distribution (sdist)",
+          "hashes": [
+            {
+              "alg": "SHA-256",
+              "content": "f288924cae4e29463698d6d60bc6a4da69c89185ad1e0bcc4104f584e960b9ed"
+            },
+            {
+              "alg": "SHA-512",
+              "content": "106d99c51c7e76d35e27dd64988afb0cc339d4f05fabb3ba1a2480e34744b4a66393e0c7873d236a9f220f6a8990d5a45a251cdbe9ce25f01e1591e693b6c9e7"
+            }
+          ],
+          "type": "source-distribution",
+          "url": "https://files.pythonhosted.org/packages/ac/c3/e2a2b89f2d3e2179abd6d00ebd70bff6273f37fb3e0cc209f48b39d00cbf/requests-2.34.2.tar.gz"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "2a0d60c172f83ac6ab31e4554906c0f3b3588d37b5cb939b1c061f4907e278e0"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "acknowledgement": "concluded",
+            "id": "Apache-2.0"
+          }
+        },
+        {
+          "license": {
+            "acknowledgement": "declared",
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "name": "requests",
+      "properties": [
+        {
+          "name": "bsi:component:filename",
+          "value": "requests-2.34.2-py3-none-any.whl"
+        },
+        {
+          "name": "bsi:component:executable",
+          "value": "non-executable"
+        },
+        {
+          "name": "bsi:component:archive",
+          "value": "archive"
+        },
+        {
+          "name": "bsi:component:structured",
+          "value": "structured"
+        },
+        {
+          "name": "bsi:component:effectiveLicence",
+          "value": "Apache-2.0"
+        }
+      ],
+      "purl": "pkg:pypi/requests@2.34.2",
+      "supplier": {
+        "contact": [
+          {
+            "email": "me@kennethreitz.org",
+            "name": "requests"
+          }
+        ],
+        "name": "requests",
+        "url": [
+          "https://github.com/psf/requests"
+        ]
+      },
+      "type": "library",
+      "version": "2.34.2"
+    },
+    {
+      "authors": [
+        {
+          "email": "andrey.petrov@shazow.net",
+          "name": "urllib3"
+        }
+      ],
+      "bom-ref": "pkg:pypi/urllib3@2.7.0",
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/urllib3/urllib3"
+        },
+        {
+          "comment": "built distribution (wheel)",
+          "hashes": [
+            {
+              "alg": "SHA-256",
+              "content": "9fb4c81ebbb1ce9531cce37674bbc6f1360472bc18ca9a553ede278ef7276897"
+            },
+            {
+              "alg": "SHA-512",
+              "content": "92fbb70a4e2a634b944434e9064527c5babd20e49985cf9d3ccaedbeb0cc41d9daa914986771158db43e0c444dcb3dbf8e80ed1ae0fba433a2f775d61747255f"
+            }
+          ],
+          "type": "distribution",
+          "url": "https://files.pythonhosted.org/packages/7f/3e/5db95bcf282c52709639744ca2a8b149baccf648e39c8cc87553df9eae0c/urllib3-2.7.0-py3-none-any.whl"
+        },
+        {
+          "comment": "source distribution (sdist)",
+          "hashes": [
+            {
+              "alg": "SHA-256",
+              "content": "231e0ec3b63ceb14667c67be60f2f2c40a518cb38b03af60abc813da26505f4c"
+            },
+            {
+              "alg": "SHA-512",
+              "content": "6f75e5873f18301de37c0d7f17c726b21c9928f2fe9ec58d843f1172b80be6eb05117bdf7af27dd7eb1ab0175a94e0f49cde01d8d8919f61de8710e163fabc03"
+            }
+          ],
+          "type": "source-distribution",
+          "url": "https://files.pythonhosted.org/packages/53/0c/06f8b233b8fd13b9e5ee11424ef85419ba0d8ba0b3138bf360be2ff56953/urllib3-2.7.0.tar.gz"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "9fb4c81ebbb1ce9531cce37674bbc6f1360472bc18ca9a553ede278ef7276897"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "acknowledgement": "concluded",
+            "id": "MIT"
+          }
+        },
+        {
+          "license": {
+            "acknowledgement": "declared",
+            "id": "MIT"
+          }
+        }
+      ],
+      "name": "urllib3",
+      "properties": [
+        {
+          "name": "bsi:component:filename",
+          "value": "urllib3-2.7.0-py3-none-any.whl"
+        },
+        {
+          "name": "bsi:component:executable",
+          "value": "non-executable"
+        },
+        {
+          "name": "bsi:component:archive",
+          "value": "archive"
+        },
+        {
+          "name": "bsi:component:structured",
+          "value": "structured"
+        },
+        {
+          "name": "bsi:component:effectiveLicence",
+          "value": "MIT"
+        }
+      ],
+      "purl": "pkg:pypi/urllib3@2.7.0",
+      "supplier": {
+        "contact": [
+          {
+            "email": "andrey.petrov@shazow.net",
+            "name": "urllib3"
+          }
+        ],
+        "name": "urllib3",
+        "url": [
+          "https://github.com/urllib3/urllib3"
+        ]
+      },
+      "type": "library",
+      "version": "2.7.0"
+    }
+  ],
+  "dependencies": [
+    {
+      "dependsOn": [
+        "pkg:pypi/requests@2.34.2",
+        "pkg:pypi/urllib3@2.7.0",
+        "pkg:pypi/idna@3.18"
+      ],
+      "ref": "pkg:pypi/dll-downloader@1.1.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:pypi/certifi@2025.6.15"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:pypi/charset-normalizer@3.4.2"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:pypi/idna@3.18"
+    },
+    {
+      "dependsOn": [
+        "pkg:pypi/certifi@2025.6.15",
+        "pkg:pypi/charset-normalizer@3.4.2",
+        "pkg:pypi/idna@3.18",
+        "pkg:pypi/urllib3@2.7.0"
+      ],
+      "ref": "pkg:pypi/requests@2.34.2"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:pypi/urllib3@2.7.0"
+    }
+  ],
+  "metadata": {
+    "authors": [
+      {
+        "email": "mriverolopez@gmail.com",
+        "name": "Marc Rivero Lopez"
+      }
+    ],
+    "component": {
+      "authors": [
+        {
+          "email": "mriverolopez@gmail.com",
+          "name": "Marc Rivero Lopez"
+        }
+      ],
+      "bom-ref": "pkg:pypi/dll-downloader@1.1.0",
+      "externalReferences": [
+        {
+          "comment": "source repository",
+          "hashes": [
+            {
+              "alg": "SHA-256",
+              "content": "d82d4a2623215ef521cdbe00acf63c45aa3091810f91332afb2f34539eda53fe"
+            },
+            {
+              "alg": "SHA-512",
+              "content": "469d6a72d5c07857b75893b9b44a6924547de5798917ba0f45af96097413e1fd03505485589d1eb8204f0ff965de5e40cfa10911225951af6ee9d60494952081"
+            }
+          ],
+          "type": "source-distribution",
+          "url": "https://github.com/seifreed/DLL-Downloader"
+        },
+        {
+          "type": "vcs",
+          "url": "https://github.com/seifreed/DLL-Downloader"
+        },
+        {
+          "type": "website",
+          "url": "https://github.com/seifreed/DLL-Downloader"
+        },
+        {
+          "comment": "source repository (deployable form)",
+          "hashes": [
+            {
+              "alg": "SHA-256",
+              "content": "d82d4a2623215ef521cdbe00acf63c45aa3091810f91332afb2f34539eda53fe"
+            },
+            {
+              "alg": "SHA-512",
+              "content": "469d6a72d5c07857b75893b9b44a6924547de5798917ba0f45af96097413e1fd03505485589d1eb8204f0ff965de5e40cfa10911225951af6ee9d60494952081"
+            }
+          ],
+          "type": "distribution",
+          "url": "https://github.com/seifreed/DLL-Downloader"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "d82d4a2623215ef521cdbe00acf63c45aa3091810f91332afb2f34539eda53fe"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "acknowledgement": "concluded",
+            "name": "LicenseRef-MIT-Attribution"
+          }
+        },
+        {
+          "license": {
+            "acknowledgement": "declared",
+            "name": "LicenseRef-MIT-Attribution"
+          }
+        }
+      ],
+      "name": "dll-downloader",
+      "properties": [
+        {
+          "name": "bsi:component:filename",
+          "value": "dll-downloader-1.1.0"
+        },
+        {
+          "name": "bsi:component:executable",
+          "value": "non-executable"
+        },
+        {
+          "name": "bsi:component:archive",
+          "value": "no archive"
+        },
+        {
+          "name": "bsi:component:structured",
+          "value": "structured"
+        },
+        {
+          "name": "bsi:component:effectiveLicence",
+          "value": "LicenseRef-MIT-Attribution"
+        }
+      ],
+      "purl": "pkg:pypi/dll-downloader@1.1.0",
+      "supplier": {
+        "contact": [
+          {
+            "email": "mriverolopez@gmail.com",
+            "name": "Marc Rivero Lopez"
+          }
+        ],
+        "name": "Marc Rivero Lopez",
+        "url": [
+          "https://github.com/seifreed/DLL-Downloader"
+        ]
+      },
+      "type": "application",
+      "version": "1.1.0"
+    },
+    "licenses": [
+      {
+        "license": {
+          "acknowledgement": "declared",
+          "id": "CC0-1.0"
+        }
+      }
+    ],
+    "lifecycles": [
+      {
+        "phase": "build"
+      }
+    ],
+    "manufacturer": {
+      "contact": [
+        {
+          "email": "mriverolopez@gmail.com",
+          "name": "Marc Rivero Lopez"
+        }
+      ],
+      "name": "Marc Rivero Lopez",
+      "url": [
+        "https://github.com/seifreed/DLL-Downloader"
+      ]
+    },
+    "supplier": {
+      "contact": [
+        {
+          "email": "mriverolopez@gmail.com",
+          "name": "Marc Rivero Lopez"
+        }
+      ],
+      "name": "Marc Rivero Lopez",
+      "url": [
+        "https://github.com/seifreed/DLL-Downloader"
+      ]
+    },
+    "timestamp": "2026-06-15T11:58:22Z",
+    "tools": {
+      "components": [
+        {
+          "name": "generate_sbom.py",
+          "supplier": {
+            "name": "Marc Rivero Lopez"
+          },
+          "type": "application",
+          "version": "1.1.0"
+        }
+      ]
+    }
+  },
+  "serialNumber": "urn:uuid:853c57cc-8429-4492-8849-9f517ccdba8c",
+  "specVersion": "1.6",
+  "version": 1
+}
