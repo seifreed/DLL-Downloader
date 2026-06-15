@@ -25,12 +25,19 @@ from dll_downloader.interfaces.cli_output import (
     CLISessionResult,
 )
 from dll_downloader.interfaces.cli_runner import (
+    ApplicationBuilder,
+    BatchCommandRunner,
+    BoundaryFailureFactory,
     CLIApplicationService,
     CLIBatchDownloadCommand,
+    CLIBatchDownloadResult,
     CLIInvocation,
     CLIRunResult,
     DownloadCLIService,
+    SupportsClose,
+    SupportsDownloadExecution,
     cleanup_runtime_resources,
+    execute_boundary_command,
 )
 from dll_downloader.interfaces.presenters.structured_presenter import (
     DownloadBatchSARIFPresenter,
@@ -693,3 +700,102 @@ def test_cli_application_service_run_from_args_returns_result_on_success() -> No
     assert result is not None
     assert result.invocation.dll_names == ("a.dll",)
     assert result.session.exit_code == 0
+
+
+class ExplodingPresenter(StubPresenter):
+    def render_batch(self, response: object, architecture_label: str) -> list[str]:
+        raise RuntimeError("render boom")
+
+
+class InterruptingPresenter(StubPresenter):
+    def render_batch(self, response: object, architecture_label: str) -> list[str]:
+        raise KeyboardInterrupt()
+
+
+def _boundary_command() -> CLIBatchDownloadCommand:
+    return CLIBatchDownloadCommand(
+        dll_names=("a.dll",),
+        architecture=Architecture.X64,
+        scan_enabled=False,
+        force_download=False,
+        extract_archive=False,
+    )
+
+
+@pytest.mark.unit
+def test_download_cli_service_renders_boundary_failure_when_run_raises() -> None:
+    service = DownloadCLIService(SuccessfulUseCase(), ExplodingPresenter())
+
+    result = service.run_with_error_handling(_boundary_command())
+
+    assert result.boundary_failure is not None
+    assert result.session.exit_code == 1
+    assert result.session.failure_count == 1
+
+
+@pytest.mark.unit
+def test_execute_boundary_command_reraises_keyboard_interrupt() -> None:
+    service = DownloadCLIService(SuccessfulUseCase(), InterruptingPresenter())
+
+    with pytest.raises(KeyboardInterrupt):
+        service.run_with_error_handling(_boundary_command())
+
+
+@pytest.mark.unit
+def test_execute_boundary_command_invokes_factory_for_generic_exception() -> None:
+    captured: dict[str, Exception] = {}
+
+    def run_command(command: CLIBatchDownloadCommand) -> CLIBatchDownloadResult:
+        raise RuntimeError("boom")
+
+    def factory(
+        command: CLIBatchDownloadCommand, exc: Exception
+    ) -> CLICommandResult:
+        captured["exc"] = exc
+        return CLICommandResult(
+            stdout_lines=[],
+            session=CLISessionResult(
+                success_count=0, failure_count=1, exit_code=1
+            ),
+        )
+
+    result = execute_boundary_command(
+        _boundary_command(),
+        cast(BatchCommandRunner, run_command),
+        cast(BoundaryFailureFactory, factory),
+    )
+
+    assert isinstance(captured["exc"], RuntimeError)
+    assert result.session.exit_code == 1
+
+
+@pytest.mark.unit
+def test_cli_runner_protocol_method_bodies_are_callable() -> None:
+    request = cast(DownloadDLLRequest, object())
+    command = _boundary_command()
+
+    assert SupportsClose.close(cast(SupportsClose, object())) is None
+    assert (
+        SupportsDownloadExecution.execute(
+            cast(SupportsDownloadExecution, object()), request
+        )
+        is None
+    )
+    assert (
+        ApplicationBuilder.__call__(
+            cast(ApplicationBuilder, object()), Settings()
+        )
+        is None
+    )
+    assert (
+        BatchCommandRunner.__call__(
+            cast(BatchCommandRunner, object()), command
+        )
+        is None
+    )
+    assert (
+        BoundaryFailureFactory.__call__(
+            cast(BoundaryFailureFactory, object()), command, RuntimeError()
+        )
+        is None
+    )
