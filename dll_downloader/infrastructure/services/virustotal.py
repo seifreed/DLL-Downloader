@@ -312,8 +312,8 @@ class VirusTotalScanner(ISecurityScanner):
     def __init__(
         self,
         api_key: str | None = None,
-        malicious_threshold: int = 5,
-        suspicious_threshold: int = 1,
+        malicious_threshold: int = MALICIOUS_THRESHOLD,
+        suspicious_threshold: int = SUSPICIOUS_THRESHOLD,
         timeout: float = 60.0,
         session_resource: HTTPSessionResource | None = None,
     ) -> None:
