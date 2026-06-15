@@ -358,7 +358,7 @@ def test_requests_http_client_get_real_request(test_http_server: int) -> None:
     assert response.status_code == 200
     assert response.is_success is True
     assert len(response.content) > 0
-    assert isinstance(response.headers, dict)
+    assert isinstance(response.headers, Mapping)
     assert response.url.startswith("http://localhost")
 
 

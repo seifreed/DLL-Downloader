@@ -150,6 +150,7 @@ TECHNICAL_ADAPTER_IMPORT_ALLOWLIST: dict[str, tuple[str, ...]] = {
         "collections.abc",
         "dataclasses",
         "requests",
+        "types",
         "urllib.parse",
         "domain.errors",
         "infrastructure.http_session",

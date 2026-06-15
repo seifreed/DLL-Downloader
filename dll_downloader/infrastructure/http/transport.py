@@ -5,6 +5,7 @@ Transport primitives for HTTP adapters.
 import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from types import MappingProxyType
 from urllib.parse import urlparse
 
 import requests
@@ -45,46 +46,17 @@ def header_value(headers: Mapping[str, str], name: str) -> str | None:
     return ", ".join(values)
 
 
-class _FrozenHeaders(dict[str, str]):
-    def __init__(self, headers: Mapping[str, str]) -> None:
-        super().__init__(headers)
-
-    def __setitem__(self, key: str, value: str) -> None:
-        raise TypeError("HTTPResponse headers are immutable")
-
-    def __delitem__(self, key: str) -> None:
-        raise TypeError("HTTPResponse headers are immutable")
-
-    def clear(self) -> None:
-        raise TypeError("HTTPResponse headers are immutable")
-
-    def pop(self, key: str, default: object = None) -> object:  # type: ignore[override]
-        raise TypeError("HTTPResponse headers are immutable")
-
-    def popitem(self) -> tuple[str, str]:
-        raise TypeError("HTTPResponse headers are immutable")
-
-    def setdefault(self, key: str, default: str = "") -> str:
-        raise TypeError("HTTPResponse headers are immutable")
-
-    def update(self, *args: object, **kwargs: str) -> None:
-        raise TypeError("HTTPResponse headers are immutable")
-
-    def __ior__(self, value: object) -> "_FrozenHeaders":  # type: ignore[misc,override]
-        raise TypeError("HTTPResponse headers are immutable")
-
-
 @dataclass(frozen=True)
 class HTTPResponse:
     """Normalized HTTP response returned by infrastructure adapters."""
 
     status_code: int
     content: bytes
-    headers: dict[str, str]
+    headers: Mapping[str, str]
     url: str
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "headers", _FrozenHeaders(self.headers))
+        object.__setattr__(self, "headers", MappingProxyType(dict(self.headers)))
 
     @property
     def is_success(self) -> bool:
