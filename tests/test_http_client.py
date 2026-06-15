@@ -1733,6 +1733,68 @@ def test_http_client_download_retries_retryable_status() -> None:
     assert [response.closed for response in session.retry_responses] == [True, True]
 
 
+class _FailingResponse:
+    def __init__(self, status_code: int, url: str) -> None:
+        self.status_code = status_code
+        self.ok = False
+        self.url = url
+        self.headers: dict[str, str] = {}
+        self.content = b""
+        self.is_redirect = False
+        self.closed = False
+
+    def iter_content(self, chunk_size: int = 8192) -> Iterator[bytes]:
+        yield self.content
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def _session_returning_on_get(response: _FailingResponse) -> HTTPSessionProtocol:
+    class FailingSession:
+        def __init__(self) -> None:
+            self.headers: dict[str, str] = {}
+
+        def get(self, *args: Any, **kwargs: Any) -> HTTPResponseProtocol:
+            return cast(HTTPResponseProtocol, response)
+
+        def head(self, *args: Any, **kwargs: Any) -> HTTPResponseProtocol:
+            raise NotImplementedError
+
+        def post(self, *args: Any, **kwargs: Any) -> HTTPResponseProtocol:
+            raise NotImplementedError
+
+        def close(self) -> None:
+            pass
+
+    return cast(HTTPSessionProtocol, FailingSession())
+
+
+@pytest.mark.unit
+def test_get_raises_http_client_error_on_non_ok_status() -> None:
+    response = _FailingResponse(500, "https://example.com/wanted.dll")
+    client = RequestsHTTPClient(
+        session_resource=_resource_with_session(_session_returning_on_get(response)),
+    )
+
+    with pytest.raises(HTTPClientError) as exc_info:
+        client.get("https://example.com/wanted.dll")
+
+    assert exc_info.value.status_code == 500
+    assert exc_info.value.url == "https://example.com/wanted.dll"
+
+
+@pytest.mark.unit
+def test_head_raises_http_client_error_on_non_ok_status(test_http_server: int) -> None:
+    client = RequestsHTTPClient(allowed_redirect_domains={"localhost"})
+    url = f"http://localhost:{test_http_server}/missing.dll"
+
+    with pytest.raises(HTTPClientError) as exc_info:
+        client.head(url)
+
+    assert exc_info.value.status_code == 404
+
+
 @pytest.mark.unit
 def test_http_client_download_retries_when_retry_response_close_fails() -> None:
     class DummyResponse:

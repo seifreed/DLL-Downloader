@@ -185,16 +185,12 @@ class RequestsHTTPClient:
     def head(
         self, url: str, headers: Mapping[str, str] | None = None
     ) -> dict[str, str]:
+        # The transport raises HTTPClientError for a non-ok HEAD response, so
+        # any response reaching here is successful.
         response = self._transport.execute(
             "HEAD", url, headers=headers, allow_redirects=True
         )
         try:
-            if not getattr(response, "ok", False):
-                raise HTTPClientError(
-                    f"HEAD request failed with status {response.status_code}",
-                    status_code=response.status_code,
-                    url=response.url if hasattr(response, "url") else url,
-                )
             return dict(response.headers)
         finally:
             close_response(response)
