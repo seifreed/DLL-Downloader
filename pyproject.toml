@@ -85,6 +85,7 @@ select = [
     "C4",   # flake8-comprehensions
     "C90",  # mccabe complexity
     "SIM",  # flake8-simplify
+    "PIE",  # flake8-pie (unnecessary pass, duplicate fields, etc.)
 ]
 ignore = [
     "E501",  # line too long (handled by ruff format)

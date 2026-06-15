@@ -33,7 +33,6 @@ class IDLLRepository(ABC):
         Raises:
             RepositoryError: If the save operation fails
         """
-        pass
 
     @abstractmethod
     def find_by_name(
@@ -49,7 +48,6 @@ class IDLLRepository(ABC):
         Returns:
             DLLFile if found, None otherwise
         """
-        pass
 
     @abstractmethod
     def find_by_hash(self, file_hash: str) -> DLLFile | None:
@@ -62,7 +60,6 @@ class IDLLRepository(ABC):
         Returns:
             DLLFile if found, None otherwise
         """
-        pass
 
     @abstractmethod
     def list_all(self) -> list[DLLFile]:
@@ -72,7 +69,6 @@ class IDLLRepository(ABC):
         Returns:
             List of all DLLFile entities in the repository
         """
-        pass
 
     @abstractmethod
     def delete(self, dll_file: DLLFile) -> bool:
@@ -85,7 +81,6 @@ class IDLLRepository(ABC):
         Returns:
             True if deletion was successful, False otherwise
         """
-        pass
 
     @abstractmethod
     def update_metadata(self, dll_file: DLLFile) -> DLLFile:
@@ -101,7 +96,6 @@ class IDLLRepository(ABC):
         Raises:
             RepositoryOperationError: If the update fails
         """
-        pass
 
     @abstractmethod
     def exists(self, name: str, architecture: Architecture | None = None) -> bool:
@@ -115,4 +109,3 @@ class IDLLRepository(ABC):
         Returns:
             True if the DLL exists, False otherwise
         """
-        pass

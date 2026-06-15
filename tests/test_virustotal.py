@@ -1338,7 +1338,6 @@ def test_scan_file_upload_type_error_raises(
     class DummyResponse:
         is_redirect = False
         status_code = 200
-        is_redirect = False
 
         def json(self) -> list[str]:
             return ["bad"]
@@ -1381,7 +1380,6 @@ def test_scan_file_upload_runtime_json_error_raises_virustotal_error(
     class DummyResponse:
         is_redirect = False
         status_code = 200
-        is_redirect = False
 
         def json(self) -> dict[str, object]:
             raise RuntimeError("json failed")
@@ -1463,7 +1461,6 @@ def test_scan_hash_passes_configured_timeout() -> None:
     class DummyResponse:
         is_redirect = False
         status_code = 404
-        is_redirect = False
 
         def json(self) -> dict[str, object]:
             return {}
@@ -1504,7 +1501,6 @@ def test_scan_hash_closes_response() -> None:
     class DummyResponse:
         is_redirect = False
         status_code = 200
-        is_redirect = False
 
         def __init__(self) -> None:
             self.closed = False
@@ -1733,7 +1729,6 @@ def test_get_detailed_report_closes_response() -> None:
     class DummyResponse:
         is_redirect = False
         status_code = 200
-        is_redirect = False
 
         def __init__(self) -> None:
             self.closed = False
@@ -1849,7 +1844,6 @@ def test_get_detailed_report_invalid_json_raises() -> None:
     class DummyResponse:
         is_redirect = False
         status_code = 200
-        is_redirect = False
 
         def json(self) -> list[str]:
             return ["bad"]

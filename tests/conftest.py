@@ -261,7 +261,6 @@ def test_http_server() -> Generator[int]:
 
         def log_message(self, format: str, *args: object) -> None:
             """Suppress logging."""
-            pass
 
     # Find available port
     with socketserver.TCPServer(("", 0), TestHandler) as httpd:
@@ -321,7 +320,6 @@ def vt_mock_server() -> Generator[int]:
 
         def log_message(self, format: str, *args: object) -> None:
             """Suppress logging."""
-            pass
 
     # Find available port
     with socketserver.TCPServer(("", 0), VTMockHandler) as httpd:

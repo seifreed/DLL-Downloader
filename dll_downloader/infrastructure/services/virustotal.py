@@ -76,8 +76,6 @@ class VirusTotalError(SecurityServiceError):
 class HashNotFoundError(VirusTotalError):
     """Exception raised when a hash has no VirusTotal results."""
 
-    pass
-
 
 def _safe_int(value: object, *, strict: bool = False) -> int:  # noqa: C901
     """Safely coerce API values to int, handling float-like strings.

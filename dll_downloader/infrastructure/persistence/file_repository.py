@@ -89,8 +89,6 @@ class IndexData(TypedDict):
 class RepositoryError(RepositoryOperationError):
     """Exception raised for repository operation errors."""
 
-    pass
-
 
 class FileSystemDLLRepository(IDLLRepository):
     """

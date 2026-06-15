@@ -103,7 +103,6 @@ class ISecurityScanner(ABC):
         Raises:
             ScannerError: If the scan operation fails
         """
-        pass
 
     @abstractmethod
     def scan_hash(self, file_hash: str) -> ScanResult:
@@ -122,7 +121,6 @@ class ISecurityScanner(ABC):
         Raises:
             ScannerError: If the lookup fails or no results exist for this hash
         """
-        pass
 
     @abstractmethod
     def scan_dll(self, dll_file: DLLFile) -> DLLFile:
@@ -138,7 +136,6 @@ class ISecurityScanner(ABC):
         Returns:
             Updated DLLFile with security_status and VT fields populated
         """
-        pass
 
     @abstractmethod
     def get_detailed_report(self, file_hash: str) -> dict[str, object]:
@@ -154,7 +151,6 @@ class ISecurityScanner(ABC):
         Raises:
             ScannerError: If the report retrieval fails
         """
-        pass
 
     @property
     @abstractmethod
@@ -165,4 +161,3 @@ class ISecurityScanner(ABC):
         Returns:
             True if the service can be used, False otherwise
         """
-        pass
