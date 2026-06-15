@@ -1621,8 +1621,9 @@ def test_settings_validate_rejects_private_ip_literal_download_base_url() -> Non
 def test_settings_validate_rejects_download_base_url_resolving_to_private() -> None:
     settings = Settings(download_base_url="https://example.com")
 
-    with _dns_returns(["10.0.0.1"]), pytest.raises(
-        ValueError, match="must not resolve to a private"
+    with (
+        _dns_returns(["10.0.0.1"]),
+        pytest.raises(ValueError, match="must not resolve to a private"),
     ):
         settings.validate()
 
@@ -1647,8 +1648,9 @@ def test_settings_validate_rejects_unresolvable_download_base_url() -> None:
 def test_settings_validate_rejects_non_string_log_level() -> None:
     settings = Settings(log_level=cast(str, 123))
 
-    with _mock_dns_resolution(), pytest.raises(
-        ValueError, match="log_level must be a string"
+    with (
+        _mock_dns_resolution(),
+        pytest.raises(ValueError, match="log_level must be a string"),
     ):
         settings.validate()
 
@@ -1657,8 +1659,9 @@ def test_settings_validate_rejects_non_string_log_level() -> None:
 def test_settings_validate_rejects_non_string_user_agent() -> None:
     settings = Settings(user_agent=cast("str | None", 123))
 
-    with _mock_dns_resolution(), pytest.raises(
-        ValueError, match="user_agent must be a string or null"
+    with (
+        _mock_dns_resolution(),
+        pytest.raises(ValueError, match="user_agent must be a string or null"),
     ):
         settings.validate()
 
@@ -1667,8 +1670,9 @@ def test_settings_validate_rejects_non_string_user_agent() -> None:
 def test_settings_validate_rejects_non_tuple_user_agent_pool() -> None:
     settings = Settings(user_agent_pool=cast("tuple[str, ...] | None", ["a"]))
 
-    with _mock_dns_resolution(), pytest.raises(
-        ValueError, match="user_agent_pool must be a tuple of strings"
+    with (
+        _mock_dns_resolution(),
+        pytest.raises(ValueError, match="user_agent_pool must be a tuple of strings"),
     ):
         settings.validate()
 
@@ -1707,9 +1711,7 @@ def test_settings_loader_from_json_rejects_symlink(tmp_path: Path) -> None:
     link = tmp_path / "config.json"
     link.symlink_to(target)
 
-    with pytest.raises(
-        OSError, match="Refusing to read configuration from symlink"
-    ):
+    with pytest.raises(OSError, match="Refusing to read configuration from symlink"):
         SettingsLoader.from_json(str(link))
 
 

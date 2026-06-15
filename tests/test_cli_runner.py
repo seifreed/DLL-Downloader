@@ -748,15 +748,11 @@ def test_execute_boundary_command_invokes_factory_for_generic_exception() -> Non
     def run_command(command: CLIBatchDownloadCommand) -> CLIBatchDownloadResult:
         raise RuntimeError("boom")
 
-    def factory(
-        command: CLIBatchDownloadCommand, exc: Exception
-    ) -> CLICommandResult:
+    def factory(command: CLIBatchDownloadCommand, exc: Exception) -> CLICommandResult:
         captured["exc"] = exc
         return CLICommandResult(
             stdout_lines=[],
-            session=CLISessionResult(
-                success_count=0, failure_count=1, exit_code=1
-            ),
+            session=CLISessionResult(success_count=0, failure_count=1, exit_code=1),
         )
 
     result = execute_boundary_command(

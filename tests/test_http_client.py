@@ -2673,9 +2673,7 @@ def test_single_request_exhausts_without_successful_response() -> None:
             self._reads += 1
             return 1 if self._reads == 1 else 100
 
-        def should_retry_exception(
-            self, exc: Exception, attempt: int
-        ) -> bool:
+        def should_retry_exception(self, exc: Exception, attempt: int) -> bool:
             return False
 
         def pause_before_retry(self, attempt: int) -> None:

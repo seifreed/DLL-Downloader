@@ -3604,9 +3604,7 @@ def test_unlink_payload_raises_oserror_and_restores_index(
         # Allow reading to verify index restoration
         arch_dir.chmod(0o755)
         # The index entry must have been restored
-        index_data = _json.loads(
-            (tmp_download_dir / ".dll_index.json").read_text()
-        )
+        index_data = _json.loads((tmp_download_dir / ".dll_index.json").read_text())
         assert "x64/unlink-fail.dll" in index_data["files"]
     finally:
         arch_dir.chmod(0o755)
@@ -3827,9 +3825,7 @@ def test_try_deserialize_dll_returns_none_for_missing_required_key(
     """_try_deserialize_dll returns None and logs a warning when the entry dict
     is missing required keys (KeyError inside _deserialize_dll)."""
     repository = FileSystemDLLRepository(tmp_download_dir)
-    result = repository._try_deserialize_dll(
-        cast(Any, {"architecture": "x64"})
-    )
+    result = repository._try_deserialize_dll(cast(Any, {"architecture": "x64"}))
     assert result is None
 
 
@@ -3918,9 +3914,7 @@ def test_create_dll_from_file_raises_when_open_fails(
     os.open = cast(Any, patched_open)
     try:
         with pytest.raises(RepositoryError, match="Failed to read DLL file"):
-            repository._create_dll_from_file(
-                target, "open-fail.dll", Architecture.X64
-            )
+            repository._create_dll_from_file(target, "open-fail.dll", Architecture.X64)
     finally:
         os.open = original_open
 
@@ -3958,9 +3952,7 @@ def test_create_dll_from_file_raises_when_fstat_non_regular(
     os.fstat = patched_fstat
     try:
         with pytest.raises(RepositoryError, match="non-regular file"):
-            repository._create_dll_from_file(
-                target, "non-reg.dll", Architecture.X64
-            )
+            repository._create_dll_from_file(target, "non-reg.dll", Architecture.X64)
     finally:
         os.fstat = original_fstat
 

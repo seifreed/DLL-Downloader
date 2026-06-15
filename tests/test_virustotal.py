@@ -2057,9 +2057,9 @@ def test_response_chunks_skips_empty_and_rejects_oversized() -> None:
         _response_chunks,
     )
 
-    assert _response_chunks(
-        cast(Any, _BodyResponse(chunks=[b"", b"data"]))
-    ) == [b"data"]
+    assert _response_chunks(cast(Any, _BodyResponse(chunks=[b"", b"data"]))) == [
+        b"data"
+    ]
 
     class _BigChunk:
         def __len__(self) -> int:
@@ -2203,8 +2203,9 @@ def test_validate_api_url_rejects_bad_urls(url: str, match: str) -> None:
 def test_validate_api_url_rejects_allowed_host_resolving_private() -> None:
     scanner = VirusTotalScanner(api_key="key")
 
-    with _allow_domain("localhost"), pytest.raises(
-        VirusTotalError, match="resolving to private IP"
+    with (
+        _allow_domain("localhost"),
+        pytest.raises(VirusTotalError, match="resolving to private IP"),
     ):
         scanner._validate_api_url("https://localhost/x", redirect=True)
 
