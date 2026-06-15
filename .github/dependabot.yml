@@ -1,0 +1,22 @@
+version: 2
+updates:
+  # Keep SHA-pinned GitHub Actions current (Dependabot bumps the SHA and the
+  # trailing version comment together).
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      actions:
+        patterns:
+          - "*"
+
+  # Keep Python dependencies (and the security floors in pyproject.toml) fresh.
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      python-deps:
+        patterns:
+          - "*"
