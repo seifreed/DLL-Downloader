@@ -10,6 +10,7 @@ Usage:
 
 from __future__ import annotations
 
+import argparse
 import json
 import shutil
 import subprocess
@@ -26,6 +27,13 @@ REQUIRED_PROFILES = (
 )
 REQUIRED_SCORE = 10.0
 REQUIRED_GRADE = "A"
+GRADE_COLORS = {
+    "A": "brightgreen",
+    "B": "green",
+    "C": "yellowgreen",
+    "D": "orange",
+    "F": "red",
+}
 
 
 def score_sbom(sbom_path: str) -> list[dict[str, Any]]:
@@ -54,13 +62,46 @@ def score_sbom(sbom_path: str) -> list[dict[str, Any]]:
     return list(profiles)
 
 
+def write_badge(profiles: list[dict[str, Any]], badge_path: str) -> None:
+    """Write a shields.io endpoint JSON reflecting the worst profile score.
+
+    The badge stays dynamic: shields.io fetches this file live, so the README
+    badge always shows whatever score the latest committed SBOM achieves.
+    """
+    worst = min(profiles, key=lambda e: float(e.get("score", 0.0)))
+    score = float(worst.get("score", 0.0))
+    grade = str(worst.get("grade", "?"))
+    badge = {
+        "schemaVersion": 1,
+        "label": "SBOM quality",
+        "message": f"{score:.1f}/10 {grade} (NTIA·BSI)",
+        "color": GRADE_COLORS.get(grade, "lightgrey"),
+    }
+    Path(badge_path).write_text(json.dumps(badge) + "\n")
+
+
 def main() -> int:
-    sbom_path = sys.argv[1] if len(sys.argv) > 1 else "sbom.cdx.json"
-    if not Path(sbom_path).is_file():
-        print(f"SBOM not found: {sbom_path}", file=sys.stderr)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("sbom", nargs="?", default="sbom.cdx.json")
+    parser.add_argument(
+        "--badge",
+        metavar="PATH",
+        help="Write a shields.io endpoint JSON for the README badge",
+    )
+    args = parser.parse_args()
+
+    if not Path(args.sbom).is_file():
+        print(f"SBOM not found: {args.sbom}", file=sys.stderr)
         return 1
 
-    profiles = score_sbom(sbom_path)
+    profiles = score_sbom(args.sbom)
+    if not profiles:
+        print("sbomqs returned no profile scores", file=sys.stderr)
+        return 1
+
+    if args.badge:
+        write_badge(profiles, args.badge)
+
     failures: list[str] = []
     for entry in profiles:
         name = str(entry.get("profile", "?"))

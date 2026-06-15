@@ -13,6 +13,7 @@
   <a href="https://pypi.org/project/dll-downloader/"><img src="https://img.shields.io/pypi/pyversions/dll-downloader?style=flat-square&logo=python&logoColor=white" alt="Python Versions"></a>
   <a href="https://github.com/seifreed/DLL-Downloader/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT%20%2B%20Attribution-green?style=flat-square" alt="License"></a>
   <a href="https://github.com/seifreed/DLL-Downloader/actions"><img src="https://img.shields.io/github/actions/workflow/status/seifreed/DLL-Downloader/ci.yml?style=flat-square&logo=github&label=CI" alt="CI Status"></a>
+  <a href="https://github.com/seifreed/DLL-Downloader/blob/main/sbom.cdx.json"><img src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/seifreed/DLL-Downloader/main/sbom-score.json&style=flat-square&logo=cyclonedx" alt="SBOM Quality"></a>
 </p>
 
 <p align="center">
@@ -233,6 +234,15 @@ CI enforces this contract via `scripts/check_sbom_quality.py`:
 ```bash
 sbomqs score --profile ntia,bsi-v1.1,bsi-v2.0,bsi-v2.1 sbom.cdx.json
 python scripts/check_sbom_quality.py sbom.cdx.json
+```
+
+The SBOM Quality badge above is dynamic: `--badge sbom-score.json` writes a
+[shields.io endpoint](https://shields.io/badges/endpoint-badge) file that the
+badge fetches live, and CI fails if the committed badge drifts from the real
+score:
+
+```bash
+python scripts/check_sbom_quality.py sbom.cdx.json --badge sbom-score.json
 ```
 
 ---

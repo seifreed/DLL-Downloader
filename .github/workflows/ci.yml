@@ -110,7 +110,10 @@ jobs:
         run: python scripts/generate_sbom.py -o sbom.cdx.json
 
       - name: Enforce SBOM quality (10.0/A on NTIA + BSI profiles)
-        run: python scripts/check_sbom_quality.py sbom.cdx.json
+        run: python scripts/check_sbom_quality.py sbom.cdx.json --badge sbom-score.json
+
+      - name: Verify the committed SBOM badge matches the real score
+        run: git diff --exit-code sbom-score.json
 
       - name: Upload SBOM artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
