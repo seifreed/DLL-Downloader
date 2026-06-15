@@ -1543,3 +1543,138 @@ def test_settings_downloads_path_expands_user() -> None:
 
     assert "~" not in str(path)
     assert str(path).startswith(str(Path.home()))
+
+
+# ============================================================================
+# Settings.validate() type and SSRF branch coverage
+# ============================================================================
+
+
+@contextmanager
+def _dns_returns(addresses: list[str]) -> Iterator[None]:
+    """Patch getaddrinfo so any hostname resolves to the given IP strings."""
+    original_getaddrinfo = socket.getaddrinfo
+
+    def _patched_getaddrinfo(
+        host: str | bytes | None,
+        port: bytes | str | int | None,
+        family: int = 0,
+        type: int = 0,
+        proto: int = 0,
+        flags: int = 0,
+    ) -> list[tuple[Any, ...]]:
+        if isinstance(host, str) and not _is_ip_address(host):
+            return [
+                (
+                    socket.AF_INET,
+                    socket.SOCK_STREAM,
+                    socket.IPPROTO_TCP,
+                    "",
+                    (addr, port),
+                )
+                for addr in addresses
+            ]
+        return original_getaddrinfo(host, port, family, type, proto, flags)
+
+    socket.getaddrinfo = cast(Any, _patched_getaddrinfo)
+    try:
+        yield
+    finally:
+        socket.getaddrinfo = original_getaddrinfo
+
+
+@pytest.mark.unit
+def test_settings_validate_rejects_non_string_download_directory() -> None:
+    settings = Settings(download_directory=cast(str, 123))
+
+    with pytest.raises(ValueError, match="download_directory must be a string"):
+        settings.validate()
+
+
+@pytest.mark.unit
+def test_settings_validate_rejects_non_https_download_base_url() -> None:
+    settings = Settings(download_base_url="http://example.com")
+
+    with pytest.raises(ValueError, match="download_base_url must use HTTPS"):
+        settings.validate()
+
+
+@pytest.mark.unit
+def test_settings_validate_rejects_download_base_url_without_hostname() -> None:
+    settings = Settings(download_base_url="https:///path")
+
+    with pytest.raises(
+        ValueError, match="download_base_url must have a valid hostname"
+    ):
+        settings.validate()
+
+
+@pytest.mark.unit
+def test_settings_validate_rejects_private_ip_literal_download_base_url() -> None:
+    settings = Settings(download_base_url="https://127.0.0.1")
+
+    with pytest.raises(ValueError, match="must not point to a private"):
+        settings.validate()
+
+
+@pytest.mark.unit
+def test_settings_validate_rejects_download_base_url_resolving_to_private() -> None:
+    settings = Settings(download_base_url="https://example.com")
+
+    with _dns_returns(["10.0.0.1"]), pytest.raises(
+        ValueError, match="must not resolve to a private"
+    ):
+        settings.validate()
+
+
+@pytest.mark.unit
+def test_settings_validate_skips_unparseable_resolved_addresses() -> None:
+    settings = Settings(download_base_url="https://example.com")
+
+    with _dns_returns(["not-an-ip-address"]):
+        assert settings.validate() is True
+
+
+@pytest.mark.unit
+def test_settings_validate_rejects_unresolvable_download_base_url() -> None:
+    settings = Settings(download_base_url="https://does-not-exist.invalid")
+
+    with pytest.raises(ValueError, match="hostname does not resolve"):
+        settings.validate()
+
+
+@pytest.mark.unit
+def test_settings_validate_rejects_non_string_log_level() -> None:
+    settings = Settings(log_level=cast(str, 123))
+
+    with _mock_dns_resolution(), pytest.raises(
+        ValueError, match="log_level must be a string"
+    ):
+        settings.validate()
+
+
+@pytest.mark.unit
+def test_settings_validate_rejects_non_string_user_agent() -> None:
+    settings = Settings(user_agent=cast("str | None", 123))
+
+    with _mock_dns_resolution(), pytest.raises(
+        ValueError, match="user_agent must be a string or null"
+    ):
+        settings.validate()
+
+
+@pytest.mark.unit
+def test_settings_validate_rejects_non_tuple_user_agent_pool() -> None:
+    settings = Settings(user_agent_pool=cast("tuple[str, ...] | None", ["a"]))
+
+    with _mock_dns_resolution(), pytest.raises(
+        ValueError, match="user_agent_pool must be a tuple of strings"
+    ):
+        settings.validate()
+
+
+@pytest.mark.unit
+def test_settings_validate_accepts_public_ip_literal_download_base_url() -> None:
+    settings = Settings(download_base_url=f"https://{_PUBLIC_IP}")
+
+    assert settings.validate() is True
