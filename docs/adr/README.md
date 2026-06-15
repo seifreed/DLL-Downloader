@@ -74,7 +74,7 @@ When making significant architectural decisions:
 
 ## License
 
-All ADRs are licensed under GPLv3 and authored by Marc Rivero López unless otherwise noted.
+All ADRs are licensed under the MIT License (with attribution) and authored by Marc Rivero López unless otherwise noted.
 
 ---
 

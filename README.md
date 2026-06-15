@@ -15,6 +15,7 @@
   <a href="https://github.com/seifreed/DLL-Downloader/actions"><img src="https://img.shields.io/github/actions/workflow/status/seifreed/DLL-Downloader/ci.yml?style=flat-square&logo=github&label=CI" alt="CI Status"></a>
   <a href="https://codecov.io/gh/seifreed/DLL-Downloader"><img src="https://img.shields.io/codecov/c/github/seifreed/DLL-Downloader?style=flat-square&logo=codecov&logoColor=white" alt="Coverage"></a>
   <a href="https://github.com/seifreed/DLL-Downloader/blob/main/sbom.cdx.json"><img src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/seifreed/DLL-Downloader/main/sbom-score.json&style=flat-square&logo=cyclonedx" alt="SBOM Quality"></a>
+  <a href="https://www.bestpractices.dev/projects/13276"><img src="https://www.bestpractices.dev/projects/13276/badge" alt="OpenSSF Best Practices"></a>
 </p>
 
 <p align="center">
@@ -248,9 +249,23 @@ python scripts/check_sbom_quality.py sbom.cdx.json --badge sbom-score.json
 
 ---
 
+## Reporting Issues & Security
+
+- **Bugs and feature requests:** open a
+  [GitHub issue](https://github.com/seifreed/DLL-Downloader/issues). Existing
+  issues and discussions are searchable and serve as the public archive.
+- **Security vulnerabilities:** please do **not** open a public issue. Follow
+  the private reporting process in [SECURITY.md](SECURITY.md).
+
 ## Contributing
 
-Contributions are welcome. Please open a PR with clear changes and tests if needed.
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for the
+contribution process, coding standards, and the testing policy (tests are
+required for new functionality, and the project enforces 100% coverage). The
+fork-and-pull-request workflow is used; CI runs lint, type checks, security
+scans, and the full test suite on every change.
+
+Notable changes are recorded in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 

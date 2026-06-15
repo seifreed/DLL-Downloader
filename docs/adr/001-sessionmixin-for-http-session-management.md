@@ -6,7 +6,7 @@
 
 **Author**: Marc Rivero López
 
-**License**: GPLv3
+**License**: MIT License (with attribution)
 
 ## Context
 
@@ -197,6 +197,6 @@ After architectural review, this design is deemed **optimal** for the following 
 
 ---
 
-**License**: GNU General Public License v3 (GPLv3)
+**License**: MIT License (with attribution)
 
-This architectural decision record is part of the DLL Downloader project and is licensed under GPLv3. Any derivative work must maintain attribution to Marc Rivero López and be distributed under the same license.
+This architectural decision record is part of the DLL Downloader project and is licensed under the MIT License with the attribution terms described in the project [LICENSE](../../LICENSE), which require maintaining attribution to Marc Rivero López.
