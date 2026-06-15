@@ -13,6 +13,7 @@
   <a href="https://pypi.org/project/dll-downloader/"><img src="https://img.shields.io/pypi/pyversions/dll-downloader?style=flat-square&logo=python&logoColor=white" alt="Python Versions"></a>
   <a href="https://github.com/seifreed/DLL-Downloader/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT%20%2B%20Attribution-green?style=flat-square" alt="License"></a>
   <a href="https://github.com/seifreed/DLL-Downloader/actions"><img src="https://img.shields.io/github/actions/workflow/status/seifreed/DLL-Downloader/ci.yml?style=flat-square&logo=github&label=CI" alt="CI Status"></a>
+  <a href="https://codecov.io/gh/seifreed/DLL-Downloader"><img src="https://img.shields.io/codecov/c/github/seifreed/DLL-Downloader?style=flat-square&logo=codecov&logoColor=white" alt="Coverage"></a>
   <a href="https://github.com/seifreed/DLL-Downloader/blob/main/sbom.cdx.json"><img src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/seifreed/DLL-Downloader/main/sbom-score.json&style=flat-square&logo=cyclonedx" alt="SBOM Quality"></a>
 </p>
 
