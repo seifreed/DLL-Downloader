@@ -80,6 +80,7 @@ def _validate_not_private_url(value: str, field_name: str) -> None:
     Consistent with transport-layer SSRF checks.
     """
     import socket
+
     parsed = urlparse(value)
     hostname = _validated_url_hostname(parsed, field_name)
     try:
@@ -95,7 +96,9 @@ def _validate_not_private_url(value: str, field_name: str) -> None:
     # Not an IP literal; resolve hostname to check for DNS rebinding.
     # Fail closed on DNS errors (consistent with transport layer).
     try:
-        resolved = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+        resolved = socket.getaddrinfo(
+            hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM
+        )
         for _family, _type, _proto, _canonname, sockaddr in resolved:
             ip_str = sockaddr[0]
             try:
@@ -147,7 +150,9 @@ class Settings:
     """
 
     virustotal_api_key: str | None = field(default=None, repr=False)
-    download_directory: str = field(default_factory=lambda: str(Path.cwd() / "downloads"))
+    download_directory: str = field(
+        default_factory=lambda: str(Path.cwd() / "downloads")
+    )
     download_base_url: str = "https://es.dll-files.com"
     http_timeout: int = 60
     virustotal_timeout: float = 60.0

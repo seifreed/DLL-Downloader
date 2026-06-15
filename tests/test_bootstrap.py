@@ -175,7 +175,9 @@ def test_build_download_application_accepts_injected_factory(tmp_path: Path) -> 
 
 
 @pytest.mark.unit
-def test_build_default_download_application_uses_default_runtime(tmp_path: Path) -> None:
+def test_build_default_download_application_uses_default_runtime(
+    tmp_path: Path,
+) -> None:
     settings = Settings(download_directory=str(tmp_path), virustotal_api_key=None)
 
     application = build_default_download_application(settings, output_dir=str(tmp_path))

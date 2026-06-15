@@ -64,7 +64,9 @@ def _function_complexity(node: ast.FunctionDef | ast.AsyncFunctionDef) -> int:
         elif isinstance(child, ast.BoolOp):
             complexity += max(0, len(child.values) - 1)
         elif isinstance(child, ast.Try):
-            complexity += len(child.handlers) + bool(child.orelse) + bool(child.finalbody)
+            complexity += (
+                len(child.handlers) + bool(child.orelse) + bool(child.finalbody)
+            )
         elif isinstance(child, ast.comprehension):
             complexity += 1
 

@@ -32,6 +32,7 @@ class PEDllInspection:
     def is_unsupported_machine(self) -> bool:
         return self.unsupported_machine is not None
 
+
 _PE_POINTER_OFFSET = 0x3C
 _PE_SIGNATURE = b"PE\x00\x00"
 _PE_MIN_PE_OFFSET = 0x40
@@ -76,7 +77,7 @@ def inspect_pe_dll_architecture(content: bytes) -> PEDllInspection:
         return PEDllInspection()
 
     pe_offset = int.from_bytes(
-        content[_PE_POINTER_OFFSET:_PE_POINTER_OFFSET + 4],
+        content[_PE_POINTER_OFFSET : _PE_POINTER_OFFSET + 4],
         "little",
     )
     if pe_offset < _PE_MIN_PE_OFFSET or pe_offset > len(content) - 4:
@@ -88,7 +89,7 @@ def inspect_pe_dll_architecture(content: bytes) -> PEDllInspection:
     ):
         return PEDllInspection()
 
-    machine = int.from_bytes(content[machine_offset:machine_offset + 2], "little")
+    machine = int.from_bytes(content[machine_offset : machine_offset + 2], "little")
     architecture = _PE_MACHINE_ARCHITECTURES.get(machine)
     if architecture is None:
         return PEDllInspection(unsupported_machine=machine)
@@ -99,7 +100,7 @@ def inspect_pe_dll_architecture(content: bytes) -> PEDllInspection:
     if len(content) < characteristics_offset + 2:
         return PEDllInspection()
     characteristics = int.from_bytes(
-        content[characteristics_offset:characteristics_offset + 2],
+        content[characteristics_offset : characteristics_offset + 2],
         "little",
     )
     if characteristics & _PE_DLL_CHARACTERISTIC == 0:
@@ -115,8 +116,9 @@ def pe_image_layout_is_valid(
     """Return ``True`` when the PE header has a valid optional header and sections."""
     section_count = int.from_bytes(
         content[
-            machine_offset + _PE_NUMBER_OF_SECTIONS_OFFSET_FROM_MACHINE:
-            machine_offset + _PE_NUMBER_OF_SECTIONS_OFFSET_FROM_MACHINE + 2
+            machine_offset + _PE_NUMBER_OF_SECTIONS_OFFSET_FROM_MACHINE : machine_offset
+            + _PE_NUMBER_OF_SECTIONS_OFFSET_FROM_MACHINE
+            + 2
         ],
         "little",
     )
@@ -125,8 +127,10 @@ def pe_image_layout_is_valid(
 
     optional_header_size = int.from_bytes(
         content[
-            machine_offset + _PE_SIZE_OF_OPTIONAL_HEADER_OFFSET_FROM_MACHINE:
-            machine_offset + _PE_SIZE_OF_OPTIONAL_HEADER_OFFSET_FROM_MACHINE + 2
+            machine_offset
+            + _PE_SIZE_OF_OPTIONAL_HEADER_OFFSET_FROM_MACHINE : machine_offset
+            + _PE_SIZE_OF_OPTIONAL_HEADER_OFFSET_FROM_MACHINE
+            + 2
         ],
         "little",
     )
@@ -139,7 +143,7 @@ def pe_image_layout_is_valid(
         return False
 
     optional_magic = int.from_bytes(
-        content[optional_header_offset:optional_header_offset + 2],
+        content[optional_header_offset : optional_header_offset + 2],
         "little",
     )
     if optional_magic != expected_optional_magic(architecture):
@@ -164,25 +168,24 @@ def has_loadable_section(
     for index in range(section_count):
         section_offset = section_table_offset + (index * _PE_SECTION_HEADER_SIZE)
         section_header = content[
-            section_offset:section_offset + _PE_SECTION_HEADER_SIZE
+            section_offset : section_offset + _PE_SECTION_HEADER_SIZE
         ]
 
         virtual_size = int.from_bytes(
             section_header[
-                _PE_SECTION_VIRTUAL_SIZE_OFFSET:
-                _PE_SECTION_VIRTUAL_SIZE_OFFSET + 4
+                _PE_SECTION_VIRTUAL_SIZE_OFFSET : _PE_SECTION_VIRTUAL_SIZE_OFFSET + 4
             ],
             "little",
         )
         raw_size = int.from_bytes(
             section_header[
-                _PE_SECTION_RAW_SIZE_OFFSET:_PE_SECTION_RAW_SIZE_OFFSET + 4
+                _PE_SECTION_RAW_SIZE_OFFSET : _PE_SECTION_RAW_SIZE_OFFSET + 4
             ],
             "little",
         )
         raw_pointer = int.from_bytes(
             section_header[
-                _PE_SECTION_RAW_POINTER_OFFSET:_PE_SECTION_RAW_POINTER_OFFSET + 4
+                _PE_SECTION_RAW_POINTER_OFFSET : _PE_SECTION_RAW_POINTER_OFFSET + 4
             ],
             "little",
         )

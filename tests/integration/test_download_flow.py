@@ -69,28 +69,32 @@ def _build_pe_payload(
     payload = bytearray(section_table_offset + 40)
     payload[0:2] = b"MZ"
     payload[0x3C:0x40] = pe_offset.to_bytes(4, "little")
-    payload[pe_offset:pe_offset + 4] = b"PE\x00\x00"
-    payload[pe_offset + 4:pe_offset + 6] = machine.to_bytes(2, "little")
-    payload[pe_offset + 6:pe_offset + 8] = (1).to_bytes(2, "little")
-    payload[pe_offset + 20:pe_offset + 22] = optional_header_size.to_bytes(2, "little")
-    payload[pe_offset + 22:pe_offset + 24] = (0x2000).to_bytes(2, "little")
-    optional_magic = 0x20B if architecture == Architecture.X64 else 0x10B
-    payload[optional_header_offset:optional_header_offset + 2] = optional_magic.to_bytes(
-        2,
-        "little",
+    payload[pe_offset : pe_offset + 4] = b"PE\x00\x00"
+    payload[pe_offset + 4 : pe_offset + 6] = machine.to_bytes(2, "little")
+    payload[pe_offset + 6 : pe_offset + 8] = (1).to_bytes(2, "little")
+    payload[pe_offset + 20 : pe_offset + 22] = optional_header_size.to_bytes(
+        2, "little"
     )
-    payload[section_table_offset:section_table_offset + 5] = b".text"
-    payload[section_table_offset + 8:section_table_offset + 12] = len(
+    payload[pe_offset + 22 : pe_offset + 24] = (0x2000).to_bytes(2, "little")
+    optional_magic = 0x20B if architecture == Architecture.X64 else 0x10B
+    payload[optional_header_offset : optional_header_offset + 2] = (
+        optional_magic.to_bytes(
+            2,
+            "little",
+        )
+    )
+    payload[section_table_offset : section_table_offset + 5] = b".text"
+    payload[section_table_offset + 8 : section_table_offset + 12] = len(
         raw_data
     ).to_bytes(4, "little")
-    payload[section_table_offset + 12:section_table_offset + 16] = (0x1000).to_bytes(
+    payload[section_table_offset + 12 : section_table_offset + 16] = (0x1000).to_bytes(
         4,
         "little",
     )
-    payload[section_table_offset + 16:section_table_offset + 20] = len(
+    payload[section_table_offset + 16 : section_table_offset + 20] = len(
         raw_data
     ).to_bytes(4, "little")
-    payload[section_table_offset + 20:section_table_offset + 24] = len(
+    payload[section_table_offset + 20 : section_table_offset + 24] = len(
         payload
     ).to_bytes(4, "little")
     return bytes(payload) + raw_data
@@ -242,14 +246,14 @@ class StaticSecurityScanner(ISecurityScanner):
                 dll_file,
                 security_status=status,
                 vt_detection_ratio=ratio,
-                vt_scan_date=datetime(2026, 1, 31, 12, 0, 0)
+                vt_scan_date=datetime(2026, 1, 31, 12, 0, 0),
             )
         else:
             return replace(
                 dll_file,
                 security_status=SecurityStatus.CLEAN,
                 vt_detection_ratio="0/72",
-                vt_scan_date=datetime(2026, 1, 31, 12, 0, 0)
+                vt_scan_date=datetime(2026, 1, 31, 12, 0, 0),
             )
 
     def scan_file(self, file_path: str) -> ScanResult:
@@ -350,7 +354,7 @@ def sample_dll_content() -> bytes:
     Returns:
         ZIP bytes containing a minimal valid DLL structure
     """
-    content = b'Test DLL content for integration testing.' * 50
+    content = b"Test DLL content for integration testing." * 50
 
     dll_bytes = _build_pe_payload(Architecture.X64, content)
     return _build_zip_payload("sample.dll", dll_bytes)
@@ -665,7 +669,9 @@ class TestDownloadFlowSecurityScanning:
         http_client.register_url(url, content)
 
         file_hash = hashlib.sha256(content).hexdigest()
-        security_scanner.register_scan_result(file_hash, SecurityStatus.SUSPICIOUS, "3/72")
+        security_scanner.register_scan_result(
+            file_hash, SecurityStatus.SUSPICIOUS, "3/72"
+        )
 
         request = DownloadDLLRequest(
             dll_name="suspicious.dll",
@@ -707,7 +713,9 @@ class TestDownloadFlowSecurityScanning:
         http_client.register_url(url, content)
 
         file_hash = hashlib.sha256(content).hexdigest()
-        security_scanner.register_scan_result(file_hash, SecurityStatus.MALICIOUS, "45/72")
+        security_scanner.register_scan_result(
+            file_hash, SecurityStatus.MALICIOUS, "45/72"
+        )
 
         request = DownloadDLLRequest(
             dll_name="malicious.dll",
@@ -766,7 +774,10 @@ class TestDownloadFlowSecurityScanning:
         response = use_case.execute(request)
 
         assert response.success is True
-        assert _require_dll_file(response.dll_file).security_status == SecurityStatus.NOT_SCANNED
+        assert (
+            _require_dll_file(response.dll_file).security_status
+            == SecurityStatus.NOT_SCANNED
+        )
         assert response.security_warning is None
 
     def test_download_with_scan_disabled(
@@ -869,7 +880,10 @@ class TestDownloadFlowErrorHandling:
         response = use_case.execute(request)
 
         assert response.success is True
-        assert _require_dll_file(response.dll_file).security_status == SecurityStatus.NOT_SCANNED
+        assert (
+            _require_dll_file(response.dll_file).security_status
+            == SecurityStatus.NOT_SCANNED
+        )
         assert response.security_warning is None
 
 
@@ -1109,9 +1123,10 @@ class TestDownloadFlowEndToEnd:
         assert response_x86.success is True
 
         # Verify different hashes
-        assert _require_dll_file(response_x64.dll_file).file_hash != _require_dll_file(
-            response_x86.dll_file
-        ).file_hash
+        assert (
+            _require_dll_file(response_x64.dll_file).file_hash
+            != _require_dll_file(response_x86.dll_file).file_hash
+        )
 
         # Verify both are in repository
         found_x64 = repository.find_by_name(dll_name, Architecture.X64)

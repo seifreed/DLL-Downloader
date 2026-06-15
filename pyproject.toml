@@ -41,7 +41,6 @@ exclude = ["downloads*", "tests*", "docs*", ".github*"]
 
 [project.optional-dependencies]
 dev = [
-    "black",
     "ruff",
     "mypy",
     "pytest>=9.0.3",
@@ -59,23 +58,6 @@ dev = [
 [build-system]
 requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
-
-# Black configuration
-[tool.black]
-line-length = 88
-target-version = ["py313", "py314"]
-include = '\.pyi?$'
-exclude = '''
-/(
-    \.git
-    | \.mypy_cache
-    | \.ruff_cache
-    | \.venv
-    | venv
-    | __pycache__
-    | downloads
-)/
-'''
 
 # Ruff configuration
 [tool.ruff]
@@ -105,7 +87,7 @@ select = [
     "SIM",  # flake8-simplify
 ]
 ignore = [
-    "E501",  # line too long (handled by black)
+    "E501",  # line too long (handled by ruff format)
 ]
 
 [tool.ruff.lint.isort]

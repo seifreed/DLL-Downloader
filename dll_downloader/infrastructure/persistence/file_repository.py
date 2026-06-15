@@ -88,6 +88,7 @@ class IndexData(TypedDict):
 
 class RepositoryError(RepositoryOperationError):
     """Exception raised for repository operation errors."""
+
     pass
 
 
@@ -130,7 +131,9 @@ class FileSystemDLLRepository(IDLLRepository):
         """Create base directory and architecture subdirectories if needed."""
         resolved = self._base_path.resolve()
         if resolved != self._base_path and self._base_path.is_symlink():
-            raise RepositoryError(f"Refusing to use symlinked base path: {self._base_path}")
+            raise RepositoryError(
+                f"Refusing to use symlinked base path: {self._base_path}"
+            )
         self._base_path.mkdir(parents=True, exist_ok=True)
         for arch in Architecture:
             if arch != Architecture.UNKNOWN:
@@ -165,11 +168,15 @@ class FileSystemDLLRepository(IDLLRepository):
     def _load_index(self) -> IndexData:  # noqa: C901
         """Load the DLL index from disk."""
         if self._is_symlink(self._index_path):
-            raise RepositoryError(f"Refusing to load DLL index through symlink: {self._index_path}")
+            raise RepositoryError(
+                f"Refusing to load DLL index through symlink: {self._index_path}"
+            )
         if not self._index_path.exists():
             return {"files": {}}
         if not self._index_path.is_file():
-            logger.warning("Refusing to load non-regular DLL index: %s", self._index_path)
+            logger.warning(
+                "Refusing to load non-regular DLL index: %s", self._index_path
+            )
             return {"files": {}}
 
         try:
@@ -231,7 +238,9 @@ class FileSystemDLLRepository(IDLLRepository):
 
     def _get_file_path(self, name: str, architecture: Architecture) -> Path:
         """Get the filesystem path for a DLL file."""
-        arch_value = architecture.value if architecture != Architecture.UNKNOWN else "x64"
+        arch_value = (
+            architecture.value if architecture != Architecture.UNKNOWN else "x64"
+        )
         return self._base_path / arch_value / name.lower()
 
     def _path_is_within_repository(self, file_path: Path) -> bool:
@@ -307,9 +316,7 @@ class FileSystemDLLRepository(IDLLRepository):
         except OSError:
             return False
 
-    def _validate_repository_write_path(
-        self, file_path: Path
-    ) -> Path:
+    def _validate_repository_write_path(self, file_path: Path) -> Path:
         """Reject writes through symlinks or paths escaping the repository root.
 
         Returns the resolved parent directory to close the TOCTOU window
@@ -339,7 +346,9 @@ class FileSystemDLLRepository(IDLLRepository):
         return resolved_parent
 
     @staticmethod
-    def _read_file_no_follow(file_path: Path, max_bytes: int = 1024 * 1024 * 1024) -> bytes:
+    def _read_file_no_follow(
+        file_path: Path, max_bytes: int = 1024 * 1024 * 1024
+    ) -> bytes:
         """Read file bytes with O_NOFOLLOW to prevent symlink traversal."""
         fd = os.open(str(file_path), _READ_FILE_FLAGS)
         try:
@@ -347,7 +356,9 @@ class FileSystemDLLRepository(IDLLRepository):
             if not stat.S_ISREG(st.st_mode):
                 raise RepositoryError(f"Refusing to read non-regular file: {file_path}")
             if st.st_size > max_bytes:
-                raise RepositoryError(f"File exceeds read limit ({st.st_size} bytes): {file_path}")
+                raise RepositoryError(
+                    f"File exceeds read limit ({st.st_size} bytes): {file_path}"
+                )
             os.set_blocking(fd, True)
             with os.fdopen(fd, "rb") as f:
                 fd = -1
@@ -454,7 +465,9 @@ class FileSystemDLLRepository(IDLLRepository):
             RepositoryError: If the save operation fails
         """
         try:
-            storage_architecture = self._storage_architecture_for_save(dll_file, content)
+            storage_architecture = self._storage_architecture_for_save(
+                dll_file, content
+            )
             dll_file = replace(dll_file, architecture=storage_architecture)
             # Determine file path
             file_path = self._get_file_path(dll_file.name, dll_file.architecture)
@@ -512,9 +525,7 @@ class FileSystemDLLRepository(IDLLRepository):
             logger.error("Failed to roll back payload write for %s: %s", file_path, exc)
 
     def find_by_name(
-        self,
-        name: str,
-        architecture: Architecture | None = None
+        self, name: str, architecture: Architecture | None = None
     ) -> DLLFile | None:
         """
         Find a DLL by its name and optionally architecture.
@@ -569,7 +580,9 @@ class FileSystemDLLRepository(IDLLRepository):
             )
             return None
         if not self._path_is_within_repository(file_path):
-            logger.warning("Skipping fallback DLL payload outside repository: %s", file_path)
+            logger.warning(
+                "Skipping fallback DLL payload outside repository: %s", file_path
+            )
             return None
         if not file_path.is_file():
             return None
@@ -770,9 +783,7 @@ class FileSystemDLLRepository(IDLLRepository):
         return _expected_optional_magic(architecture)
 
     @staticmethod
-    def _iter_architectures(
-        architecture: Architecture | None
-    ) -> list[Architecture]:
+    def _iter_architectures(architecture: Architecture | None) -> list[Architecture]:
         concrete_architectures: list[Architecture] = [
             arch for arch in Architecture if arch != Architecture.UNKNOWN
         ]
@@ -781,10 +792,7 @@ class FileSystemDLLRepository(IDLLRepository):
         if architecture == Architecture.UNKNOWN:
             return [
                 Architecture.X64,
-                *[
-                    arch for arch in concrete_architectures
-                    if arch != Architecture.X64
-                ],
+                *[arch for arch in concrete_architectures if arch != Architecture.X64],
             ]
         return [architecture]
 
@@ -914,7 +922,8 @@ class FileSystemDLLRepository(IDLLRepository):
                 return set()
             if st.st_size > self._INDEX_MAX_BYTES:
                 logger.warning(
-                    "Skipping raw index keys: file exceeds size limit (%d bytes)", st.st_size
+                    "Skipping raw index keys: file exceeds size limit (%d bytes)",
+                    st.st_size,
                 )
                 return set()
             os.set_blocking(fd, True)
@@ -1011,7 +1020,9 @@ class FileSystemDLLRepository(IDLLRepository):
             return existing
         return replace(dll_file, architecture=Architecture.X64)
 
-    def _architecture_from_repository_path(self, file_path: Path) -> Architecture | None:
+    def _architecture_from_repository_path(
+        self, file_path: Path
+    ) -> Architecture | None:
         """Infer architecture from a path located inside a repository arch dir."""
         try:
             relative_parent = file_path.parent.resolve(strict=True).relative_to(
@@ -1106,14 +1117,18 @@ class FileSystemDLLRepository(IDLLRepository):
             index = self._load_index()
             key = self._get_file_key(dll_file.name, dll_file.architecture)
             if key not in index["files"]:
-                raise RepositoryOperationError(f"DLL not found in index: {dll_file.name}")
+                raise RepositoryOperationError(
+                    f"DLL not found in index: {dll_file.name}"
+                )
             existing_dll = self._try_deserialize_dll(index["files"][key])
             if not existing_dll or not self._indexed_payload_is_valid(
                 existing_dll,
                 expected_name=dll_file.name,
                 expected_architecture=dll_file.architecture,
             ):
-                raise RepositoryOperationError(f"DLL payload not found: {dll_file.name}")
+                raise RepositoryOperationError(
+                    f"DLL payload not found: {dll_file.name}"
+                )
             updated_dll = replace(
                 dll_file,
                 file_hash=existing_dll.file_hash,
@@ -1149,8 +1164,12 @@ class FileSystemDLLRepository(IDLLRepository):
             "file_size": dll_file.file_size,
             "security_status": dll_file.security_status.value,
             "vt_detection_ratio": dll_file.vt_detection_ratio,
-            "vt_scan_date": dll_file.vt_scan_date.isoformat() if dll_file.vt_scan_date else None,
-            "created_at": dll_file.created_at.isoformat() if dll_file.created_at else None,
+            "vt_scan_date": dll_file.vt_scan_date.isoformat()
+            if dll_file.vt_scan_date
+            else None,
+            "created_at": dll_file.created_at.isoformat()
+            if dll_file.created_at
+            else None,
         }
 
     def _deserialize_dll(self, data: IndexEntry) -> DLLFile:
@@ -1167,7 +1186,9 @@ class FileSystemDLLRepository(IDLLRepository):
 
         if isinstance(file_path, str) and file_path:
             resolved_path = Path(file_path)
-            if self._is_symlink(resolved_path) or not self._path_is_within_repository(resolved_path):
+            if self._is_symlink(resolved_path) or not self._path_is_within_repository(
+                resolved_path
+            ):
                 logger.warning(
                     "Nullifying DLL index entry with unsafe file_path: %s", file_path
                 )
@@ -1276,18 +1297,24 @@ class FileSystemDLLRepository(IDLLRepository):
     ) -> Path | None:
         """Return the indexed payload path when it is owned by this repository."""
         if not dll_file.file_path:
-            logger.warning("Skipping DLL index entry without payload path: %s", dll_file.name)
+            logger.warning(
+                "Skipping DLL index entry without payload path: %s", dll_file.name
+            )
             return None
 
         file_path = Path(dll_file.file_path)
         if self._is_symlink(file_path):
-            logger.warning("Skipping DLL index entry with symlink payload: %s", file_path)
+            logger.warning(
+                "Skipping DLL index entry with symlink payload: %s", file_path
+            )
             return None
         if not self._path_is_within_repository(file_path):
             logger.warning("Skipping DLL index entry outside repository: %s", file_path)
             return None
         if not file_path.is_file():
-            logger.warning("Skipping DLL index entry with missing payload: %s", file_path)
+            logger.warning(
+                "Skipping DLL index entry with missing payload: %s", file_path
+            )
             return None
         canonical_name = expected_name or dll_file.name
         canonical_architecture = expected_architecture or dll_file.architecture
@@ -1295,7 +1322,9 @@ class FileSystemDLLRepository(IDLLRepository):
             file_path,
             self._get_file_path(canonical_name, canonical_architecture),
         ):
-            logger.warning("Skipping DLL index entry with mismatched path: %s", file_path)
+            logger.warning(
+                "Skipping DLL index entry with mismatched path: %s", file_path
+            )
             return None
         return file_path
 
@@ -1319,28 +1348,33 @@ class FileSystemDLLRepository(IDLLRepository):
             logger.warning("Skipping DLL index entry without valid hash: %s", file_path)
             return False
         if indexed_hash.lower() != actual_hash:
-            logger.warning("Skipping DLL index entry with mismatched hash: %s", file_path)
+            logger.warning(
+                "Skipping DLL index entry with mismatched hash: %s", file_path
+            )
             return False
         if expected_hash is not None and expected_hash != actual_hash:
-            logger.warning("Skipping DLL index entry with mismatched hash: %s", file_path)
+            logger.warning(
+                "Skipping DLL index entry with mismatched hash: %s", file_path
+            )
             return False
         if dll_file.file_size is not None and dll_file.file_size != len(content):
-            logger.warning("Skipping DLL index entry with mismatched size: %s", file_path)
+            logger.warning(
+                "Skipping DLL index entry with mismatched size: %s", file_path
+            )
             return False
         if not cls._content_matches_dll_payload(
             dll_file.name,
             dll_file.architecture,
             content,
         ):
-            logger.warning("Skipping DLL index entry with non-DLL payload: %s", file_path)
+            logger.warning(
+                "Skipping DLL index entry with non-DLL payload: %s", file_path
+            )
             return False
         return True
 
     def _create_dll_from_file(
-        self,
-        file_path: Path,
-        name: str,
-        architecture: Architecture
+        self, file_path: Path, name: str, architecture: Architecture
     ) -> DLLFile:
         """Create a DLLFile entity from an existing file on disk."""
         try:
@@ -1380,9 +1414,8 @@ class FileSystemDLLRepository(IDLLRepository):
         name = raw_entry.get("name")
         architecture = raw_entry.get("architecture", "unknown")
         valid_arch_values = {a.value for a in Architecture}
-        if (
-            not isinstance(architecture, str)
-            or (architecture not in valid_arch_values and architecture != "unknown")
+        if not isinstance(architecture, str) or (
+            architecture not in valid_arch_values and architecture != "unknown"
         ):
             raise ValueError(
                 f"Index entry 'architecture' must be one of {sorted(valid_arch_values)}"
@@ -1398,7 +1431,9 @@ class FileSystemDLLRepository(IDLLRepository):
         if not isinstance(security_status, str):
             raise ValueError("Index entry 'security_status' must be a string")
         if file_hash is not None and not _is_sha256_hash(file_hash):
-            raise ValueError("Index entry 'file_hash' must be a SHA256 hex string or null")
+            raise ValueError(
+                "Index entry 'file_hash' must be a SHA256 hex string or null"
+            )
         if file_size is not None and (
             not isinstance(file_size, int) or isinstance(file_size, bool)
         ):

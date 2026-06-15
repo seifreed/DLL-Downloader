@@ -63,4 +63,6 @@ class DownloadBatchConsolePresenter:
         return f"\nSummary: {success_count} succeeded, {failure_count} failed"
 
     def boundary_error(self, error_message: str, failure_count: int = 1) -> str:
-        return f"[ERROR] Batch download failed ({failure_count} failed): {error_message}"
+        return (
+            f"[ERROR] Batch download failed ({failure_count} failed): {error_message}"
+        )

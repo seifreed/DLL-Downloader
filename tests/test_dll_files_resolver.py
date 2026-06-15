@@ -973,9 +973,7 @@ def test_extract_direct_link_skips_official_zip_with_userinfo() -> None:
         http_client=StubTextHTTPClient({}),
         base_url="https://es.dll-files.com",
     )
-    html = (
-        '<a href="https://user:pass@download.zip.dll-files.com/aaa/foo.zip">zip</a>'
-    )
+    html = '<a href="https://user:pass@download.zip.dll-files.com/aaa/foo.zip">zip</a>'
     assert resolver._extract_direct_link(html) is None
 
 

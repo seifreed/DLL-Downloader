@@ -56,7 +56,9 @@ def emit_cli_input_error(
     service.emit(
         CLICommandResult(
             stdout_lines=[],
-            session=CLISessionResult(success_count=0, failure_count=failure_count, exit_code=1),
+            session=CLISessionResult(
+                success_count=0, failure_count=failure_count, exit_code=1
+            ),
             boundary_failure=CLIBoundaryFailure(
                 message=message,
                 is_structured=service.is_structured,

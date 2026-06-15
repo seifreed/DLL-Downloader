@@ -1925,6 +1925,6 @@ def test_scan_file_accepts_exact_size_limit(tmp_path: Path) -> None:
 
     st = os.stat(exact_file)
     assert st.st_size == _VT_UPLOAD_MAX_BYTES
-    assert not (
-        st.st_size > _VT_UPLOAD_MAX_BYTES
-    ), "exact limit should not exceed upload max"
+    assert not (st.st_size > _VT_UPLOAD_MAX_BYTES), (
+        "exact limit should not exceed upload max"
+    )

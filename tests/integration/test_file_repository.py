@@ -47,28 +47,32 @@ def _build_pe_payload(architecture: Architecture = Architecture.X64) -> bytes:
     payload = bytearray(section_table_offset + 40)
     payload[0:2] = b"MZ"
     payload[0x3C:0x40] = pe_offset.to_bytes(4, "little")
-    payload[pe_offset:pe_offset + 4] = b"PE\x00\x00"
-    payload[pe_offset + 4:pe_offset + 6] = machine.to_bytes(2, "little")
-    payload[pe_offset + 6:pe_offset + 8] = (1).to_bytes(2, "little")
-    payload[pe_offset + 20:pe_offset + 22] = optional_header_size.to_bytes(2, "little")
-    payload[pe_offset + 22:pe_offset + 24] = (0x2000).to_bytes(2, "little")
-    optional_magic = 0x20B if architecture == Architecture.X64 else 0x10B
-    payload[optional_header_offset:optional_header_offset + 2] = optional_magic.to_bytes(
-        2,
-        "little",
+    payload[pe_offset : pe_offset + 4] = b"PE\x00\x00"
+    payload[pe_offset + 4 : pe_offset + 6] = machine.to_bytes(2, "little")
+    payload[pe_offset + 6 : pe_offset + 8] = (1).to_bytes(2, "little")
+    payload[pe_offset + 20 : pe_offset + 22] = optional_header_size.to_bytes(
+        2, "little"
     )
-    payload[section_table_offset:section_table_offset + 5] = b".text"
-    payload[section_table_offset + 8:section_table_offset + 12] = len(
+    payload[pe_offset + 22 : pe_offset + 24] = (0x2000).to_bytes(2, "little")
+    optional_magic = 0x20B if architecture == Architecture.X64 else 0x10B
+    payload[optional_header_offset : optional_header_offset + 2] = (
+        optional_magic.to_bytes(
+            2,
+            "little",
+        )
+    )
+    payload[section_table_offset : section_table_offset + 5] = b".text"
+    payload[section_table_offset + 8 : section_table_offset + 12] = len(
         raw_data
     ).to_bytes(4, "little")
-    payload[section_table_offset + 12:section_table_offset + 16] = (0x1000).to_bytes(
+    payload[section_table_offset + 12 : section_table_offset + 16] = (0x1000).to_bytes(
         4,
         "little",
     )
-    payload[section_table_offset + 16:section_table_offset + 20] = len(
+    payload[section_table_offset + 16 : section_table_offset + 20] = len(
         raw_data
     ).to_bytes(4, "little")
-    payload[section_table_offset + 20:section_table_offset + 24] = len(
+    payload[section_table_offset + 20 : section_table_offset + 24] = len(
         payload
     ).to_bytes(4, "little")
     return bytes(payload) + raw_data
@@ -80,11 +84,11 @@ def _build_pe_header_stub(architecture: Architecture = Architecture.X64) -> byte
     payload = bytearray(pe_offset + 24)
     payload[0:2] = b"MZ"
     payload[0x3C:0x40] = pe_offset.to_bytes(4, "little")
-    payload[pe_offset:pe_offset + 4] = b"PE\x00\x00"
-    payload[pe_offset + 4:pe_offset + 6] = machine.to_bytes(2, "little")
-    payload[pe_offset + 6:pe_offset + 8] = (0).to_bytes(2, "little")
-    payload[pe_offset + 20:pe_offset + 22] = (0).to_bytes(2, "little")
-    payload[pe_offset + 22:pe_offset + 24] = (0x2000).to_bytes(2, "little")
+    payload[pe_offset : pe_offset + 4] = b"PE\x00\x00"
+    payload[pe_offset + 4 : pe_offset + 6] = machine.to_bytes(2, "little")
+    payload[pe_offset + 6 : pe_offset + 8] = (0).to_bytes(2, "little")
+    payload[pe_offset + 20 : pe_offset + 22] = (0).to_bytes(2, "little")
+    payload[pe_offset + 22 : pe_offset + 24] = (0x2000).to_bytes(2, "little")
     return bytes(payload)
 
 
@@ -99,15 +103,19 @@ def _build_pe_payload_with_blank_section(
     payload = bytearray(section_table_offset + 40)
     payload[0:2] = b"MZ"
     payload[0x3C:0x40] = pe_offset.to_bytes(4, "little")
-    payload[pe_offset:pe_offset + 4] = b"PE\x00\x00"
-    payload[pe_offset + 4:pe_offset + 6] = machine.to_bytes(2, "little")
-    payload[pe_offset + 6:pe_offset + 8] = (1).to_bytes(2, "little")
-    payload[pe_offset + 20:pe_offset + 22] = optional_header_size.to_bytes(2, "little")
-    payload[pe_offset + 22:pe_offset + 24] = (0x2000).to_bytes(2, "little")
+    payload[pe_offset : pe_offset + 4] = b"PE\x00\x00"
+    payload[pe_offset + 4 : pe_offset + 6] = machine.to_bytes(2, "little")
+    payload[pe_offset + 6 : pe_offset + 8] = (1).to_bytes(2, "little")
+    payload[pe_offset + 20 : pe_offset + 22] = optional_header_size.to_bytes(
+        2, "little"
+    )
+    payload[pe_offset + 22 : pe_offset + 24] = (0x2000).to_bytes(2, "little")
     optional_magic = 0x20B if architecture == Architecture.X64 else 0x10B
-    payload[optional_header_offset:optional_header_offset + 2] = optional_magic.to_bytes(
-        2,
-        "little",
+    payload[optional_header_offset : optional_header_offset + 2] = (
+        optional_magic.to_bytes(
+            2,
+            "little",
+        )
     )
     return bytes(payload)
 
@@ -115,7 +123,7 @@ def _build_pe_payload_with_blank_section(
 def _build_pe_payload_without_dll_flag() -> bytes:
     payload = bytearray(_build_pe_payload(Architecture.X64))
     pe_offset = int.from_bytes(payload[0x3C:0x40], "little")
-    payload[pe_offset + 22:pe_offset + 24] = (0).to_bytes(2, "little")
+    payload[pe_offset + 22 : pe_offset + 24] = (0).to_bytes(2, "little")
     return bytes(payload)
 
 
@@ -141,7 +149,7 @@ def sample_dll_content() -> bytes:
     Returns:
         Bytes representing a minimal valid DLL structure
     """
-    content_section = b'Realistic DLL content for integration testing.' * 50
+    content_section = b"Realistic DLL content for integration testing." * 50
     return _build_pe_payload(Architecture.X64) + content_section
 
 
@@ -430,9 +438,13 @@ class TestFileSystemDLLRepositorySave:
         with pytest.raises(ValueError):
             repository._normalize_index_entry({"name": "a.dll", "architecture": 1})
         with pytest.raises(ValueError):
-            repository._normalize_index_entry({"name": "a.dll", "architecture": "x64", "security_status": 1})
+            repository._normalize_index_entry(
+                {"name": "a.dll", "architecture": "x64", "security_status": 1}
+            )
         with pytest.raises(ValueError):
-            repository._normalize_index_entry({"name": "a.dll", "architecture": "x64", "file_size": "1"})
+            repository._normalize_index_entry(
+                {"name": "a.dll", "architecture": "x64", "file_size": "1"}
+            )
 
     def test_save_x86_architecture(
         self,
@@ -492,8 +504,8 @@ class TestFileSystemDLLRepositorySave:
         local_header = payload.index(b"PK\x03\x04")
         central_directory_header = payload.index(b"PK\x01\x02")
         for flag_offset in (local_header + 6, central_directory_header + 8):
-            flags = int.from_bytes(payload[flag_offset:flag_offset + 2], "little")
-            payload[flag_offset:flag_offset + 2] = (flags | 0x01).to_bytes(
+            flags = int.from_bytes(payload[flag_offset : flag_offset + 2], "little")
+            payload[flag_offset : flag_offset + 2] = (flags | 0x01).to_bytes(
                 2,
                 "little",
             )
@@ -879,8 +891,12 @@ class TestFileSystemDLLRepositoryFindByName:
             - Searches in enum order (x86, x64, ...)
             - Returns first matching DLL
         """
-        dll_x64 = DLLFile(name="common.dll", architecture=Architecture.X64, version="1.0")
-        dll_x86 = DLLFile(name="common.dll", architecture=Architecture.X86, version="2.0")
+        dll_x64 = DLLFile(
+            name="common.dll", architecture=Architecture.X64, version="1.0"
+        )
+        dll_x86 = DLLFile(
+            name="common.dll", architecture=Architecture.X86, version="2.0"
+        )
 
         repository.save(dll_x64, sample_dll_content)
         repository.save(dll_x86, _build_pe_payload(Architecture.X86))
@@ -960,7 +976,9 @@ def test_save_index_wraps_atomic_write_os_error(tmp_download_dir: Path) -> None:
         repository._save_index({"files": {}})
 
 
-def test_atomic_write_cleans_temp_file_when_replace_fails(tmp_download_dir: Path) -> None:
+def test_atomic_write_cleans_temp_file_when_replace_fails(
+    tmp_download_dir: Path,
+) -> None:
     repository = DirectoryRaceRepository(tmp_download_dir)
     target_path = tmp_download_dir / "x64" / "race.dll"
 
@@ -1033,7 +1051,11 @@ def test_delete_with_missing_file_path_returns_true(tmp_download_dir: Path) -> N
     Verify delete succeeds when file_path does not exist on disk.
     """
     repository = FileSystemDLLRepository(tmp_download_dir)
-    dll = DLLFile(name="missing.dll", architecture=Architecture.X64, file_path=str(tmp_download_dir / "x64" / "missing.dll"))
+    dll = DLLFile(
+        name="missing.dll",
+        architecture=Architecture.X64,
+        file_path=str(tmp_download_dir / "x64" / "missing.dll"),
+    )
 
     assert repository.delete(dll) is True
 
@@ -1112,7 +1134,9 @@ def test_path_locations_match_rejects_missing_parent(tmp_download_dir: Path) -> 
         )
 
 
-def test_delete_rejects_file_path_outside_repository(tmp_download_dir: Path, tmp_path: Path) -> None:
+def test_delete_rejects_file_path_outside_repository(
+    tmp_download_dir: Path, tmp_path: Path
+) -> None:
     repository = FileSystemDLLRepository(tmp_download_dir)
     outside_file = tmp_path / "outside.dll"
     outside_file.write_bytes(b"external content")
@@ -1215,7 +1239,9 @@ def test_delete_refuses_internal_symlink_pointing_outside_repository(
     assert outside_file.read_bytes() == b"external content"
 
 
-def test_delete_refuses_broken_symlink_inside_repository(tmp_download_dir: Path) -> None:
+def test_delete_refuses_broken_symlink_inside_repository(
+    tmp_download_dir: Path,
+) -> None:
     repository = FileSystemDLLRepository(tmp_download_dir)
     symlink_path = tmp_download_dir / "x64" / "broken.dll"
     symlink_path.symlink_to(tmp_download_dir / "missing-target.dll")
@@ -1602,11 +1628,14 @@ def test_detect_zip_payload_architecture_skips_invalid_members() -> None:
         archive.writestr("nested/target.dll", b"not a PE DLL")
         archive.writestr("x86/target.dll", _build_pe_payload(Architecture.X86))
 
-    assert FileSystemDLLRepository._detect_zip_payload_architecture(
-        "target.dll",
-        archive_buffer.getvalue(),
-        expected_architecture=Architecture.X64,
-    ) is None
+    assert (
+        FileSystemDLLRepository._detect_zip_payload_architecture(
+            "target.dll",
+            archive_buffer.getvalue(),
+            expected_architecture=Architecture.X64,
+        )
+        is None
+    )
 
 
 def test_detect_pe_dll_architecture_rejects_invalid_header_variants() -> None:
@@ -1614,19 +1643,28 @@ def test_detect_pe_dll_architecture_rejects_invalid_header_variants() -> None:
     unsupported_machine = bytearray(pe_offset + 24)
     unsupported_machine[0:2] = b"MZ"
     unsupported_machine[0x3C:0x40] = pe_offset.to_bytes(4, "little")
-    unsupported_machine[pe_offset:pe_offset + 4] = b"PE\x00\x00"
-    unsupported_machine[pe_offset + 4:pe_offset + 6] = (0x1234).to_bytes(2, "little")
+    unsupported_machine[pe_offset : pe_offset + 4] = b"PE\x00\x00"
+    unsupported_machine[pe_offset + 4 : pe_offset + 6] = (0x1234).to_bytes(2, "little")
 
-    assert FileSystemDLLRepository._detect_pe_dll_architecture(b"MZ" + b"\0" * 62) is None
-    assert FileSystemDLLRepository._detect_pe_dll_architecture(
-        bytes(unsupported_machine)
-    ) is None
-    assert FileSystemDLLRepository._detect_pe_dll_architecture(
-        _build_pe_header_stub(Architecture.X64)
-    ) is None
-    assert FileSystemDLLRepository._detect_pe_dll_architecture(
-        _build_pe_payload_without_dll_flag()
-    ) is None
+    assert (
+        FileSystemDLLRepository._detect_pe_dll_architecture(b"MZ" + b"\0" * 62) is None
+    )
+    assert (
+        FileSystemDLLRepository._detect_pe_dll_architecture(bytes(unsupported_machine))
+        is None
+    )
+    assert (
+        FileSystemDLLRepository._detect_pe_dll_architecture(
+            _build_pe_header_stub(Architecture.X64)
+        )
+        is None
+    )
+    assert (
+        FileSystemDLLRepository._detect_pe_dll_architecture(
+            _build_pe_payload_without_dll_flag()
+        )
+        is None
+    )
 
 
 def test_pe_image_layout_rejects_invalid_boundaries() -> None:
@@ -1638,11 +1676,7 @@ def test_pe_image_layout_rejects_invalid_boundaries() -> None:
         total_size: int | None = None,
     ) -> bytes:
         section_table_offset = 20 + optional_header_size
-        payload_size = (
-            section_table_offset + 40
-            if total_size is None
-            else total_size
-        )
+        payload_size = section_table_offset + 40 if total_size is None else total_size
         payload = bytearray(max(payload_size, 22))
         payload[2:4] = section_count.to_bytes(2, "little")
         payload[16:18] = optional_header_size.to_bytes(2, "little")
@@ -1676,7 +1710,9 @@ def test_pe_image_layout_rejects_invalid_boundaries() -> None:
     )
 
 
-def test_content_matches_dll_payload_rejects_invalid_and_accepts_unknown_architecture() -> None:
+def test_content_matches_dll_payload_rejects_invalid_and_accepts_unknown_architecture() -> (
+    None
+):
     assert not FileSystemDLLRepository._content_matches_dll_payload(
         "sample.dll",
         Architecture.X64,
@@ -2284,7 +2320,9 @@ class TestFileSystemDLLRepositoryIndexPersistence:
         """
         # Create first repository instance and save files
         repo1 = FileSystemDLLRepository(tmp_path)
-        dll = DLLFile(name="persistent.dll", architecture=Architecture.X64, version="1.0")
+        dll = DLLFile(
+            name="persistent.dll", architecture=Architecture.X64, version="1.0"
+        )
         repo1.save(dll, sample_dll_content)
 
         # Create second repository instance
@@ -2362,7 +2400,9 @@ class TestFileSystemDLLRepositoryIndexPersistence:
         sample_dll_content: bytes,
     ) -> None:
         repo = FileSystemDLLRepository(tmp_path)
-        repo.save(DLLFile(name="valid.dll", architecture=Architecture.X64), sample_dll_content)
+        repo.save(
+            DLLFile(name="valid.dll", architecture=Architecture.X64), sample_dll_content
+        )
 
         index_path = tmp_path / ".dll_index.json"
         index_data = json.loads(index_path.read_text())
@@ -2408,7 +2448,9 @@ class TestFileSystemDLLRepositoryIndexPersistence:
         sample_dll_content: bytes,
     ) -> None:
         repo = FileSystemDLLRepository(tmp_path)
-        saved = repo.save(DLLFile(name="valid.dll", architecture=Architecture.X64), sample_dll_content)
+        saved = repo.save(
+            DLLFile(name="valid.dll", architecture=Architecture.X64), sample_dll_content
+        )
         assert saved.file_hash is not None
 
         index_path = tmp_path / ".dll_index.json"
@@ -2440,7 +2482,9 @@ class TestFileSystemDLLRepositoryIndexPersistence:
         sample_dll_content: bytes,
     ) -> None:
         repo = FileSystemDLLRepository(tmp_path)
-        saved = repo.save(DLLFile(name="bad.dll", architecture=Architecture.X64), sample_dll_content)
+        saved = repo.save(
+            DLLFile(name="bad.dll", architecture=Architecture.X64), sample_dll_content
+        )
         assert saved.file_path is not None
         Path(saved.file_path).unlink()
 
@@ -2469,8 +2513,12 @@ class TestFileSystemDLLRepositoryRealWorldScenarios:
             - Each can be retrieved by name + architecture
             - Index contains separate entries
         """
-        dll_x64 = DLLFile(name="multiarch.dll", architecture=Architecture.X64, version="1.0")
-        dll_x86 = DLLFile(name="multiarch.dll", architecture=Architecture.X86, version="2.0")
+        dll_x64 = DLLFile(
+            name="multiarch.dll", architecture=Architecture.X64, version="1.0"
+        )
+        dll_x86 = DLLFile(
+            name="multiarch.dll", architecture=Architecture.X86, version="2.0"
+        )
 
         content_x64 = _build_pe_payload(Architecture.X64) + b"x64 content"
         content_x86 = _build_pe_payload(Architecture.X86) + b"x86 content"
@@ -2502,7 +2550,9 @@ class TestFileSystemDLLRepositoryRealWorldScenarios:
             - Delete removes file and index entry
         """
         # Create
-        dll = DLLFile(name="lifecycle.dll", architecture=Architecture.X64, version="1.0")
+        dll = DLLFile(
+            name="lifecycle.dll", architecture=Architecture.X64, version="1.0"
+        )
         saved = repository.save(dll, sample_dll_content)
         assert saved.file_path is not None
 

@@ -57,12 +57,12 @@ def sample_dll_file(tmp_download_dir: Path) -> Path:
     # Create a minimal PE header-like structure
     # MZ header (DOS stub) followed by test content
     content = (
-        b'MZ\x90\x00'  # DOS signature
-        b'\x03\x00\x00\x00\x04\x00\x00\x00\xff\xff\x00\x00'
-        b'\xb8\x00\x00\x00\x00\x00\x00\x00\x40\x00\x00\x00'
-        + b'\x00' * 32  # Padding
-        + b'PE\x00\x00'  # PE signature
-        + b'Test DLL content for unit testing purposes.' * 10
+        b"MZ\x90\x00"  # DOS signature
+        b"\x03\x00\x00\x00\x04\x00\x00\x00\xff\xff\x00\x00"
+        b"\xb8\x00\x00\x00\x00\x00\x00\x00\x40\x00\x00\x00"
+        + b"\x00" * 32  # Padding
+        + b"PE\x00\x00"  # PE signature
+        + b"Test DLL content for unit testing purposes." * 10
     )
 
     dll_path.write_bytes(content)
@@ -83,9 +83,9 @@ def sample_zip_with_dll(tmp_download_dir: Path) -> Path:
     import zipfile
 
     zip_path = tmp_download_dir / "test_archive.zip"
-    dll_content = b'MZ\x90\x00' + b'Test DLL inside ZIP' * 20
+    dll_content = b"MZ\x90\x00" + b"Test DLL inside ZIP" * 20
 
-    with zipfile.ZipFile(zip_path, 'w') as zf:
+    with zipfile.ZipFile(zip_path, "w") as zf:
         zf.writestr("test.dll", dll_content)
 
     return zip_path
@@ -124,12 +124,9 @@ def mock_config() -> TestConfig:
         "virustotal": {
             "api_key": "test_api_key_1234567890abcdef",
             "enabled": False,
-            "timeout": 30
+            "timeout": 30,
         },
-        "download": {
-            "extract_zip": True,
-            "verify_hash": True
-        }
+        "download": {"extract_zip": True, "verify_hash": True},
     }
 
 
@@ -171,7 +168,7 @@ def sample_html_file(tmp_download_dir: Path) -> Path:
         Path to the created HTML file
     """
     html_path = tmp_download_dir / "error_page.html"
-    content = b'<!DOCTYPE html><html><head><title>Error</title></head><body>Not Found</body></html>'
+    content = b"<!DOCTYPE html><html><head><title>Error</title></head><body>Not Found</body></html>"
     html_path.write_bytes(content)
     return html_path
 
@@ -188,18 +185,18 @@ def reset_debug_mode() -> Generator[None]:
         None
     """
     # Save original state
-    original_debug = os.environ.get('DEBUG_MODE')
+    original_debug = os.environ.get("DEBUG_MODE")
 
     # Reset to known state
-    os.environ['DEBUG_MODE'] = '0'
+    os.environ["DEBUG_MODE"] = "0"
 
     yield
 
     # Restore original state
     if original_debug is not None:
-        os.environ['DEBUG_MODE'] = original_debug
-    elif 'DEBUG_MODE' in os.environ:
-        del os.environ['DEBUG_MODE']
+        os.environ["DEBUG_MODE"] = original_debug
+    elif "DEBUG_MODE" in os.environ:
+        del os.environ["DEBUG_MODE"]
 
 
 @pytest.fixture
@@ -216,7 +213,7 @@ def empty_zip_file(tmp_download_dir: Path) -> Path:
     import zipfile
 
     zip_path = tmp_download_dir / "empty.zip"
-    with zipfile.ZipFile(zip_path, 'w'):
+    with zipfile.ZipFile(zip_path, "w"):
         pass  # Create empty ZIP
 
     return zip_path
@@ -307,10 +304,10 @@ def vt_mock_server() -> Generator[int]:
                             "suspicious": 0,
                             "undetected": 70,
                             "harmless": 2,
-                            "timeout": 0
+                            "timeout": 0,
                         },
                         "last_analysis_results": {},
-                        "last_analysis_date": 1706745600
+                        "last_analysis_date": 1706745600,
                     }
                 }
             }

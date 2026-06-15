@@ -60,9 +60,7 @@ def _first_existing_ref(candidates: list[str]) -> str | None:
 def _comparison_base() -> str | None:
     base_ref = os.environ.get("GITHUB_BASE_REF")
     candidate_refs = (
-        [f"origin/{base_ref}", base_ref]
-        if base_ref
-        else ["origin/main", "main"]
+        [f"origin/{base_ref}", base_ref] if base_ref else ["origin/main", "main"]
     )
     merge_target = _first_existing_ref(candidate_refs)
     if merge_target is not None:
@@ -110,16 +108,16 @@ def main() -> int:
         return 0
 
     touched_docs = [
-        path
-        for path in changed_files
-        if path.startswith(REQUIRED_DOC_PREFIXES)
+        path for path in changed_files if path.startswith(REQUIRED_DOC_PREFIXES)
     ]
     if touched_docs:
         print("Structural doc sync passed.")
         return 0
 
     print("Structural doc sync failed:")
-    print("- Structural code changed without ADR/architecture/public API documentation updates")
+    print(
+        "- Structural code changed without ADR/architecture/public API documentation updates"
+    )
     print(f"- Comparison base: {base}")
     for path in structural_changes:
         print(f"- {path}")

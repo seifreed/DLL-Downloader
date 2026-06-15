@@ -362,9 +362,7 @@ class VirusTotalScanner(ISecurityScanner):
         """Return True for explicit local-test/private endpoint overrides."""
         return hostname.lower() in VirusTotalScanner._VT_PRIVATE_IP_ALLOWED_DOMAINS
 
-    def _safe_get(
-        self, url: str, **kwargs: object
-    ) -> HTTPResponseProtocol:  # noqa: C901
+    def _safe_get(self, url: str, **kwargs: object) -> HTTPResponseProtocol:  # noqa: C901
         """Issue a GET request with SSRF and redirect validation."""
         kwargs["allow_redirects"] = False
         kwargs.setdefault("timeout", self._timeout)
@@ -387,9 +385,7 @@ class VirusTotalScanner(ISecurityScanner):
             current_url = self._resolve_redirect_url(current_url, location)
         raise VirusTotalError(f"Too many redirects (> {self._MAX_REDIRECT_HOPS})")
 
-    def _safe_post(
-        self, url: str, **kwargs: object
-    ) -> HTTPResponseProtocol:  # noqa: C901
+    def _safe_post(self, url: str, **kwargs: object) -> HTTPResponseProtocol:  # noqa: C901
         """Issue a POST request with SSRF validation (no redirects for POST)."""
         kwargs["allow_redirects"] = False
         kwargs.setdefault("timeout", self._timeout)

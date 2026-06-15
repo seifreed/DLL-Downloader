@@ -42,9 +42,7 @@ CLI_RUNNER_FORBIDDEN_IMPORTS = (
     ".infrastructure",
 )
 INTERFACE_INFRASTRUCTURE_ALLOWLIST: dict[str, tuple[str, ...]] = {
-    "interfaces/cli_runner.py": (
-        "infrastructure.config.settings",
-    ),
+    "interfaces/cli_runner.py": ("infrastructure.config.settings",),
 }
 EXPECTED_PUBLIC_EXPORTS: dict[str, tuple[str, ...]] = {
     "dll_downloader/__init__.py": ("__version__",),
@@ -245,8 +243,7 @@ def _module_exports(file_path: Path) -> list[str]:
                     return [
                         elt.value
                         for elt in node.value.elts
-                        if isinstance(elt, ast.Constant)
-                        and isinstance(elt.value, str)
+                        if isinstance(elt, ast.Constant) and isinstance(elt.value, str)
                     ]
 
     return []
@@ -495,9 +492,7 @@ def test_docs_examples_use_only_supported_public_modules() -> None:
     violations: list[str] = []
     for doc_path in sorted((PROJECT_ROOT / "docs").rglob("*.md")):
         for module_name in _unsupported_public_imports(doc_path.read_text()):
-            violations.append(
-                f"{doc_path.relative_to(PROJECT_ROOT)} -> {module_name}"
-            )
+            violations.append(f"{doc_path.relative_to(PROJECT_ROOT)} -> {module_name}")
     assert violations == []
 
 
@@ -535,9 +530,8 @@ def test_critical_modules_stay_within_size_limits() -> None:
     violations = [
         f"{relative_path}: {line_count} > {limit}"
         for relative_path, limit in MODULE_LINE_LIMITS.items()
-        if (
-            line_count := len((PROJECT_ROOT / relative_path).read_text().splitlines())
-        ) > limit
+        if (line_count := len((PROJECT_ROOT / relative_path).read_text().splitlines()))
+        > limit
     ]
     assert violations == []
 

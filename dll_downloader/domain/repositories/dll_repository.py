@@ -37,9 +37,7 @@ class IDLLRepository(ABC):
 
     @abstractmethod
     def find_by_name(
-        self,
-        name: str,
-        architecture: Architecture | None = None
+        self, name: str, architecture: Architecture | None = None
     ) -> DLLFile | None:
         """
         Find a DLL by its name and optionally architecture.

@@ -54,14 +54,18 @@ class _JSONSettingsSource:
             fd = os.open(str(path), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
         except OSError as exc:
             if exc.errno == errno.ELOOP:
-                raise OSError(f"Refusing to read configuration from symlink: {config_path}") from exc
+                raise OSError(
+                    f"Refusing to read configuration from symlink: {config_path}"
+                ) from exc
             raise OSError(f"Cannot open configuration file: {config_path}") from exc
         try:
             st = os.fstat(fd)
             if not stat.S_ISREG(st.st_mode):
                 os.close(fd)
                 fd = -1
-                raise OSError(f"Configuration path is not a regular file: {config_path}")
+                raise OSError(
+                    f"Configuration path is not a regular file: {config_path}"
+                )
             # Clear O_NONBLOCK for regular files so read() works normally.
             os.set_blocking(fd, True)
             with os.fdopen(fd, encoding="utf-8") as file_handle:
@@ -242,7 +246,9 @@ class SettingsLoader:
             assigned = False
             if value is None or isinstance(value, (str, int, float, bool, tuple)):
                 assigned = cls._assign_mapped_value(mapped, attr_name, value)
-            elif isinstance(value, list) and all(isinstance(item, str) for item in value):
+            elif isinstance(value, list) and all(
+                isinstance(item, str) for item in value
+            ):
                 assigned = cls._assign_mapped_value(mapped, attr_name, tuple(value))
             if strict and not assigned:
                 raise ValueError(f"Invalid value for {source_name}")
@@ -255,7 +261,9 @@ class SettingsLoader:
             value = os.environ.get(env_name)
             if value is None:
                 continue
-            cls._assign_mapped_value(mapped, attr_name, cls._convert_env_value(attr_name, value))
+            cls._assign_mapped_value(
+                mapped, attr_name, cls._convert_env_value(attr_name, value)
+            )
         return mapped
 
     @staticmethod
@@ -284,11 +292,7 @@ class SettingsLoader:
                     f"Environment variable for {attr_name} must be a float, got: {value!r}"
                 ) from None
         if attr_name == "user_agent_pool":
-            return tuple(
-                item.strip()
-                for item in value.split(",")
-                if item.strip()
-            )
+            return tuple(item.strip() for item in value.split(",") if item.strip())
         if attr_name in {"verify_ssl", "scan_before_save"}:
             return SettingsLoader._convert_env_bool(attr_name, value)
         return value

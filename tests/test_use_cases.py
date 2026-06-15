@@ -3019,7 +3019,9 @@ def test_zip_with_too_many_members_rejected() -> None:
     )
 
     archive_buffer = io.BytesIO()
-    with zipfile.ZipFile(archive_buffer, "w", compression=zipfile.ZIP_STORED) as archive:
+    with zipfile.ZipFile(
+        archive_buffer, "w", compression=zipfile.ZIP_STORED
+    ) as archive:
         for index in range(ZIP_MEMBER_COUNT_LIMIT + 1):
             archive.writestr(f"entry_{index:05d}.bin", b"")
     payload = archive_buffer.getvalue()
@@ -3048,7 +3050,9 @@ def test_zip_member_at_compression_ratio_limit_rejected() -> None:
 
     x64_pe = _build_pe_payload(Architecture.X64)
     archive_buffer = io.BytesIO()
-    with zipfile.ZipFile(archive_buffer, "w", compression=zipfile.ZIP_STORED) as archive:
+    with zipfile.ZipFile(
+        archive_buffer, "w", compression=zipfile.ZIP_STORED
+    ) as archive:
         archive.writestr("test.dll", x64_pe)
     raw = bytearray(archive_buffer.getvalue())
 
