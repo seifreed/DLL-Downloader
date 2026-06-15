@@ -13,7 +13,8 @@ execution to validate behavior.
 import os
 import subprocess
 import sys
-from collections.abc import MutableMapping
+from collections.abc import Iterator, MutableMapping
+from contextlib import contextmanager
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
@@ -1918,3 +1919,598 @@ def test_scan_file_accepts_exact_size_limit(tmp_path: Path) -> None:
     assert not (st.st_size > _VT_UPLOAD_MAX_BYTES), (
         "exact limit should not exceed upload max"
     )
+
+
+# ============================================================================
+# Integer-coercion helper branch coverage
+# ============================================================================
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("value", "strict", "match"),
+    [
+        (-5, True, "negative count"),
+        (float("nan"), False, "non-finite float"),
+        ("abc", True, "unparseable integer"),
+        ("inf", True, "non-finite count"),
+    ],
+)
+def test_safe_int_strict_failures(value: object, strict: bool, match: str) -> None:
+    from dll_downloader.infrastructure.services.virustotal import (
+        VirusTotalError,
+        _safe_int,
+    )
+
+    with pytest.raises(VirusTotalError, match=match):
+        _safe_int(value, strict=strict)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (1.5, 0),
+        (2.0, 2),
+        ("abc", 0),
+        ("nan", 0),
+    ],
+)
+def test_safe_int_lenient_coercions(value: object, expected: int) -> None:
+    from dll_downloader.infrastructure.services.virustotal import _safe_int
+
+    assert _safe_int(value, strict=False) == expected
+
+
+# ============================================================================
+# Response-parsing helper branch coverage
+# ============================================================================
+
+
+class _BodyResponse:
+    def __init__(
+        self,
+        *,
+        headers: object = None,
+        content: object = None,
+        chunks: list[object] | None = None,
+        json_value: object = None,
+        json_error: Exception | None = None,
+    ) -> None:
+        self.headers = {} if headers is None else headers
+        if content is not None:
+            self.content = content
+        self._chunks = chunks
+        self._json_value = json_value
+        self._json_error = json_error
+
+    def iter_content(self, chunk_size: int = 65536) -> Iterator[object]:
+        yield from self._chunks or []
+
+    def json(self) -> object:
+        if self._json_error is not None:
+            raise self._json_error
+        return self._json_value
+
+
+@pytest.mark.unit
+def test_response_content_length_rejects_oversized_header() -> None:
+    from dll_downloader.infrastructure.services.virustotal import (
+        _VT_RESPONSE_MAX_BYTES,
+        VirusTotalError,
+        _response_json_payload,
+    )
+
+    response = _BodyResponse(
+        headers={"content-length": str(_VT_RESPONSE_MAX_BYTES + 1)}
+    )
+
+    with pytest.raises(VirusTotalError, match="exceeds size limit"):
+        _response_json_payload(cast(Any, response))
+
+
+@pytest.mark.unit
+def test_response_content_length_ignores_non_mapping_headers() -> None:
+    from dll_downloader.infrastructure.services.virustotal import (
+        _response_content_length,
+    )
+
+    response = _BodyResponse(headers=["not", "a", "mapping"])
+
+    assert _response_content_length(cast(Any, response)) is None
+
+
+@pytest.mark.unit
+def test_bounded_response_body_returns_none_without_bytes() -> None:
+    from dll_downloader.infrastructure.services.virustotal import (
+        _bounded_response_body,
+    )
+
+    class _NoContent:
+        headers: dict[str, str] = {}
+        content = None
+
+    assert _bounded_response_body(cast(Any, _NoContent())) is None
+
+
+@pytest.mark.unit
+def test_bounded_response_body_rejects_oversized_content() -> None:
+    from dll_downloader.infrastructure.services.virustotal import (
+        _VT_RESPONSE_MAX_BYTES,
+        VirusTotalError,
+        _bounded_response_body,
+    )
+
+    class _BigContent:
+        headers: dict[str, str] = {}
+        content = b"\x00" * (_VT_RESPONSE_MAX_BYTES + 1)
+
+    with pytest.raises(VirusTotalError, match="exceeds size limit"):
+        _bounded_response_body(cast(Any, _BigContent()))
+
+
+@pytest.mark.unit
+def test_response_chunks_skips_empty_and_rejects_oversized() -> None:
+    from dll_downloader.infrastructure.services.virustotal import (
+        _VT_RESPONSE_MAX_BYTES,
+        VirusTotalError,
+        _response_chunks,
+    )
+
+    assert _response_chunks(
+        cast(Any, _BodyResponse(chunks=[b"", b"data"]))
+    ) == [b"data"]
+
+    class _BigChunk:
+        def __len__(self) -> int:
+            return _VT_RESPONSE_MAX_BYTES + 1
+
+        def __bool__(self) -> bool:
+            return True
+
+    with pytest.raises(VirusTotalError, match="exceeds size limit"):
+        _response_chunks(cast(Any, _BodyResponse(chunks=[_BigChunk()])))
+
+
+@pytest.mark.unit
+def test_loads_response_body_rejects_invalid_json() -> None:
+    from dll_downloader.infrastructure.services.virustotal import (
+        VirusTotalError,
+        _loads_response_body,
+    )
+
+    with pytest.raises(VirusTotalError, match="Invalid JSON"):
+        _loads_response_body(b"{not valid json")
+
+
+@pytest.mark.unit
+def test_json_payload_from_method_handles_errors_and_size() -> None:
+    from dll_downloader.infrastructure.services.virustotal import (
+        _VT_RESPONSE_MAX_BYTES,
+        VirusTotalError,
+        _json_payload_from_method,
+    )
+
+    failing = _BodyResponse(json_error=ValueError("bad"))
+    with pytest.raises(VirusTotalError, match="Invalid JSON"):
+        _json_payload_from_method(cast(Any, failing))
+
+    oversized = _BodyResponse(json_value={"k": "A" * (_VT_RESPONSE_MAX_BYTES)})
+    with pytest.raises(VirusTotalError, match="exceeds size limit"):
+        _json_payload_from_method(cast(Any, oversized))
+
+
+# ============================================================================
+# URL validation and redirect-following branch coverage
+# ============================================================================
+
+_VT_FILES_URL = "https://www.virustotal.com/api/v3/files/" + ("a" * 64)
+
+
+class _RedirectResp:
+    def __init__(
+        self,
+        *,
+        is_redirect: bool = False,
+        status_code: int = 200,
+        location: str | None = None,
+        headers: dict[str, str] | None = None,
+        payload: dict[str, object] | None = None,
+    ) -> None:
+        self.is_redirect = is_redirect
+        self.status_code = status_code
+        if headers is not None:
+            self.headers = headers
+        elif location is not None:
+            self.headers = {"location": location}
+        else:
+            self.headers = {}
+        self._payload = payload or {"data": {}}
+        self.closed = False
+
+    def json(self) -> dict[str, object]:
+        return self._payload
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _ScriptedSession:
+    def __init__(
+        self,
+        *,
+        get: list[_RedirectResp] | None = None,
+        post: list[_RedirectResp] | None = None,
+    ) -> None:
+        self.headers: dict[str, str] = {}
+        self._get = get or []
+        self._post = post or []
+        self.get_calls = 0
+        self.post_calls = 0
+
+    def get(self, url: str, **kwargs: Any) -> _RedirectResp:
+        resp = self._get[min(self.get_calls, len(self._get) - 1)]
+        self.get_calls += 1
+        return resp
+
+    def post(self, url: str, **kwargs: Any) -> _RedirectResp:
+        resp = self._post[min(self.post_calls, len(self._post) - 1)]
+        self.post_calls += 1
+        return resp
+
+    def head(self, *args: Any, **kwargs: Any) -> Any:
+        raise NotImplementedError
+
+    def close(self) -> None:
+        pass
+
+
+def _scanner_with(session: _ScriptedSession) -> VirusTotalScanner:
+    return VirusTotalScanner(
+        api_key="key",
+        session_resource=_resource_with_session(cast(HTTPSessionProtocol, session)),
+    )
+
+
+@contextmanager
+def _allow_domain(domain: str) -> Iterator[None]:
+    VirusTotalScanner._VT_ALLOWED_DOMAINS.add(domain)
+    try:
+        yield
+    finally:
+        VirusTotalScanner._VT_ALLOWED_DOMAINS.discard(domain)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("url", "match"),
+    [
+        ("ftp://www.virustotal.com/x", "non-HTTP scheme"),
+        ("https:///path", "without hostname"),
+        ("https://www.virustotal.com:bad/x", "invalid port"),
+        ("https://user:pass@www.virustotal.com/x", "credentials rejected"),
+        ("https://evil.example.com/x", "disallowed or private-address"),
+    ],
+)
+def test_validate_api_url_rejects_bad_urls(url: str, match: str) -> None:
+    scanner = VirusTotalScanner(api_key="key")
+
+    with pytest.raises(VirusTotalError, match=match):
+        scanner._validate_api_url(url, redirect=False)
+
+
+@pytest.mark.unit
+def test_validate_api_url_rejects_allowed_host_resolving_private() -> None:
+    scanner = VirusTotalScanner(api_key="key")
+
+    with _allow_domain("localhost"), pytest.raises(
+        VirusTotalError, match="resolving to private IP"
+    ):
+        scanner._validate_api_url("https://localhost/x", redirect=True)
+
+
+@pytest.mark.unit
+def test_safe_get_follows_redirect_then_returns() -> None:
+    session = _ScriptedSession(
+        get=[
+            _RedirectResp(is_redirect=True, status_code=302, location=_VT_FILES_URL),
+            _RedirectResp(status_code=200),
+        ]
+    )
+    scanner = _scanner_with(session)
+
+    response = scanner._safe_get(_VT_FILES_URL)
+
+    assert response.status_code == 200
+    assert session.get_calls == 2
+
+
+@pytest.mark.unit
+def test_safe_get_rejects_missing_location() -> None:
+    session = _ScriptedSession(
+        get=[_RedirectResp(is_redirect=True, status_code=302, headers={})]
+    )
+    scanner = _scanner_with(session)
+
+    with pytest.raises(VirusTotalError, match="missing Location header"):
+        scanner._safe_get(_VT_FILES_URL)
+
+
+@pytest.mark.unit
+def test_safe_get_rejects_overlong_location() -> None:
+    location = "https://www.virustotal.com/" + ("a" * 9000)
+    session = _ScriptedSession(
+        get=[_RedirectResp(is_redirect=True, status_code=302, location=location)]
+    )
+    scanner = _scanner_with(session)
+
+    with pytest.raises(VirusTotalError, match="Location header exceeds"):
+        scanner._safe_get(_VT_FILES_URL)
+
+
+@pytest.mark.unit
+def test_safe_get_rejects_too_many_redirects() -> None:
+    session = _ScriptedSession(
+        get=[_RedirectResp(is_redirect=True, status_code=302, location=_VT_FILES_URL)]
+    )
+    scanner = _scanner_with(session)
+
+    with pytest.raises(VirusTotalError, match="Too many redirects"):
+        scanner._safe_get(_VT_FILES_URL)
+
+
+@pytest.mark.unit
+def test_safe_post_follows_redirect_via_get() -> None:
+    session = _ScriptedSession(
+        post=[_RedirectResp(is_redirect=True, status_code=302, location=_VT_FILES_URL)],
+        get=[_RedirectResp(status_code=200)],
+    )
+    scanner = _scanner_with(session)
+
+    response = scanner._safe_post("https://www.virustotal.com/api/v3/files")
+
+    assert response.status_code == 200
+    assert session.get_calls == 1
+
+
+@pytest.mark.unit
+def test_safe_post_follows_307_redirect_via_post() -> None:
+    session = _ScriptedSession(
+        post=[
+            _RedirectResp(is_redirect=True, status_code=307, location=_VT_FILES_URL),
+            _RedirectResp(status_code=200),
+        ]
+    )
+    scanner = _scanner_with(session)
+
+    response = scanner._safe_post("https://www.virustotal.com/api/v3/files")
+
+    assert response.status_code == 200
+    assert session.post_calls == 2
+
+
+@pytest.mark.unit
+def test_safe_post_rejects_missing_location() -> None:
+    session = _ScriptedSession(
+        post=[_RedirectResp(is_redirect=True, status_code=302, headers={})]
+    )
+    scanner = _scanner_with(session)
+
+    with pytest.raises(VirusTotalError, match="missing Location header"):
+        scanner._safe_post("https://www.virustotal.com/api/v3/files")
+
+
+@pytest.mark.unit
+def test_safe_post_rejects_overlong_location() -> None:
+    location = "https://www.virustotal.com/" + ("a" * 9000)
+    session = _ScriptedSession(
+        post=[_RedirectResp(is_redirect=True, status_code=302, location=location)]
+    )
+    scanner = _scanner_with(session)
+
+    with pytest.raises(VirusTotalError, match="Location header exceeds"):
+        scanner._safe_post("https://www.virustotal.com/api/v3/files")
+
+
+@pytest.mark.unit
+def test_safe_post_rejects_too_many_redirects() -> None:
+    redirect = _RedirectResp(is_redirect=True, status_code=302, location=_VT_FILES_URL)
+    session = _ScriptedSession(post=[redirect], get=[redirect])
+    scanner = _scanner_with(session)
+
+    with pytest.raises(VirusTotalError, match="Too many redirects"):
+        scanner._safe_post("https://www.virustotal.com/api/v3/files")
+
+
+# ============================================================================
+# scan_file / scan_hash / file-read / parse branch coverage
+# ============================================================================
+
+
+class _AuthFailScanner(VirusTotalScanner):
+    def scan_hash(self, file_hash: str) -> ScanResult:
+        raise VirusTotalError("Unauthorized request")
+
+
+class _TransientScanner(VirusTotalScanner):
+    def scan_hash(self, file_hash: str) -> ScanResult:
+        raise VirusTotalError("temporary glitch")
+
+
+class _OversizeContentScanner(VirusTotalScanner):
+    def _read_regular_file_content(self, file_path: str) -> bytes:
+        from dll_downloader.infrastructure.services.virustotal import (
+            _VT_UPLOAD_MAX_BYTES,
+        )
+
+        return b"\x00" * (_VT_UPLOAD_MAX_BYTES + 1)
+
+
+@pytest.mark.unit
+def test_scan_file_reraises_auth_error(tmp_path: Path) -> None:
+    sample = tmp_path / "f.dll"
+    sample.write_bytes(b"data")
+    scanner = _AuthFailScanner(api_key="key")
+
+    with pytest.raises(VirusTotalError, match="Unauthorized"):
+        scanner.scan_file(str(sample))
+
+
+@pytest.mark.unit
+def test_scan_file_reraises_error_with_status_code(tmp_path: Path) -> None:
+    sample = tmp_path / "f.dll"
+    sample.write_bytes(b"data")
+    scanner = HashStatusErrorScanner(api_key="key")
+
+    with pytest.raises(VirusTotalError, match="status 500"):
+        scanner.scan_file(str(sample))
+
+
+@pytest.mark.unit
+def test_scan_file_uploads_after_transient_lookup_error(tmp_path: Path) -> None:
+    session = _ScriptedSession(
+        post=[_RedirectResp(status_code=200, payload={"data": {"id": "abc"}})]
+    )
+    scanner = _TransientScanner(
+        api_key="key",
+        session_resource=_resource_with_session(cast(HTTPSessionProtocol, session)),
+    )
+    sample = tmp_path / "f.dll"
+    sample.write_bytes(b"data")
+
+    result = scanner.scan_file(str(sample))
+
+    assert "Results pending" in (result.error_message or "")
+
+
+@pytest.mark.unit
+def test_scan_file_unavailable_returns_none_hash_on_read_error(
+    tmp_path: Path,
+) -> None:
+    scanner = VirusTotalScanner(api_key=None)
+
+    result = scanner.scan_file(str(tmp_path / "missing.dll"))
+
+    assert result.file_hash is None
+    assert result.status == SecurityStatus.UNKNOWN
+
+
+@pytest.mark.unit
+def test_read_upload_content_rejects_oversized_content() -> None:
+    scanner = _OversizeContentScanner(api_key="key")
+
+    with pytest.raises(VirusTotalError, match="upload limit"):
+        scanner._read_upload_content("any")
+
+
+@pytest.mark.unit
+def test_read_regular_file_content_rejects_symlink(tmp_path: Path) -> None:
+    target = tmp_path / "real.bin"
+    target.write_bytes(b"x")
+    link = tmp_path / "link.bin"
+    link.symlink_to(target)
+    scanner = VirusTotalScanner(api_key="key")
+
+    with pytest.raises(VirusTotalError, match="path is a symlink"):
+        scanner._read_regular_file_content(str(link))
+
+
+@pytest.mark.unit
+def test_read_regular_file_content_wraps_open_os_error(tmp_path: Path) -> None:
+    regular = tmp_path / "file.bin"
+    regular.write_bytes(b"x")
+    scanner = VirusTotalScanner(api_key="key")
+
+    with pytest.raises(VirusTotalError, match="File upload failed"):
+        scanner._read_regular_file_content(str(regular / "child"))
+
+
+@pytest.mark.unit
+def test_read_regular_file_content_rejects_oversized_file(tmp_path: Path) -> None:
+    from dll_downloader.infrastructure.services.virustotal import (
+        _VT_UPLOAD_MAX_BYTES,
+    )
+
+    big = tmp_path / "big.bin"
+    big.write_bytes(b"")
+    os.truncate(str(big), _VT_UPLOAD_MAX_BYTES + 1)
+    scanner = VirusTotalScanner(api_key="key")
+
+    with pytest.raises(VirusTotalError, match="upload limit"):
+        scanner._read_regular_file_content(str(big))
+
+
+@pytest.mark.unit
+def test_read_regular_file_content_wraps_read_os_error(tmp_path: Path) -> None:
+    regular = tmp_path / "file.bin"
+    regular.write_bytes(b"data")
+    scanner = VirusTotalScanner(api_key="key")
+
+    original_set_blocking = os.set_blocking
+
+    def _boom(fd: int, blocking: bool) -> None:
+        raise OSError("set_blocking failed")
+
+    os.set_blocking = cast(Any, _boom)
+    try:
+        with pytest.raises(VirusTotalError, match="File upload failed"):
+            scanner._read_regular_file_content(str(regular))
+    finally:
+        os.set_blocking = original_set_blocking
+
+
+@pytest.mark.unit
+def test_scan_hash_rejects_invalid_hash() -> None:
+    scanner = VirusTotalScanner(api_key="key")
+
+    with pytest.raises(VirusTotalError, match="Invalid file hash"):
+        scanner.scan_hash("not-a-hash")
+
+
+@pytest.mark.unit
+def test_get_detailed_report_rejects_invalid_hash() -> None:
+    scanner = VirusTotalScanner(api_key="key")
+
+    with pytest.raises(VirusTotalError, match="Invalid file hash"):
+        scanner.get_detailed_report("bad")
+
+
+@pytest.mark.unit
+def test_get_detailed_report_raises_when_not_found() -> None:
+    session = _ScriptedSession(get=[_RedirectResp(status_code=404)])
+    scanner = _scanner_with(session)
+
+    with pytest.raises(HashNotFoundError):
+        scanner.get_detailed_report("a" * 64)
+
+
+@pytest.mark.unit
+def test_close_response_logs_on_error() -> None:
+    class _BadClose:
+        def close(self) -> None:
+            raise OSError("close failed")
+
+    VirusTotalScanner._close_response(cast(Any, _BadClose()))
+
+
+@pytest.mark.unit
+def test_parse_response_handles_invalid_timestamp() -> None:
+    scanner = VirusTotalScanner(
+        api_key="key", malicious_threshold=5, suspicious_threshold=1
+    )
+    data = {
+        "data": {
+            "attributes": {
+                "last_analysis_stats": {
+                    "malicious": 0,
+                    "suspicious": 0,
+                    "harmless": 1,
+                },
+                "last_analysis_date": 10**30,
+            }
+        }
+    }
+
+    result = scanner._parse_response("a" * 64, data)
+
+    assert result.scan_date is None
