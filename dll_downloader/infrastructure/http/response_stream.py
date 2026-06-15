@@ -162,11 +162,11 @@ _TEXT_CHARSETS = frozenset(
 
 def decode_text(content: bytes, headers: Mapping[str, str]) -> str:
     """Decode HTTP bytes using a conservative charset allowlist."""
+    # _charset_from_headers only returns an allowlisted charset or "utf-8",
+    # all of which are valid codecs, so decoding can only fail on bad bytes.
     charset = _charset_from_headers(headers)
     try:
         return content.decode(charset)
-    except LookupError:
-        return content.decode("utf-8", errors="replace")
     except UnicodeDecodeError:
         return content.decode(charset, errors="replace")
 
