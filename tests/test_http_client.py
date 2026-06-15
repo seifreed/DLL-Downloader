@@ -26,7 +26,10 @@ from dll_downloader.infrastructure.http.http_client import (
 from dll_downloader.infrastructure.http.request_headers import RequestHeaderBuilder
 from dll_downloader.infrastructure.http.response_stream import decode_text
 from dll_downloader.infrastructure.http.retry_policy import RetryPolicy
-from dll_downloader.infrastructure.http.transport import RequestsTransport
+from dll_downloader.infrastructure.http.transport import (
+    RequestsTransport,
+    header_value,
+)
 from dll_downloader.infrastructure.http.user_agents import (
     FixedUserAgentProvider,
     RandomUserAgentProvider,
@@ -2461,3 +2464,262 @@ def test_transport_redirect_with_oversized_location_rejected() -> None:
             "https://source.example/start",
             cast(HTTPResponseProtocol, DummyResponse()),
         )
+
+
+# ============================================================================
+# Transport redirect-following and validation branch coverage
+# ============================================================================
+
+
+class _Resp:
+    def __init__(
+        self,
+        status_code: int,
+        headers: dict[str, str],
+        is_redirect: bool,
+        content: bytes = b"",
+        url: str = "https://localhost/x",
+    ) -> None:
+        self.status_code = status_code
+        self.headers = headers
+        self.is_redirect = is_redirect
+        self.ok = 200 <= status_code < 300
+        self.content = content
+        self.url = url
+        self.closed = False
+
+    def iter_content(self, chunk_size: int = 8192) -> Iterator[bytes]:
+        yield self.content
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _SequencedSession:
+    def __init__(self, responses: list[_Resp]) -> None:
+        self.headers: dict[str, str] = {}
+        self._responses = responses
+        self._index = 0
+
+    def get(self, *args: Any, **kwargs: Any) -> HTTPResponseProtocol:
+        response = self._responses[min(self._index, len(self._responses) - 1)]
+        self._index += 1
+        return cast(HTTPResponseProtocol, response)
+
+    def head(self, *args: Any, **kwargs: Any) -> HTTPResponseProtocol:
+        raise NotImplementedError
+
+    def post(self, *args: Any, **kwargs: Any) -> HTTPResponseProtocol:
+        raise NotImplementedError
+
+    def close(self) -> None:
+        pass
+
+
+def _transport(
+    session: _SequencedSession,
+    *,
+    allowlist: set[str] | None = None,
+    max_attempts: int = 1,
+) -> RequestsTransport:
+    return RequestsTransport(
+        session_resource=_resource_with_session(cast(HTTPSessionProtocol, session)),
+        retry_policy=RetryPolicy(max_attempts=max_attempts),
+        header_builder=RequestHeaderBuilder(SequenceUserAgentProvider(["ua-1"])),
+        timeout=1,
+        verify_ssl=True,
+        allowed_redirect_domains=allowlist,
+    )
+
+
+@pytest.mark.unit
+def test_header_value_joins_duplicate_headers() -> None:
+    headers = {"X-Test": "a", "x-test": "b"}
+
+    assert header_value(headers, "X-Test") == "a, b"
+
+
+@pytest.mark.unit
+def test_execute_detects_redirect_cycle() -> None:
+    redirect = _Resp(302, {"Location": "https://localhost/loop"}, True)
+    transport = _transport(_SequencedSession([redirect]), allowlist={"localhost"})
+
+    with pytest.raises(HTTPClientError, match="Redirect cycle detected"):
+        transport.execute("GET", "https://localhost/loop")
+
+
+@pytest.mark.unit
+def test_execute_rejects_redirect_to_disallowed_domain() -> None:
+    redirect = _Resp(302, {"Location": "https://93.184.216.34/next"}, True)
+    transport = _transport(_SequencedSession([redirect]), allowlist={"localhost"})
+
+    with pytest.raises(HTTPClientError, match="Redirect to disallowed domain"):
+        transport.execute("GET", "https://localhost/start")
+
+
+@pytest.mark.unit
+def test_execute_follows_redirect_then_returns_response() -> None:
+    redirect = _Resp(302, {"Location": "/final"}, True)
+    final = _Resp(200, {}, False, content=b"ok")
+    transport = _transport(
+        _SequencedSession([redirect, final]), allowlist={"localhost"}
+    )
+
+    response = transport.execute("GET", "https://localhost/start")
+
+    assert response.status_code == 200
+    assert redirect.closed is True
+
+
+@pytest.mark.unit
+def test_single_request_rejects_disallowed_domain() -> None:
+    transport = _transport(
+        _SequencedSession([_Resp(200, {}, False)]), allowlist={"localhost"}
+    )
+
+    with pytest.raises(HTTPClientError, match="Request to disallowed domain"):
+        transport.execute("GET", "https://93.184.216.34/x", allow_redirects=False)
+
+
+@pytest.mark.unit
+def test_validate_single_request_target_rejects_private_ip() -> None:
+    transport = _transport(_SequencedSession([_Resp(200, {}, False)]))
+
+    with pytest.raises(HTTPClientError, match="resolves to private/reserved"):
+        transport._validate_single_request_target("https://127.0.0.1/x")
+
+
+@pytest.mark.unit
+def test_resolve_request_method_rejects_unknown() -> None:
+    transport = _transport(_SequencedSession([_Resp(200, {}, False)]))
+
+    with pytest.raises(HTTPClientError, match="Unknown HTTP method"):
+        transport._resolve_request_method("PATCH")
+
+
+@pytest.mark.unit
+def test_prepare_request_headers_handles_none_build() -> None:
+    class _NullBuilder:
+        def build(self, headers: object) -> None:
+            return None
+
+    transport = _transport(_SequencedSession([_Resp(200, {}, False)]))
+    transport._header_builder = cast(Any, _NullBuilder())
+
+    assert transport._prepare_request_headers({"A": "b"}) == {}
+
+
+@pytest.mark.unit
+def test_resolve_redirect_missing_location_raises() -> None:
+    class DummyResponse:
+        headers: dict[str, str] = {}
+
+    with pytest.raises(HTTPClientError, match="missing Location header"):
+        RequestsTransport._resolve_redirect(
+            "https://a/b", cast(HTTPResponseProtocol, DummyResponse())
+        )
+
+
+@pytest.mark.unit
+def test_resolve_redirect_rejects_https_to_http() -> None:
+    class DummyResponse:
+        headers = {"Location": "http://example.com/x"}
+
+    with pytest.raises(HTTPClientError, match="HTTPS to HTTP redirect rejected"):
+        RequestsTransport._resolve_redirect(
+            "https://a/b", cast(HTTPResponseProtocol, DummyResponse())
+        )
+
+
+@pytest.mark.unit
+def test_resolve_redirect_rejects_non_http_scheme_with_authority() -> None:
+    class DummyResponse:
+        headers = {"Location": "ftp://example.com/x"}
+
+    with pytest.raises(HTTPClientError, match="non-HTTP scheme rejected"):
+        RequestsTransport._resolve_redirect(
+            "https://a/b", cast(HTTPResponseProtocol, DummyResponse())
+        )
+
+
+@pytest.mark.unit
+def test_resolve_redirect_rejects_pseudo_scheme() -> None:
+    class DummyResponse:
+        headers = {"Location": "javascript:alert(1)"}
+
+    with pytest.raises(HTTPClientError, match="non-HTTP scheme rejected"):
+        RequestsTransport._resolve_redirect(
+            "https://a/b", cast(HTTPResponseProtocol, DummyResponse())
+        )
+
+
+@pytest.mark.unit
+def test_single_request_exhausts_without_successful_response() -> None:
+    """The terminal guard fires only if the retry loop yields no response.
+
+    A real RetryPolicy always returns or raises on its final attempt, so this
+    uses a policy whose attempt budget differs between the loop range and the
+    per-attempt retry check, forcing the loop to complete with no result.
+    """
+
+    class _TrickyRetryPolicy:
+        retryable_status_codes = {503}
+
+        def __init__(self) -> None:
+            self._reads = 0
+
+        @property
+        def max_attempts(self) -> int:
+            self._reads += 1
+            return 1 if self._reads == 1 else 100
+
+        def should_retry_exception(
+            self, exc: Exception, attempt: int
+        ) -> bool:
+            return False
+
+        def pause_before_retry(self, attempt: int) -> None:
+            pass
+
+    session = _SequencedSession([_Resp(503, {}, False)])
+    transport = RequestsTransport(
+        session_resource=_resource_with_session(cast(HTTPSessionProtocol, session)),
+        retry_policy=cast(Any, _TrickyRetryPolicy()),
+        header_builder=RequestHeaderBuilder(SequenceUserAgentProvider(["ua-1"])),
+        timeout=1,
+        verify_ssl=True,
+    )
+
+    with pytest.raises(HTTPClientError, match="no successful response"):
+        transport.execute("GET", "https://93.184.216.34/x", allow_redirects=False)
+
+
+@pytest.mark.unit
+def test_execute_rejects_too_many_redirects() -> None:
+    class _InfiniteRedirectSession:
+        def __init__(self) -> None:
+            self.headers: dict[str, str] = {}
+            self._n = 0
+
+        def get(self, *args: Any, **kwargs: Any) -> HTTPResponseProtocol:
+            self._n += 1
+            return cast(
+                HTTPResponseProtocol,
+                _Resp(302, {"Location": f"/hop{self._n}"}, True),
+            )
+
+        def head(self, *args: Any, **kwargs: Any) -> HTTPResponseProtocol:
+            raise NotImplementedError
+
+        def post(self, *args: Any, **kwargs: Any) -> HTTPResponseProtocol:
+            raise NotImplementedError
+
+        def close(self) -> None:
+            pass
+
+    transport = _transport(
+        cast(_SequencedSession, _InfiniteRedirectSession()), allowlist={"localhost"}
+    )
+
+    with pytest.raises(HTTPClientError, match="Too many redirects"):
+        transport.execute("GET", "https://localhost/start")

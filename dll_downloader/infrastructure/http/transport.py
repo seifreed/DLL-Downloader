@@ -436,14 +436,9 @@ class RequestsTransport:
                 f"Redirect to non-HTTP scheme rejected: {location}",
                 url=original_url,
             )
+        # Only relative references reach this point (absolute http(s) URLs are
+        # handled above), so urljoin cannot downgrade the scheme.
         resolved = urljoin(original_url, location)
-        if original_url_lower.startswith("https://") and resolved.lower().startswith(
-            "http://"
-        ):
-            raise HTTPClientError(
-                f"HTTPS to HTTP redirect rejected: {resolved}",
-                url=original_url,
-            )
         return RequestsTransport._strip_url_credentials(resolved)
 
     @staticmethod
