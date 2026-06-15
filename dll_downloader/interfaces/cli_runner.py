@@ -228,11 +228,10 @@ class CLIApplicationService:
     def create_invocation(
         self,
         args: argparse.Namespace,
-        parser: argparse.ArgumentParser,
         settings: Settings,
         read_dll_list: "DLLListReader",
     ) -> CLIInvocation:
-        dll_names = resolve_dll_names(args, parser, read_dll_list)
+        dll_names = resolve_dll_names(args, read_dll_list)
 
         return CLIInvocation(
             dll_names=tuple(dll_names),
@@ -260,11 +259,10 @@ class CLIApplicationService:
     def run_from_args(
         self,
         args: argparse.Namespace,
-        parser: argparse.ArgumentParser,
         settings: Settings,
         read_dll_list: "DLLListReader",
     ) -> CLIRunResult:
-        invocation = self.create_invocation(args, parser, settings, read_dll_list)
+        invocation = self.create_invocation(args, settings, read_dll_list)
         return CLIRunResult(
             invocation=invocation,
             session=self.run(settings, invocation),

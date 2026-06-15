@@ -45,32 +45,29 @@ def test_parse_architecture_rejects_non_string_values(arch_str: str) -> None:
 
 @pytest.mark.unit
 def test_resolve_dll_names_raises_when_missing_inputs() -> None:
-    parser = argparse.ArgumentParser()
     args = argparse.Namespace(dll_name=None, file=None)
 
     with pytest.raises(ValueError, match="Please provide a DLL name or use --file"):
-        resolve_dll_names(args, parser, RecordingReader([]))
+        resolve_dll_names(args, RecordingReader([]))
 
 
 @pytest.mark.unit
 def test_resolve_dll_names_rejects_ambiguous_inputs() -> None:
-    parser = argparse.ArgumentParser()
     args = argparse.Namespace(dll_name="ignored.dll", file="dlls.txt")
     reader = RecordingReader(["a.dll"])
 
     with pytest.raises(ValueError, match="either a DLL name or --file"):
-        resolve_dll_names(args, parser, reader)
+        resolve_dll_names(args, reader)
 
     assert reader.calls == []
 
 
 @pytest.mark.unit
 def test_resolve_dll_names_reads_batch_file() -> None:
-    parser = argparse.ArgumentParser()
     args = argparse.Namespace(dll_name=None, file="dlls.txt")
     reader = RecordingReader(["a.dll", "b.dll"])
 
-    dll_names = resolve_dll_names(args, parser, reader)
+    dll_names = resolve_dll_names(args, reader)
 
     assert dll_names == ["a.dll", "b.dll"]
     assert reader.calls == ["dlls.txt"]
@@ -78,7 +75,6 @@ def test_resolve_dll_names_reads_batch_file() -> None:
 
 @pytest.mark.unit
 def test_resolve_dll_names_normalizes_single_name() -> None:
-    parser = argparse.ArgumentParser()
     args = argparse.Namespace(dll_name="kernel32", file=None)
 
-    assert resolve_dll_names(args, parser, RecordingReader([])) == ["kernel32.dll"]
+    assert resolve_dll_names(args, RecordingReader([])) == ["kernel32.dll"]

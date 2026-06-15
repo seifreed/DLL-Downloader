@@ -155,14 +155,12 @@ def _run_cli_session(
     service: CLIApplicationService,
     output_format: OutputFormat,
     args: argparse.Namespace,
-    parser: argparse.ArgumentParser,
     settings: Settings,
 ) -> int:
     """Execute one CLI session and normalize input failures."""
     try:
         result = service.run_from_args(
             args,
-            parser,
             settings,
             read_dll_list_from_file,
         )
@@ -253,7 +251,7 @@ def _main_inner(settings: Settings | None) -> int:
     if not _apply_cli_logging(settings, args.debug, service, output_format):
         return 1
 
-    return _run_cli_session(service, output_format, args, parser, settings)
+    return _run_cli_session(service, output_format, args, settings)
 
 
 if __name__ == "__main__":

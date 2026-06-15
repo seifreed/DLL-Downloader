@@ -62,7 +62,6 @@ def parse_architecture(arch_str: str) -> Architecture:
 
 def resolve_dll_names(
     args: argparse.Namespace,
-    parser: argparse.ArgumentParser,  # noqa: ARG001
     read_dll_list: DLLListReader,
 ) -> list[str]:
     """Resolve CLI-provided DLL names from direct args or a batch file."""

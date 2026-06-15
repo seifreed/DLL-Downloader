@@ -541,7 +541,6 @@ def test_cli_application_service_create_invocation_uses_settings_and_args() -> N
 
     invocation = service.create_invocation(
         args,
-        __import__("argparse").ArgumentParser(),
         Settings(virustotal_api_key="key"),
         lambda path: ["ignored.dll"],
     )
@@ -582,7 +581,6 @@ def test_cli_application_service_create_invocation_honors_scan_setting() -> None
 
     invocation = service.create_invocation(
         args,
-        __import__("argparse").ArgumentParser(),
         Settings(virustotal_api_key="key", scan_before_save=False),
         lambda path: ["ignored.dll"],
     )
@@ -616,7 +614,6 @@ def test_cli_application_service_create_invocation_ignores_blank_api_key() -> No
 
     invocation = service.create_invocation(
         args,
-        __import__("argparse").ArgumentParser(),
         Settings(virustotal_api_key=""),
         lambda path: ["ignored.dll"],
     )
@@ -633,11 +630,10 @@ def test_cli_application_service_run_from_args_raises_on_invalid_input() -> None
         ),
         writer=RecordingWriter(),
     )
-    parser = __import__("argparse").ArgumentParser()
     args = type("Args", (), {"dll_name": None, "file": None})()
 
     with pytest.raises(ValueError, match="Please provide a DLL name or use --file"):
-        service.run_from_args(args, parser, Settings(), lambda path: [])
+        service.run_from_args(args, Settings(), lambda path: [])
 
 
 @pytest.mark.unit
@@ -665,9 +661,7 @@ def test_cli_application_service_create_invocation_rejects_unsafe_name() -> None
     )()
 
     with pytest.raises(ValueError, match="DLL name"):
-        service.create_invocation(
-            args, __import__("argparse").ArgumentParser(), Settings(), lambda path: []
-        )
+        service.create_invocation(args, Settings(), lambda path: [])
 
 
 @pytest.mark.unit
@@ -679,7 +673,6 @@ def test_cli_application_service_run_from_args_returns_result_on_success() -> No
         ),
         writer=RecordingWriter(),
     )
-    parser = __import__("argparse").ArgumentParser()
     args = type(
         "Args",
         (),
@@ -695,7 +688,7 @@ def test_cli_application_service_run_from_args_returns_result_on_success() -> No
         },
     )()
 
-    result = service.run_from_args(args, parser, Settings(), lambda path: [])
+    result = service.run_from_args(args, Settings(), lambda path: [])
 
     assert result is not None
     assert result.invocation.dll_names == ("a.dll",)
